@@ -85,9 +85,29 @@ rust-verify-macos:
   extends: .rust-verify
   tags: ["$MACOS_RUNNER_TAG"]
 
+# This runner uses PowerShell. It must not inherit .rust-verify/.rust-node,
+# because those templates contain POSIX shell commands such as `set -euo pipefail`.
 rust-verify-windows:
-  extends: .rust-verify
+  stage: verify
   tags: ["$WINDOWS_RUNNER_TAG"]
+  before_script:
+    - $ErrorActionPreference = "Stop"
+    - rustup toolchain install $env:RUST_VERSION --profile minimal --component rustfmt,clippy
+    - rustup default $env:RUST_VERSION
+    - node --version
+    - npm --version
+    - cargo --version
+  script:
+    - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
+    - npm run build
+    - cargo fmt --all -- --check
+    - cargo check --workspace --all-targets
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace --all-targets
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
 
 cargo-audit:
   stage: audit
@@ -201,18 +221,68 @@ tauri-package-linux-arm64:
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage"
 
+# This runner uses PowerShell. It must not inherit .tauri-package (which
+# inherits .rust-node and its Bash `set -euo pipefail`).
 tauri-package-windows:
-  extends: .tauri-package
+  stage: package
   tags: ["$WINDOWS_RUNNER_TAG"]
-  variables:
-    TAURI_BUILD_ARGS: ""
+  needs: [release-preflight]
+  before_script:
+    - $ErrorActionPreference = "Stop"
+    - rustup toolchain install $env:RUST_VERSION --profile minimal --component rustfmt,clippy
+    - rustup default $env:RUST_VERSION
+    - node --version
+    - npm --version
+    - cargo --version
+  script:
+    - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
+    - npm run check
+    - npm run test:frontend
+    - npm run build
+    - cargo fmt --all -- --check
+    - cargo check --workspace --all-targets
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace --all-targets
+    - npm run tauri build
   after_script:
     - |
-      EXE="$(find target -name 'Work_Review.exe' -path '*/release/*' -not -path '*/build/*' -not -path '*/deps/*' | head -n 1)"
-      test -n "$EXE"
-      DIR="$(dirname "$EXE")"
-      printf 'Work Review portable edition\n\nDouble-click Work_Review.exe to run.\n' > "$DIR/PORTABLE_README.txt"
-      (cd "$DIR" && powershell.exe -NoProfile -Command "Compress-Archive -Path Work_Review.exe,PORTABLE_README.txt -DestinationPath Work_Review_portable_x64.zip -Force")
+      $ErrorActionPreference = "Stop"
+
+      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Work_Review.exe" |
+        Where-Object {
+          $_.FullName -match '\\release\\' -and
+          $_.FullName -notmatch '\\build\\' -and
+          $_.FullName -notmatch '\\deps\\'
+        } |
+        Select-Object -First 1
+
+      if (-not $exe) {
+        throw "Work_Review.exe not found; cannot create the portable package."
+      }
+
+      $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
+      @"
+Work Review 便携版
+
+- 双击 Work_Review.exe 直接运行，无需安装。
+- 需要 WebView2 Runtime（Windows 10/11 通常已自带）。
+"@ | Set-Content -Path $readme -Encoding utf8
+
+      $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
+      Compress-Archive `
+        -Path $exe.FullName, $readme `
+        -DestinationPath $archive `
+        -Force
+  artifacts:
+    name: "$CI_COMMIT_TAG-$CI_JOB_NAME"
+    when: always
+    expire_in: never
+    paths:
+      - target/**/release/bundle/nsis/*.exe
+      - target/**/release/bundle/nsis/*.sig
+      - target/**/Work_Review_portable_*.zip
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
 
 publish-release:
   stage: publish
