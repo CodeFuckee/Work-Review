@@ -261,12 +261,12 @@ tauri-package-windows:
       }
 
       $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
-      @"
-Work Review 便携版
-
-- 双击 Work_Review.exe 直接运行，无需安装。
-- 需要 WebView2 Runtime（Windows 10/11 通常已自带）。
-"@ | Set-Content -Path $readme -Encoding utf8
+      @(
+        "Work Review 便携版",
+        "",
+        "- 双击 Work_Review.exe 直接运行，无需安装。",
+        "- 需要 WebView2 Runtime（Windows 10/11 通常已自带）。"
+      ) | Set-Content -Path $readme -Encoding utf8
 
       $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
       Compress-Archive `
