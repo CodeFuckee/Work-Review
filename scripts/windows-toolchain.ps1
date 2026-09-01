@@ -35,8 +35,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Probe log filled by Find-NodeDir; dumped before throwing so a failed job
-# shows exactly which candidate paths were (not) visible.
+# shows exactly which candidate paths were (not) visible. Also record the
+# PowerShell running this script, since the Windows runner may invoke a
+# different (MSIX-packaged) pwsh than local PowerShell.
 $script:NodeProbeLog = [System.Collections.Generic.List[string]]::new()
+$script:NodeProbeLog.Add("PSVersion=$($PSVersionTable.PSVersion)")
+try { $script:NodeProbeLog.Add("PSProcess=$( (Get-Process -Id $PID).Path )") } catch { }
 
 function Find-RustupDir {
     param([string[]]$CandidateDirs)
@@ -126,8 +130,10 @@ function Find-NodeDir {
     foreach ($dir in $dirs) {
         if ($seen.Add($dir)) {
             $probe = "$dir\node.exe"
-            $script:NodeProbeLog.Add("$probe => $(Test-Path $probe)")
-            if (Test-Path $probe) { return $dir }
+            $psProbe = Test-Path $probe
+            $dotnetProbe = [System.IO.File]::Exists($probe)
+            $script:NodeProbeLog.Add("$probe => Test-Path=$psProbe .NET=$dotnetProbe")
+            if ($dotnetProbe) { return $dir }
         }
     }
     return $null
