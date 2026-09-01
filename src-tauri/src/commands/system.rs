@@ -552,7 +552,33 @@ fn collect_macos_app_bundles(root: &Path, depth: usize, bundles: &mut Vec<PathBu
 }
 
 #[cfg(target_os = "macos")]
+fn macos_default_app_search_roots() -> Vec<PathBuf> {
+    let mut search_roots = vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+        PathBuf::from("/System/Applications/Utilities"),
+    ];
+    if let Some(home_dir) = dirs::home_dir() {
+        search_roots.push(home_dir.join("Applications"));
+    }
+    search_roots
+}
+
+#[cfg(target_os = "macos")]
 fn macos_icon_app_path_candidates(app_name: &str, executable_path: Option<&str>) -> Vec<String> {
+    macos_icon_app_path_candidates_in_roots(
+        app_name,
+        executable_path,
+        &macos_default_app_search_roots(),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_icon_app_path_candidates_in_roots(
+    app_name: &str,
+    executable_path: Option<&str>,
+    search_roots: &[PathBuf],
+) -> Vec<String> {
     let mut candidates: Vec<(i32, String)> = Vec::new();
 
     if let Some(path) = executable_path.and_then(macos_bundle_path_from_executable) {
@@ -568,18 +594,9 @@ fn macos_icon_app_path_candidates(app_name: &str, executable_path: Option<&str>)
         }
     }
 
-    let mut search_roots = vec![
-        PathBuf::from("/Applications"),
-        PathBuf::from("/System/Applications"),
-        PathBuf::from("/System/Applications/Utilities"),
-    ];
-    if let Some(home_dir) = dirs::home_dir() {
-        search_roots.push(home_dir.join("Applications"));
-    }
-
     let mut bundles = Vec::new();
     for root in search_roots {
-        collect_macos_app_bundles(&root, 3, &mut bundles);
+        collect_macos_app_bundles(root, 3, &mut bundles);
     }
 
     for bundle in bundles {
@@ -1516,16 +1533,36 @@ mod tests {
     fn 图标解析应忽略与app_name矛盾的executable_path() {
         // 回归：活动采集偶发写入脏数据（app_name 是浏览器，executable_path 却指向 IDE）。
         // 修复前 executable_path 无条件得 i32::MAX，浏览器会错误显示编译器图标。
-        let cands = super::macos_icon_app_path_candidates(
+        // 用临时目录构造应用包，避免测试依赖 CI 运行机上是否安装 Microsoft Edge。
+        let temp_root = std::env::temp_dir().join(format!(
+            "work_review_icon_candidates_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(temp_root.join("Microsoft Edge.app"))
+            .expect("创建浏览器测试包失败");
+        std::fs::create_dir_all(temp_root.join("PyCharm.app")).expect("创建 IDE 测试包失败");
+
+        let cands = super::macos_icon_app_path_candidates_in_roots(
             "Microsoft Edge",
             Some("/Applications/PyCharm.app"),
+            &[temp_root.clone()],
         );
+        let _ = std::fs::remove_dir_all(&temp_root);
+
         let first = cands.first();
         assert!(
             first
                 .map(|p| p.contains("Microsoft Edge.app"))
                 .unwrap_or(false),
             "浏览器不应因脏 executable_path 显示编译器图标, 实际首位: {first:?}"
+        );
+        assert!(
+            !cands.iter().any(|p| p.contains("PyCharm.app")),
+            "脏 executable_path 对应的 IDE 不应出现在候选中: {cands:?}"
         );
     }
 
