@@ -39,6 +39,18 @@ cache:
 .rust-node:
   before_script:
     - set -euo pipefail
+    - |
+      if ! command -v rustup >/dev/null 2>&1; then
+        # rustup installs to ~/.cargo/bin and registers ~/.cargo/env, but the
+        # runner's PATH may not include it (observed on the linux-x64 runner:
+        # "rustup: command not found"). Try the default install location.
+        # shellcheck source=/dev/null
+        source "$HOME/.cargo/env" 2>/dev/null || true
+      fi
+      if ! command -v rustup >/dev/null 2>&1; then
+        echo "rustup not found. Install Rust via https://rustup.rs on this runner (linux-x64/linux-arm64/macos) or add ~/.cargo/bin to its PATH." >&2
+        exit 1
+      fi
     - rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy
     - rustup default "$RUST_VERSION"
     - node --version

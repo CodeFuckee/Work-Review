@@ -1134,7 +1134,7 @@ fn encode_windows_icon_base64(mut pixels: Vec<u8>, width: u32, height: u32) -> O
         return None;
     }
 
-    for chunk in pixels.chunks_exact_mut(4) {
+    for chunk in pixels.as_chunks_mut::<4>().0 {
         chunk.swap(0, 2);
     }
 
@@ -1549,7 +1549,7 @@ mod tests {
         let cands = super::macos_icon_app_path_candidates_in_roots(
             "Microsoft Edge",
             Some("/Applications/PyCharm.app"),
-            &[temp_root.clone()],
+            std::slice::from_ref(&temp_root),
         );
         let _ = std::fs::remove_dir_all(&temp_root);
 

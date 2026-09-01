@@ -435,8 +435,10 @@ pub fn encode_embedding(vector: &[f32]) -> Vec<u8> {
 
 /// BLOB → f32 向量（长度非 4 的倍数时丢弃尾部残字节）。
 pub fn decode_embedding(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    blob.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
         .collect()
 }
 
