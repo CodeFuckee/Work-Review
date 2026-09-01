@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22"
   },
+  "allowScripts": {
+    "esbuild": true
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

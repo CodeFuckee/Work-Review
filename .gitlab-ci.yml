@@ -46,32 +46,19 @@ cache:
     - cargo --version
 
 # PowerShell toolchain bootstrap for the Windows runner. The gitlab-runner
-# Windows service may run under an account whose PATH lacks Rust/Node, so we
-# locate rustup/cargo and node explicitly instead of relying on PATH.
+# Windows service may run under an account whose PATH lacks Rust/Node, so the
+# bootstrap script (scripts/windows-toolchain.ps1) locates rustup/cargo and
+# node explicitly — covering the official installer, nvm-windows, scoop and
+# chocolatey layouts — instead of relying on PATH alone.
 .powershell-toolchain:
   before_script:
     - $ErrorActionPreference = "Stop"
     - |
-      $cargoBin = "$env:USERPROFILE\.cargo\bin"
-      if (Test-Path "$cargoBin\rustup.exe") {
-        $env:Path = "$cargoBin;$env:Path"
-      } else {
-        $candidate = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue |
-          ForEach-Object { Join-Path $_.FullName ".cargo\bin" } |
-          Where-Object { Test-Path (Join-Path $_ "rustup.exe") } |
-          Select-Object -First 1
-        if ($candidate) { $env:Path = "$candidate;$env:Path" }
+      $bootstrap = Join-Path $env:CI_PROJECT_DIR "scripts\windows-toolchain.ps1"
+      if (-not (Test-Path $bootstrap)) {
+        throw "windows-toolchain.ps1 not found at $bootstrap"
       }
-      if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
-        throw "rustup not found. Install Rust via https://rustup.rs and ensure .cargo\bin is on the PATH of the gitlab-runner service account."
-      }
-      if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-        $nodeDir = "C:\Program Files\nodejs"
-        if (Test-Path "$nodeDir\node.exe") { $env:Path = "$nodeDir;$env:Path" }
-      }
-      if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-        throw "node not found. Install Node.js 22 and ensure it is on the PATH of the gitlab-runner service account."
-      }
+      & $bootstrap
     - rustup toolchain install $env:RUST_VERSION --profile minimal --component rustfmt,clippy
     - rustup default $env:RUST_VERSION
     - node --version

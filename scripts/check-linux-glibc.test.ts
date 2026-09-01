@@ -19,6 +19,21 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_PATH = fileURLToPath(new URL('./check-linux-glibc.sh', import.meta.url));
 const BINARY_NAME = 'Work_Review';
 
+// GLIBC 门禁是 Linux 发布流程检查：本测试需要 POSIX bash 运行
+// check-linux-glibc.sh（以及 fake readelf/dpkg-deb 等）。Windows 开发机与
+// Windows CI runner（rust-verify-windows 也会执行 npm run test:frontend）
+// 通常没有 bash，此时整组测试跳过；Linux CI 上照常执行。
+function hasBash(): boolean {
+  try {
+    const probe = spawnSync('bash', ['-c', 'exit 0'], { stdio: 'ignore', timeout: 10_000 });
+    return probe.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+const HAS_BASH = hasBash();
+
 type FailureMode = 'damaged-package' | 'extract-failure' | 'missing-main' | 'non-elf';
 
 interface GateOptions {
@@ -180,19 +195,19 @@ function outputOf(result: GateResult): string {
   return `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
 }
 
-test('GLIBC 门禁必须显式提供 --max', () => {
+test('GLIBC 门禁必须显式提供 --max', { skip: !HAS_BASH }, () => {
   const result = runGate(['--binary-name', BINARY_NAME, '{artifact}']);
   assert.notEqual(result.status, 0);
   assert.match(outputOf(result), /--max/);
 });
 
-test('GLIBC 门禁必须显式提供 --binary-name', () => {
+test('GLIBC 门禁必须显式提供 --binary-name', { skip: !HAS_BASH }, () => {
   const result = runGate(['--max', '2.35', '{artifact}']);
   assert.notEqual(result.status, 0);
   assert.match(outputOf(result), /--binary-name/);
 });
 
-test('真实发布上限允许 GLIBC 2.35，并写入成功摘要', () => {
+test('真实发布上限允许 GLIBC 2.35，并写入成功摘要', { skip: !HAS_BASH }, () => {
   const result = runGate(
     ['--max', '2.35', '--binary-name', BINARY_NAME, '{artifact}'],
     { glibcVersions: ['2.2.5', '2.17', '2.35'] },
@@ -202,7 +217,7 @@ test('真实发布上限允许 GLIBC 2.35，并写入成功摘要', () => {
   assert.deepEqual(result.remainingTempEntries, []);
 });
 
-test('真实发布上限拒绝 GLIBC 2.36，并写入失败摘要', () => {
+test('真实发布上限拒绝 GLIBC 2.36，并写入失败摘要', { skip: !HAS_BASH }, () => {
   const result = runGate(
     ['--max', '2.35', '--binary-name', BINARY_NAME, '{artifact}'],
     { glibcVersions: ['2.17', '2.36'] },
@@ -212,7 +227,7 @@ test('真实发布上限拒绝 GLIBC 2.36，并写入失败摘要', () => {
   assert.deepEqual(result.remainingTempEntries, []);
 });
 
-test('GLIBC 版本按语义比较，2.9 不得被误判为高于 2.35', () => {
+test('GLIBC 版本按语义比较，2.9 不得被误判为高于 2.35', { skip: !HAS_BASH }, () => {
   const result = runGate(
     ['--max', '2.35', '--binary-name', BINARY_NAME, '{artifact}'],
     { glibcVersions: ['2.2.5', '2.9'] },
@@ -220,7 +235,7 @@ test('GLIBC 版本按语义比较，2.9 不得被误判为高于 2.35', () => {
   assert.equal(result.status, 0, outputOf(result));
 });
 
-test('门禁只检查主程序，不受包内额外 GLIBC 2.36 ELF 影响', () => {
+test('门禁只检查主程序，不受包内额外 GLIBC 2.36 ELF 影响', { skip: !HAS_BASH }, () => {
   const result = runGate(
     ['--max', '2.35', '--binary-name', BINARY_NAME, '{artifact}'],
     { extraElfGlibcVersion: '2.36', glibcVersions: ['2.17', '2.35'] },
@@ -230,7 +245,7 @@ test('门禁只检查主程序，不受包内额外 GLIBC 2.36 ELF 影响', () =
   assert.doesNotMatch(result.readelfInvocations, /libextra\.so/);
 });
 
-test('RPM 与 AppImage 支持相对产物路径', () => {
+test('RPM 与 AppImage 支持相对产物路径', { skip: !HAS_BASH }, () => {
   for (const artifactExtension of ['rpm', 'AppImage']) {
     const result = runGate(
       ['--max', '2.35', '--binary-name', BINARY_NAME, '{artifact}'],
@@ -246,7 +261,7 @@ for (const failureCase of [
   ['主程序缺失', 'deb', 'missing-main', /找不到主程序 usr\/bin\/Work_Review/],
   ['非 ELF', 'deb', 'non-elf', /主程序不是有效 ELF/],
 ] as const) {
-  test(`${failureCase[0]}时写入明确失败摘要并清理临时目录`, () => {
+  test(`${failureCase[0]}时写入明确失败摘要并清理临时目录`, { skip: !HAS_BASH }, () => {
     const result = runGate(
       ['--max', '2.35', '--binary-name', BINARY_NAME, '{artifact}'],
       { artifactExtension: failureCase[1], failureMode: failureCase[2] },
@@ -258,7 +273,7 @@ for (const failureCase of [
   });
 }
 
-test('主程序无 GLIBC 标签时写入明确失败摘要并清理临时目录', () => {
+test('主程序无 GLIBC 标签时写入明确失败摘要并清理临时目录', { skip: !HAS_BASH }, () => {
   const result = runGate(
     ['--max', '2.35', '--binary-name', BINARY_NAME, '{artifact}'],
     { glibcVersions: [] },
