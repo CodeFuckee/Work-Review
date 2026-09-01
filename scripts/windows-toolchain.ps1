@@ -34,6 +34,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Probe log filled by Find-NodeDir; dumped before throwing so a failed job
+# shows exactly which candidate paths were (not) visible.
+$script:NodeProbeLog = [System.Collections.Generic.List[string]]::new()
+
 function Find-RustupDir {
     param([string[]]$CandidateDirs)
 
@@ -116,10 +120,15 @@ function Find-NodeDir {
         $dirs.Add("C:\ProgramData\chocolatey\bin")
     }
 
-    # De-duplicate while preserving order; return the first hit.
+    # De-duplicate while preserving order; return the first hit. Every probed
+    # path is logged (PROBE_NODE>) so a failed job shows why node was missed.
     $seen = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($dir in $dirs) {
-        if ($seen.Add($dir) -and (Test-Path "$dir\node.exe")) { return $dir }
+        if ($seen.Add($dir)) {
+            $probe = "$dir\node.exe"
+            $script:NodeProbeLog.Add("$probe => $(Test-Path $probe)")
+            if (Test-Path $probe) { return $dir }
+        }
     }
     return $null
 }
@@ -148,5 +157,8 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     } else {
         $searched = "PATH; C:\Program Files\nodejs; C:\Program Files (x86)\nodejs; nvm-windows version dirs under %APPDATA%\nvm; scoop dirs C:\Users\<user>\scoop\apps\nodejs\current; C:\ProgramData\chocolatey\bin"
     }
+    foreach ($probeLine in $script:NodeProbeLog) { Write-Output "PROBE_NODE> $probeLine" }
+    Write-Output "PROBE_NODE> USERPROFILE=$env:USERPROFILE"
+    Write-Output "PROBE_NODE> PATH=$env:Path"
     throw "node not found. Searched for node.exe in: $searched. Install Node.js 22+ (https://nodejs.org) on the gitlab-runner machine, or via nvm-windows/scoop/chocolatey into a default location."
 }
