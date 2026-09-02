@@ -159,6 +159,8 @@ rust-verify-windows:
       when: never
     - when: on_success
   script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    - npm run build
     - cargo build --release -p work-review
 
 build-release-linux:
@@ -190,6 +192,8 @@ build-release-windows:
       when: never
     - when: on_success
   script:
+    - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
+    - npm run build
     - cargo build --release -p work-review
   artifacts:
     name: "$CI_JOB_NAME"
