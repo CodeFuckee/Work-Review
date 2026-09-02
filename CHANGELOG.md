@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 新增
+- **CI 版本自增与三平台编译**：每次推送 main 且在 verify（frontend + 三平台校验）+ compile（新增三平台 `cargo build --release` 产物 job：build-release-linux/macos/windows）全部通过后，`version-bump` job 自动将版本末位 +1（逢 100 进位，如 1.2.99 → 1.3.0），同步五处版本源（package.json / package-lock.json / tauri.conf.json / src-tauri/Cargo.toml / Cargo.lock），提交回 main（message 含 `[skip ci]` 防循环）并打 `vX.Y.Z` tag，自动触发 release-preflight → 三平台打包 → glab 发布。需在 GitLab 配置 CI 变量 `GIT_PUSH_TOKEN`（Project Access Token，write_repository + api 权限）；缓存 key 改用 Cargo.toml 避免 bump 后缓存失效。
+### 新增
 - **GitLab 集成**：设置页新增 GitLab 分组（私有化部署 URL + 个人访问令牌 + 项目白名单 + 日报补充开关 + 连接测试按钮）。生成日报（手动/定时/机器人/AI 助手/本地 API 全链路）时按日报日期拉取该用户在私有化 GitLab 的提交（读 `GET /user` 识别用户，按本机时区过滤"当日"，每项目最多 20 条、全局最多 200 条，超出提示剩余数量；项目允许列表留空 = 全部有权限项目）；AI 模式下提交并入提示词由 AI 整合进日报正文，无法调用 AI 时自动追加独立小节；未配置/无提交静默跳过，拉取失败时日报末尾追加一行备注。
 
 ### 修复
