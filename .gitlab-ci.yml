@@ -25,7 +25,7 @@ variables:
   LINUX_X64_RUNNER_TAG: linux-x64
   LINUX_ARM64_RUNNER_TAG: linux-arm64
   MACOS_RUNNER_TAG: macos
-  WINDOWS_RUNNER_TAG: windows
+  WINDOWS_RUNNER_TAG: windows, rust
 
 workflow:
   auto_cancel:
