@@ -2,6 +2,13 @@
 # Required Bash shell-runner tags: linux-x64 (Ubuntu 22.04), linux-arm64 (Ubuntu
 # 22.04), macos, windows. Install Node 22 and Rustup on every runner; install
 # `glab` on linux-x64. Configure Tauri signing values as protected CI variables.
+#
+# On the Linux runners, the apt system packages are installed ONCE by an
+# operator (the shell executor has no TTY, so `sudo apt-get` would block on a
+# password and time out). scripts/check-linux-deps.sh only verifies them.
+# Packages (Ubuntu 22.04):
+#   libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+#   + (release bundling) patchelf libfuse2 rpm rpm2cpio cpio binutils
 
 stages: [verify, audit, preflight, package, publish]
 
@@ -110,8 +117,7 @@ rust-verify-linux:
   tags: ["$LINUX_X64_RUNNER_TAG"]
   before_script:
     - !reference [.rust-node, before_script]
-    - sudo apt-get update
-    - sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+    - bash scripts/check-linux-deps.sh
 
 rust-verify-macos:
   extends: .rust-verify
@@ -228,8 +234,7 @@ tauri-package-macos-x64:
   extends: .tauri-package
   before_script:
     - !reference [.rust-node, before_script]
-    - sudo apt-get update
-    - sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 rpm rpm2cpio cpio binutils
+    - bash scripts/check-linux-deps.sh --for-package
   after_script:
     - >-
       bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Work_Review
