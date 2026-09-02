@@ -128,6 +128,7 @@ impl CloudAnalyzer {
         activities: &[Activity],
         insights: &[String],
         category_overrides: &HashMap<String, String>,
+        gitlab_ai_context: Option<&str>,
     ) -> Result<String> {
         let stats_summary =
             generate_stats_summary_for_locale(stats, self.locale, category_overrides);
@@ -153,7 +154,11 @@ impl CloudAnalyzer {
                 "فيما يلي بيانات عمل المستخدم لهذا اليوم:\n\n{stats_summary}\n\n{timeline}\n\n### محتوى العمل المستخرج من لقطات الشاشة\n{insights_text}\n\nاكتب تقرير عمل يومي ذو قيمة بتنسيق Markdown باللغة العربية بناءً على هذه المعلومات.",
             ),
         };
-        let prompt = append_custom_prompt_for_locale(base_prompt, &self.custom_prompt, self.locale);
+        let mut prompt =
+            append_custom_prompt_for_locale(base_prompt, &self.custom_prompt, self.locale);
+        if let Some(gitlab_ctx) = gitlab_ai_context {
+            prompt.push_str(&format!("\n\n{gitlab_ctx}"));
+        }
 
         let response = self
             .client
@@ -209,6 +214,7 @@ impl Analyzer for CloudAnalyzer {
         _locale: AppLocale,
         _category_name_overrides: HashMap<String, String>,
         _semantic_name_overrides: HashMap<String, String>,
+        gitlab: &crate::gitlab::GitlabReportSupplement,
     ) -> Result<GeneratedReport> {
         if self.api_key.is_empty() {
             return Err(AppError::Analysis("OpenAI API Key 未配置".to_string()));
@@ -246,6 +252,7 @@ impl Analyzer for CloudAnalyzer {
                 activities,
                 &insights,
                 &_category_name_overrides,
+                gitlab.ai_context.as_deref(),
             )
             .await
         {
@@ -270,6 +277,9 @@ impl Analyzer for CloudAnalyzer {
                     self.locale,
                     &_category_name_overrides,
                 );
+                if !gitlab.local_section.is_empty() {
+                    base.push_str(&format!("\n\n{}", gitlab.local_section));
+                }
                 base.push_str(&format!("\n\n---\n*{reason}"));
                 (base, false, Some(reason))
             }

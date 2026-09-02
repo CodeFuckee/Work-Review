@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增
+- **GitLab 集成**：设置页新增 GitLab 分组（私有化部署 URL + 个人访问令牌 + 项目白名单 + 日报补充开关 + 连接测试按钮）。生成日报（手动/定时/机器人/AI 助手/本地 API 全链路）时按日报日期拉取该用户在私有化 GitLab 的提交（读 `GET /user` 识别用户，按本机时区过滤"当日"，每项目最多 20 条、全局最多 200 条，超出提示剩余数量；项目允许列表留空 = 全部有权限项目）；AI 模式下提交并入提示词由 AI 整合进日报正文，无法调用 AI 时自动追加独立小节；未配置/无提交静默跳过，拉取失败时日报末尾追加一行备注。
+
 ### 修复
 - **rust-verify-macos clippy 门禁**：修复 703624a 引入的 `&[temp_root.clone()]`（src-tauri/src/commands/system.rs）触发 `cloned_ref_to_slice_refs`（`-D warnings` 下失败），改为 `std::slice::from_ref(&temp_root)`；同时将 `crates/core` 与 `src-tauri` 中 `chunks_exact(_mut)` 常量块写法升级为 `as_chunks(_mut)`，兼容 Rust 1.98+ 新 lint。
 - **Linux/macOS runner 的 rustup 定位**：`.rust-node` 新增 `source "$HOME/.cargo/env"` 兜底，解决 rust-verify-linux 的 `rustup: command not found`；仍未找到时输出明确安装指引。

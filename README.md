@@ -55,6 +55,7 @@ The focus is not "monitoring". It is helping you **recall, organize, and review*
 - **Unified timeline and statistics** — Overview, timeline, work assistant, and daily report share the same local records, so you can inspect trends and drill into context
 - **Questions over local records** — Use the basic template or your configured model to answer "What did I do today?", "How long did this task take?", and "What have I been focused on?"
 - **Daily report generation and export** — Generate structured daily reports with Markdown export, auto-export, paragraph editing, pin/hide controls, and cached AI section ordering
+- **Self-hosted GitLab integration** — Optional GitLab settings (server URL + personal access token + project allow list) enrich daily reports with your commits for that date: AI mode merges them into the report body, and a standalone section is appended when AI is unavailable
 - **Privacy-first and locally controllable** — Data is stored in local SQLite by default; AI is optional, and model calls use your own API key without third-party relay
 - **Desktop Avatar Beta** — Shows work status through a desktop avatar and is gradually expanding toward proactive reminders and context assistance
 - **Multilingual UI** — Available in Simplified Chinese, English, Traditional Chinese, and Arabic (with RTL layout)
@@ -188,6 +189,7 @@ You can control the recording scope as needed:
 - AI-enhanced prompt attachments and custom model settings
 - Website semantic categorization: changing a domain category automatically backfills history
 - Multi-segment work time: e.g. morning + afternoon, break time excluded
+- GitLab commits enrichment: fetch commits from a self-hosted GitLab for the report date (per-project 20 / total 200 cap, local-timezone filtered); AI merges them into the report, non-AI mode appends a section; failures degrade silently with a one-line note
 
 ---
 

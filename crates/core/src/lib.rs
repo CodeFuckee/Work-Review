@@ -5,6 +5,7 @@ pub mod config;
 pub mod database;
 pub mod error;
 pub mod generation_params;
+pub mod gitlab;
 pub mod knowledge;
 pub mod policy;
 pub mod privacy;

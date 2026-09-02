@@ -71,6 +71,7 @@ pub trait Analyzer: Send + Sync {
         locale: AppLocale,
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
+        gitlab: &crate::gitlab::GitlabReportSupplement,
     ) -> Result<GeneratedReport>;
 }
 

@@ -1,6 +1,7 @@
 //! Auto-extracted from the historical `commands.rs`. Behavior unchanged.
 
 use crate::AppState;
+use chrono::NaiveDate;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -9,8 +10,50 @@ use work_review_core::analysis::AppLocale;
 use work_review_core::config::AppConfig;
 use work_review_core::database::DailyReport;
 use work_review_core::error::AppError;
+use work_review_core::gitlab::{gitlab_failure_note, GitlabReportSupplement};
 
 use super::shared::{collect_privacy_filters, filter_activities_by_privacy, persist_app_config};
+
+/// 拉取 GitLab 今日（或指定日报日期）提交并转成日报补充内容。
+/// - 未配置 URL/Token 或开关关闭：返回空补充（不提示）。
+/// - 拉取失败/超时（10 秒）：降级为带失败备注行的空补充。
+/// - 成功：按该日期/本机时区聚合（每项目 20 条、全局 200 条，超出截断并提示）。
+async fn fetch_gitlab_supplement(
+    config: &AppConfig,
+    date: &str,
+    locale: AppLocale,
+) -> GitlabReportSupplement {
+    if !config.gitlab.report_enabled {
+        return GitlabReportSupplement::default();
+    }
+    let (Some(url), Some(token)) = (config.gitlab.url.as_deref(), config.gitlab.token.as_deref())
+    else {
+        return GitlabReportSupplement::default();
+    };
+    if url.trim().is_empty() || token.trim().is_empty() {
+        return GitlabReportSupplement::default();
+    }
+
+    let date_local = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .unwrap_or_else(|_| chrono::Local::now().date_naive());
+    let offset = work_review_core::gitlab::local_offset_now();
+    let project_filter = config.gitlab.project_filter.clone();
+    let client = work_review_core::gitlab::GitlabClient::new(url, token);
+
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.fetch_today_commits(offset, date_local, &project_filter),
+    )
+    .await
+    {
+        Ok(Ok(result)) => result.to_supplement(offset, locale),
+        _ => GitlabReportSupplement {
+            failure_note: Some(gitlab_failure_note(locale)),
+            ai_context: None,
+            local_section: String::new(),
+        },
+    }
+}
 
 fn resolve_saved_report_metadata(
     configured_mode: &work_review_core::config::AiMode,
@@ -211,6 +254,12 @@ pub(crate) async fn generate_report_inner(
         .iter()
         .map(|c| (c.key.clone(), c.name.clone()))
         .collect();
+
+    // 拉取该日报日期（默认今日）的私有化 GitLab 提交，作为日报补充内容。
+    // 静默降级：未配置/拉取失败/无提交都不阻塞日报生成；失败时仅追加备注行。
+    let gitlab_supplement = fetch_gitlab_supplement(&config, &date, report_locale).await;
+    let gitlab_failure_note = gitlab_supplement.failure_note.clone();
+
     let spawn_result = tokio::spawn(async move {
         analyzer
             .generate_report(
@@ -221,6 +270,7 @@ pub(crate) async fn generate_report_inner(
                 report_locale,
                 category_name_overrides,
                 semantic_name_overrides,
+                &gitlab_supplement,
             )
             .await
     });
@@ -302,7 +352,11 @@ pub(crate) async fn generate_report_inner(
     }
 
     let generated_report = report_result?;
-    let report = generated_report.content.clone();
+    let mut report = generated_report.content.clone();
+    // GitLab 拉取失败时在末尾追加一行备注（未配置/无提交时 failure_note 为 None，不提示）
+    if let Some(note) = gitlab_failure_note.as_deref() {
+        report.push_str(&format!("\n\n{note}"));
+    }
     let (saved_ai_mode, saved_model_name) = resolve_saved_report_metadata(
         &config.ai_mode,
         &config.text_model.model,
@@ -733,6 +787,37 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
     use work_review_core::config::AiMode;
+
+    #[tokio::test]
+    async fn gitlab未配置时日报补充内容应为空() {
+        let config = AppConfig::default();
+        let supplement = fetch_gitlab_supplement(&config, "2026-09-02", AppLocale::ZhCn).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+    }
+
+    #[tokio::test]
+    async fn gitlab开关关闭时即使已配置也不请求() {
+        let mut config = AppConfig::default();
+        config.gitlab.url = Some("https://git.example.com".to_string());
+        config.gitlab.token = Some("stub-token".to_string());
+        config.gitlab.report_enabled = false;
+        let supplement = fetch_gitlab_supplement(&config, "2026-09-02", AppLocale::ZhCn).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+    }
+
+    #[tokio::test]
+    async fn gitlab空白配置应视为未配置() {
+        let mut config = AppConfig::default();
+        config.gitlab.url = Some("   ".to_string());
+        config.gitlab.token = Some("stub".to_string());
+        let supplement = fetch_gitlab_supplement(&config, "2026-09-02", AppLocale::ZhCn).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+
+        let mut missing_token = AppConfig::default();
+        missing_token.gitlab.url = Some("https://git.example.com".to_string());
+        let supplement = fetch_gitlab_supplement(&missing_token, "2026-09-02", AppLocale::En).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+    }
 
     #[test]
     fn summary回退到基础模板时不应保留_ai_模型标签() {

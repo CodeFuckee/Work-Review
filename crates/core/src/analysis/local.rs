@@ -365,6 +365,7 @@ impl Analyzer for LocalAnalyzer {
         locale: AppLocale,
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
+        gitlab: &crate::gitlab::GitlabReportSupplement,
     ) -> Result<GeneratedReport> {
         log::info!("生成本地日报（尝试调用 Ollama）");
 
@@ -557,6 +558,12 @@ impl Analyzer for LocalAnalyzer {
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);
+        }
+
+        // 本地模板：GitLab 今日提交作为独立小节追加（不在模板正文内）
+        if !gitlab.local_section.is_empty() {
+            report.push_str("\n\n");
+            report.push_str(&gitlab.local_section);
         }
 
         Ok(GeneratedReport {

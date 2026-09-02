@@ -661,6 +661,23 @@ pub struct RemoteStorageConfig {
     pub sync_app_config: bool,
 }
 
+/// 私有化 GitLab 集成配置（日报补充今日提交）
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct GitlabConfig {
+    /// GitLab 私有化部署地址（如 https://git.example.com）
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 个人访问令牌（明文，与 AI api_key 相同的存储策略；仅存本机配置）
+    #[serde(default)]
+    pub token: Option<String>,
+    /// 项目允许列表（path_with_namespace，一行一个；空 = 全部有权限项目）
+    #[serde(default)]
+    pub project_filter: Vec<String>,
+    /// 日报生成时是否注入 GitLab 今日提交（快速开关；需已配置 url+token）
+    #[serde(default = "default_true")]
+    pub report_enabled: bool,
+}
+
 pub const DEFAULT_LOCALHOST_API_PORT: u16 = 47_831;
 
 fn default_localhost_api_port() -> u16 {
@@ -1209,6 +1226,9 @@ pub struct AppConfig {
     /// 背景图片模糊程度 (0 = 清晰, 1 = 轻微, 2 = 中等)
     #[serde(default = "default_bg_blur")]
     pub background_blur: u8,
+    /// GitLab 私有化集成配置（日报补充今日提交）
+    #[serde(default)]
+    pub gitlab: GitlabConfig,
 }
 
 /// 配置加载结果，保留恢复状态和主备文件错误信息。
@@ -1311,6 +1331,7 @@ impl Default for AppConfig {
             storage: StorageConfig::default(),
             remote_storage: RemoteStorageConfig::default(),
             config_synced_at: 0,
+            gitlab: GitlabConfig::default(),
             daily_report_custom_prompt: String::new(),
             daily_report_prompt_presets: Vec::new(),
             daily_report_system_prompt_override: None,

@@ -11,6 +11,7 @@
   import SettingsAppearance from './components/SettingsAppearance.svelte';
   import SettingsAI from './components/SettingsAI.svelte';
   import SettingsAvatar from './components/SettingsAvatar.svelte';
+  import SettingsGitlab from './components/SettingsGitlab.svelte';
   import SettingsNodeGateway from './components/SettingsNodeGateway.svelte';
   import SettingsSystem from './components/SettingsSystem.svelte';
   import SettingsPrivacy from './components/SettingsPrivacy.svelte';
@@ -53,7 +54,8 @@
     & NodeGatewayConfig
     & PrivacyConfig
     & StorageConfig
-    & RootSettingsFields;
+    & RootSettingsFields
+    & ComponentProps<SettingsGitlab>['config'];
 
   type NullableCredentialKey =
     | 'telegram_bot_token'
@@ -106,7 +108,7 @@
     ui_visual_style: string;
   };
 
-  type SettingsTabId = 'general' | 'appearance' | 'ai' | 'avatar' | 'privacy' | 'storage' | 'node';
+  type SettingsTabId = 'general' | 'appearance' | 'ai' | 'avatar' | 'privacy' | 'storage' | 'node' | 'gitlab';
 
   interface SettingsTab {
     id: SettingsTabId;
@@ -142,6 +144,7 @@
     { id: 'privacy', labelKey: 'settings.tabs.privacy', icon: 'privacy' },
     { id: 'storage', labelKey: 'settings.tabs.storage', icon: 'storage' },
     { id: 'node', labelKey: 'settings.tabs.node', icon: 'node', beta: true },
+    { id: 'gitlab', labelKey: 'settings.tabs.gitlab', icon: 'gitlab' },
   ];
 
   // 加载配置
@@ -497,6 +500,8 @@
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7.5 9.5l1.5-3 3 2 3-2 1.5 3M7 14.5c0-2.5 2.239-4.5 5-4.5s5 2 5 4.5S14.761 19 12 19s-5-2-5-4.5z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 14h.01M14 14h.01M10.5 16.5c.6.5 1 .75 1.5.75s.9-.25 1.5-.75" /></svg>
                 {:else if tab.icon === 'privacy'}
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                {:else if tab.icon === 'gitlab'}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" /></svg>
                 {:else if tab.icon === 'storage'}
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
                 {/if}
@@ -546,6 +551,8 @@
             on:clearCache={handleClearCache}
             on:dataDirChanged={handleDataDirChanged}
           />
+        {:else if activeTab === 'gitlab'}
+          <SettingsGitlab bind:config on:change={() => dirty = true} />
         {/if}
         </div>
       </div>

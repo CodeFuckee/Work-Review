@@ -4581,6 +4581,7 @@ async fn main() {
             commands::get_node_gateway_status,
             commands::get_telegram_bot_status,
             commands::get_wecom_bot_status,
+            commands::gitlab_test_connection,
             commands::generate_telegram_bot_bind_code,
             commands::generate_text_with_model,
             commands::reveal_localhost_api_token,

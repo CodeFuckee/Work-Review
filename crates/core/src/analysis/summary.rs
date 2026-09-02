@@ -642,7 +642,13 @@ impl SummaryAnalyzer {
         keywords
     }
 
-    fn build_ai_prompt(&self, date: &str, stats: &DailyStats, activities: &[Activity]) -> String {
+    fn build_ai_prompt(
+        &self,
+        date: &str,
+        stats: &DailyStats,
+        activities: &[Activity],
+        gitlab_ai_context: Option<&str>,
+    ) -> String {
         let apps_list = join_list(
             self.locale,
             stats
@@ -964,7 +970,12 @@ Close with one sentence about the day's work state."#,
             base_prompt
         };
 
-        append_custom_prompt_for_locale(final_prompt, &self.custom_prompt, self.locale)
+        let mut prompt =
+            append_custom_prompt_for_locale(final_prompt, &self.custom_prompt, self.locale);
+        if let Some(gitlab_ctx) = gitlab_ai_context {
+            prompt.push_str(&format!("\n\n{gitlab_ctx}"));
+        }
+        prompt
     }
 
     fn generate_fallback_ai_content(&self, apps_list: &str) -> String {
@@ -1042,6 +1053,7 @@ impl Analyzer for SummaryAnalyzer {
         locale: AppLocale,
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
+        gitlab: &crate::gitlab::GitlabReportSupplement,
     ) -> Result<GeneratedReport> {
         log::info!("生成混合模式日报：固定模板 + AI 扩展");
 
@@ -1119,7 +1131,7 @@ impl Analyzer for SummaryAnalyzer {
                 .collect(),
         );
 
-        let ai_prompt = self.build_ai_prompt(date, stats, activities);
+        let ai_prompt = self.build_ai_prompt(date, stats, activities, gitlab.ai_context.as_deref());
         let ai_content = match tokio::time::timeout_at(
             ai_deadline,
             self.generate_ai_content(&ai_prompt),
@@ -1153,6 +1165,11 @@ impl Analyzer for SummaryAnalyzer {
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);
+        }
+
+        // AI 失败回退基础模板时，把 GitLab 提交作为独立小节补上（AI 成功时已整合进正文）
+        if !ai_content.1 && !gitlab.local_section.is_empty() {
+            report.push_str(&format!("\n\n{}", gitlab.local_section));
         }
 
         Ok(GeneratedReport {
@@ -1374,7 +1391,7 @@ mod tests {
     fn ai提示词应要求固定观察证据建议小结结构() {
         let analyzer = test_analyzer(AppLocale::ZhCn);
         let stats = sample_stats_for_ai_structure();
-        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[]);
+        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None);
 
         assert!(prompt.contains("### 观察"));
         assert!(prompt.contains("### 证据"));
@@ -1401,7 +1418,7 @@ mod tests {
     fn 英文ai提示词和回退内容应使用固定英文结构() {
         let analyzer = test_analyzer(AppLocale::En);
         let stats = sample_stats_for_ai_structure();
-        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[]);
+        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None);
         let fallback = analyzer.generate_fallback_ai_content("VS Code (1h)");
 
         for content in [prompt, fallback] {
@@ -1434,6 +1451,7 @@ mod tests {
                 AppLocale::ZhCn,
                 HashMap::new(),
                 HashMap::new(),
+                &crate::gitlab::GitlabReportSupplement::default(),
             )
             .await
             .expect("网络失败时也应生成 fallback 日报");
