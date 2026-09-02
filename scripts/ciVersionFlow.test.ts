@@ -35,7 +35,7 @@ test('version-bump 应依赖全部 verify 与 compile job 且仅在 push main �
 test('version-bump 使用 GIT_PUSH_TOKEN 且 bump 提交带 [skip ci] 防循环', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
   assert.match(yaml, /GIT_PUSH_TOKEN/);
-  assert.match(yaml, /oauth2:\$\{GIT_PUSH_TOKEN\}/);
+  assert.match(yaml, /http\.extraHeader="PRIVATE-TOKEN: \$\{GIT_PUSH_TOKEN\}"/);
   assert.match(yaml, /\[skip ci\]/);
   assert.match(yaml, /scripts\/bump-version\.mjs/);
 });
