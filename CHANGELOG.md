@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **日常安装包产物（可直接下载安装）**：每次推送 main 且 verify/compile 全绿后，新增 5 个 `package-daily-*` job（Windows exe+便携 zip、macOS arm64+x64 dmg、Linux arm64+x64 deb/rpm/AppImage）产出三平台完整安装包并上传为 CI artifact（保留 30 天）；提供固定「latest」下载链接（`/-/jobs/artifacts/main/download?job=package-daily-<os>`，自动指向最近成功构建）。tag 发布版仍按原 Release 流程永久保留安装包。
 ### 新增
 - **CI 版本自增与三平台编译**：每次推送 main 且在 verify（frontend + 三平台校验）+ compile（新增三平台 `cargo build --release` 产物 job：build-release-linux/macos/windows）全部通过后，`version-bump` job 自动将版本末位 +1（逢 100 进位，如 1.2.99 → 1.3.0），同步五处版本源（package.json / package-lock.json / tauri.conf.json / src-tauri/Cargo.toml / Cargo.lock），提交回 main（message 含 `[skip ci]` 防循环）并打 `vX.Y.Z` tag，自动触发 release-preflight → 三平台打包 → glab 发布。需在 GitLab 配置 CI 变量 `GIT_PUSH_TOKEN`（Project Access Token，write_repository + api 权限）；缓存 key 改用 Cargo.toml 避免 bump 后缓存失效。
 ### 新增

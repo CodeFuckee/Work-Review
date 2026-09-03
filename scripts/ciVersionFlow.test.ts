@@ -10,7 +10,10 @@ const BUMP_SCRIPT = fileURLToPath(new URL('./bump-version.mjs', import.meta.url)
 
 test('CI stages 应包含 compile 与 version', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
-  assert.match(yaml, /stages: \[verify, compile, audit, version, preflight, package, publish\]/);
+  assert.match(
+    yaml,
+    /stages: \[verify, compile, daily-package, audit, version, preflight, package, publish\]/,
+  );
 });
 
 test('应存在三个平台的 release 编译 job（仅日常推送，tag 不跑）', () => {

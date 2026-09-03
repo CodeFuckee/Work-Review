@@ -13,11 +13,12 @@
 # stages:
 #   verify   三平台核验（frontend + linux/macos/windows）
 #   compile  三平台 release 编译产物（仅日常推送）
+#   daily-package 每次 push 的三平台完整安装包（artifact 保留 30 天，固定 latest 下载链接）
 #   audit    安全审计
 #   version  version-bump：verify+compile 全绿后自动版本自增（末位逢 100 进位）、
 #            提交回 main（[skip ci]）并打 vX.Y.Z tag（→ 触发 preflight/package/publish）
-#   preflight/package/publish  版本发布（tag 流水线）
-stages: [verify, compile, audit, version, preflight, package, publish]
+#   preflight/package/publish  版本发布（tag 流水线，artifact 永久保留）
+stages: [verify, compile, daily-package, audit, version, preflight, package, publish]
 
 default:
   interruptible: true
@@ -201,6 +202,129 @@ build-release-windows:
     expire_in: 1 week
     paths:
       - target/release/Work_Review.exe
+
+# ---- 日常安装包：每次 push main 产三平台完整安装包并上传为 CI artifact ----
+# 用户可直接下载安装使用；GitLab 提供固定「latest」链接（自动指向最近一次成功构建）：
+#   https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-<os>
+# artifact 保留 30 天；tag 发布版走原 package 阶段（永久保留 + glab release）。
+.package-daily:
+  stage: daily-package
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
+
+package-daily-windows:
+  extends: [.powershell-toolchain, .package-daily]
+  tags: ["$WINDOWS_RUNNER_TAG"]
+  script:
+    - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
+    - npm run build
+    - npm run tauri build
+  after_script:
+    - |
+      $ErrorActionPreference = "Stop"
+      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Work_Review.exe" |
+        Where-Object {
+          $_.FullName -match '\\release\\' -and
+          $_.FullName -notmatch '\\build\\' -and
+          $_.FullName -notmatch '\\deps\\'
+        } |
+        Select-Object -First 1
+      if (-not $exe) {
+        throw "Work_Review.exe not found; cannot create the portable package."
+      }
+      $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
+      @(
+        "Work Review 便携版",
+        "",
+        "- 双击 Work_Review.exe 直接运行，无需安装。",
+        "- 需要 WebView2 Runtime（Windows 10/11 通常已自带）。"
+      ) | Set-Content -Path $readme -Encoding utf8
+      $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
+      Compress-Archive -Path $exe.FullName, $readme -DestinationPath $archive -Force
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/nsis/*.exe
+      - target/**/release/bundle/nsis/*.sig
+      - target/**/Work_Review_portable_*.zip
+
+package-daily-linux-x64:
+  extends: [.rust-node, .package-daily]
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  before_script:
+    - !reference [.rust-node, before_script]
+    - bash scripts/check-linux-deps.sh --for-package
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    - npm run build
+    - npm run tauri build -- --bundles deb,rpm,appimage
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/appimage/*.AppImage
+      - target/**/release/bundle/deb/*.deb
+      - target/**/release/bundle/rpm/*.rpm
+
+package-daily-linux-arm64:
+  extends: [.rust-node, .package-daily]
+  tags: ["$LINUX_ARM64_RUNNER_TAG"]
+  before_script:
+    - !reference [.rust-node, before_script]
+    - bash scripts/check-linux-deps.sh --for-package
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    - npm run build
+    - npm run tauri build -- --target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/appimage/*.AppImage
+      - target/**/release/bundle/deb/*.deb
+      - target/**/release/bundle/rpm/*.rpm
+
+package-daily-macos-arm64:
+  extends: [.rust-node, .package-daily]
+  tags: ["$MACOS_RUNNER_TAG"]
+  variables:
+    TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
+    APPLE_SIGNING_IDENTITY: "-"
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    - npm run build
+    - npm run tauri build -- $TAURI_BUILD_ARGS
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/dmg/*.dmg
+      - target/**/release/bundle/dmg/*.sig
+
+package-daily-macos-x64:
+  extends: [.rust-node, .package-daily]
+  tags: ["$MACOS_RUNNER_TAG"]
+  variables:
+    TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
+    APPLE_SIGNING_IDENTITY: "-"
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    - npm run build
+    - npm run tauri build -- $TAURI_BUILD_ARGS
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/dmg/*.dmg
+      - target/**/release/bundle/dmg/*.sig
 
 # ---- 版本自增：verify + compile 全部成功后自动 bump 版本并打 tag 发布 ----
 # 规则：末位 +1，逢 100 进位（1.2.99 → 1.3.0）。同步 5 处版本源
