@@ -34,6 +34,9 @@ variables:
   LINUX_ARM64_RUNNER_TAG: linux-arm64
   MACOS_RUNNER_TAG: macos
   WINDOWS_RUNNER_TAG: windows, rust
+  # 无对应设备（runner）的架构默认「掠过」：设为 "true" 才启用该平台产物与发布。
+  PACKAGE_LINUX_ARM64: "false"
+  PACKAGE_MACOS_X64: "false"
 
 workflow:
   auto_cancel:
@@ -278,6 +281,11 @@ package-daily-linux-x64:
 package-daily-linux-arm64:
   extends: [.rust-node, .package-daily]
   tags: ["$LINUX_ARM64_RUNNER_TAG"]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$PACKAGE_LINUX_ARM64 == "true"'
+    - when: never
   before_script:
     - !reference [.rust-node, before_script]
     - bash scripts/check-linux-deps.sh --for-package
@@ -320,6 +328,11 @@ package-daily-macos-x64:
   extends: [.rust-node, .package-daily]
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$PACKAGE_MACOS_X64 == "true"'
+    - when: never
   before_script:
     - !reference [.rust-node, before_script]
     - rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -486,6 +499,8 @@ tauri-package-macos-x64:
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ && $PACKAGE_MACOS_X64 == "true"'
 
 .tauri-package-linux:
   extends: .tauri-package
@@ -508,6 +523,8 @@ tauri-package-linux-arm64:
   tags: ["$LINUX_ARM64_RUNNER_TAG"]
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ && $PACKAGE_LINUX_ARM64 == "true"'
 
 # This runner uses PowerShell. It must not inherit .tauri-package (which
 # inherits .rust-node and its Bash `set -euo pipefail`).
@@ -570,11 +587,13 @@ publish-release:
   stage: publish
   tags: ["$LINUX_X64_RUNNER_TAG"]
   needs:
-    - tauri-package-macos-arm64
-    - tauri-package-macos-x64
-    - tauri-package-linux-x64
-    - tauri-package-linux-arm64
-    - tauri-package-windows
+    - job: tauri-package-macos-arm64
+    - job: tauri-package-macos-x64
+      optional: true
+    - job: tauri-package-linux-x64
+    - job: tauri-package-linux-arm64
+      optional: true
+    - job: tauri-package-windows
   script:
     - VERSION="${CI_COMMIT_TAG#v}"
     - awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > release_notes.md

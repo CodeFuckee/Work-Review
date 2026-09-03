@@ -31,6 +31,14 @@ test('应存在五个日常安装包 job（Windows/macOS×2/Linux×2），rules 
   assert.match(template, /stage: daily-package/);
   assert.match(template, /if: '\$CI_COMMIT_TAG'\s+when: never/);
   assert.match(template, /when: on_success/);
+  // 无设备的架构默认掠过（变量开关）
+  assert.match(yaml, /PACKAGE_LINUX_ARM64: "false"/);
+  assert.match(yaml, /PACKAGE_MACOS_X64: "false"/);
+  assert.match(yaml, /\$PACKAGE_LINUX_ARM64 == "true"/);
+  assert.match(yaml, /\$PACKAGE_MACOS_X64 == "true"/);
+  // 发布 needs 对可跳过平台使用 optional
+  assert.match(yaml, /- job: tauri-package-macos-x64[\s\S]*?optional: true/);
+  assert.match(yaml, /- job: tauri-package-linux-arm64[\s\S]*?optional: true/);
   // 每个 job 的上传 artifact 保留 30 天
   const jobSlices = yaml.split(/^(?=package-daily-)/m);
   for (const slice of jobSlices) {
