@@ -240,10 +240,10 @@ package-daily-windows:
       }
       $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
       @(
-        "Work Review 便携版",
+        "Work Review Portable",
         "",
-        "- 双击 Work_Review.exe 直接运行，无需安装。",
-        "- 需要 WebView2 Runtime（Windows 10/11 通常已自带）。"
+        "- Double-click Work_Review.exe to run; no install needed.",
+        "- Requires the WebView2 Runtime (usually preinstalled on Win10/11)."
       ) | Set-Content -Path $readme -Encoding utf8
       $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
       Compress-Archive -Path $exe.FullName, $readme -DestinationPath $archive -Force
@@ -297,6 +297,7 @@ package-daily-linux-arm64:
 package-daily-macos-arm64:
   extends: [.rust-node, .package-daily]
   tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -315,6 +316,7 @@ package-daily-macos-arm64:
 package-daily-macos-x64:
   extends: [.rust-node, .package-daily]
   tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -460,6 +462,7 @@ release-preflight:
 tauri-package-macos-arm64:
   extends: .tauri-package
   tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -467,6 +470,7 @@ tauri-package-macos-arm64:
 tauri-package-macos-x64:
   extends: .tauri-package
   tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -528,10 +532,10 @@ tauri-package-windows:
 
       $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
       @(
-        "Work Review 便携版",
+        "Work Review Portable",
         "",
-        "- 双击 Work_Review.exe 直接运行，无需安装。",
-        "- 需要 WebView2 Runtime（Windows 10/11 通常已自带）。"
+        "- Double-click Work_Review.exe to run; no install needed.",
+        "- Requires the WebView2 Runtime (usually preinstalled on Win10/11)."
       ) | Set-Content -Path $readme -Encoding utf8
 
       $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
