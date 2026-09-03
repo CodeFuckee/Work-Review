@@ -39,6 +39,10 @@ workflow:
   auto_cancel:
     on_new_commit: interruptible
   rules:
+    # version-bump 的提交触发 main push 流水线时应跳过（避免循环），但 tag push
+    # 流水线不受影响（此时 CI_COMMIT_BRANCH 为空）——因此 tag 发布可以照常触发。
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_MESSAGE =~ /^chore\(release\): bump version to v/'
+      when: never
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -365,7 +369,7 @@ version-bump:
       NEW_VERSION="$(node -p "require('./package.json').version")"
       git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json Cargo.lock
       git -c user.name="Work Review CI" -c user.email="ci@work-review.local" \
-        commit -m "chore(release): bump version to v${NEW_VERSION} [skip ci]"
+        commit -m "chore(release): bump version to v${NEW_VERSION}"
       git tag "v${NEW_VERSION}"
       # Git over HTTPS 不接受 PRIVATE-TOKEN header（那是 API 认证）；用 Basic auth
       # （username=oauth2, password=token）。owner/maintainer 角色 + write_repository scope 即可推。

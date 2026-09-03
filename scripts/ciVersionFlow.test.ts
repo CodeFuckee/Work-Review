@@ -35,12 +35,18 @@ test('version-bump 应依赖全部 verify 与 compile job 且仅在 push main �
   assert.match(yaml, /when: never/);
 });
 
-test('version-bump 使用 GIT_PUSH_TOKEN 且 bump 提交带 [skip ci] 防循环', () => {
+test('version-bump 使用 GIT_PUSH_TOKEN；bump 提交由 workflow 规则排除而非 [skip ci] 防循环', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
   assert.match(yaml, /GIT_PUSH_TOKEN/);
   assert.match(yaml, /Authorization: Basic \$\{PUSH_AUTH\}/);
   assert.match(yaml, /printf 'oauth2:%s'/);
-  assert.match(yaml, /\[skip ci\]/);
+  // bump 提交不用 [skip ci]（会连带跳过 tag 发布流水线），改为 workflow 排除规则
+  assert.doesNotMatch(yaml, /commit -m "chore\(release\): bump version to v\$\{NEW_VERSION\} \[skip ci\]"/);
+  assert.match(yaml, /commit -m "chore\(release\): bump version to v\$\{NEW_VERSION\}"/);
+  assert.match(
+    yaml,
+    /CI_COMMIT_MESSAGE =~ \/\^chore\\\(release\\\): bump version to v\//,
+  );
   assert.match(yaml, /scripts\/bump-version\.mjs/);
 });
 
