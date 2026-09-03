@@ -298,6 +298,9 @@ package-daily-macos-arm64:
   extends: [.rust-node, .package-daily]
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -317,6 +320,9 @@ package-daily-macos-x64:
   extends: [.rust-node, .package-daily]
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -463,6 +469,9 @@ tauri-package-macos-arm64:
   extends: .tauri-package
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -471,6 +480,9 @@ tauri-package-macos-x64:
   extends: .tauri-package
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
