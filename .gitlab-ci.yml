@@ -497,7 +497,6 @@ release-preflight:
     expire_in: never
     paths:
       - target/**/release/bundle/dmg/*.dmg
-      - target/**/release/bundle/dmg/*.sig
       - target/**/release/bundle/macos/*.app.tar.gz
       - target/**/release/bundle/macos/*.app.tar.gz.sig
       - target/**/release/bundle/nsis/*.exe
@@ -636,7 +635,7 @@ publish-release:
     - >-
       glab release create "$CI_COMMIT_TAG" --name "Work Review $CI_COMMIT_TAG"
       --notes-file release_notes.md
-      target/**/release/bundle/dmg/*.dmg target/**/release/bundle/dmg/*.sig
+      target/**/release/bundle/dmg/*.dmg
       target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig
       target/**/release/bundle/nsis/*.exe target/**/release/bundle/nsis/*.sig
       target/**/Work_Review_portable_*.zip target/**/release/bundle/appimage/*.AppImage
