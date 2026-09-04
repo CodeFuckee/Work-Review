@@ -11,8 +11,9 @@
 // 成功输出：NEW_VERSION=x.y.z；--dry-run 只打印不写文件。
 // 任何一处版本源缺失/不一致都会非零退出并给出提示。
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 /** 末位自增，逢 100 进位；非法输入返回 null。 */
 export function computeNextVersion(current) {
@@ -163,22 +164,37 @@ function parseArgs(argv) {
   return args;
 }
 
-try {
-  const { root, dryRun } = parseArgs(process.argv);
-  const packageJsonRaw = readFileSync(join(root, 'package.json'), 'utf8');
-  const current = JSON.parse(packageJsonRaw).version;
-  const next = computeNextVersion(current);
-  if (!next) {
-    console.error(`非法版本号：${current}`);
+// 仅在作为脚本直接执行时运行（node scripts/bump-version.mjs ...）。
+// 之前没有这个守卫：bump-version.test.ts 为复用 computeNextVersion 而
+// import 本模块，会连带执行下方 CLI——parseArgs 默认 root=process.cwd()，
+// 于是在 tag 流水线的 package 作业里 `npm run test:frontend` 一跑，
+// 工作区的五个版本源就被原地 +1，产出比 tag 版本号 +1 的安装包。
+function isDirectInvocation() {
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation()) {
+  try {
+    const { root, dryRun } = parseArgs(process.argv);
+    const packageJsonRaw = readFileSync(join(root, 'package.json'), 'utf8');
+    const current = JSON.parse(packageJsonRaw).version;
+    const next = computeNextVersion(current);
+    if (!next) {
+      console.error(`非法版本号：${current}`);
+      process.exit(1);
+    }
+    if (dryRun) {
+      console.log(`NEW_VERSION=${current} -> ${next}`);
+      process.exit(0);
+    }
+    const bumped = bumpVersion(root);
+    console.log(`NEW_VERSION=${bumped}`);
+  } catch (error) {
+    console.error(`版本自增失败：${error.message}`);
     process.exit(1);
   }
-  if (dryRun) {
-    console.log(`NEW_VERSION=${current} -> ${next}`);
-    process.exit(0);
-  }
-  const bumped = bumpVersion(root);
-  console.log(`NEW_VERSION=${bumped}`);
-} catch (error) {
-  console.error(`版本自增失败：${error.message}`);
-  process.exit(1);
 }

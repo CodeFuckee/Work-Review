@@ -164,7 +164,12 @@ test('bootstrap script: reports a diagnostic listing searched locations when nod
   const combined = result.stderr + result.stdout;
   assert.match(combined, /node not found/);
   // 报错必须列出实际查找过的位置（含注入的候选），方便排查。
-  assert.ok(combined.includes(emptyDir), `error should mention searched dir ${emptyDir}`);
+  // 注意：PowerShell 5.1 会把 throw 的长错误消息按控制台宽度折行，
+  // 路径可能被拆到两行（如 no-nod\ne-here），所以先去掉换行再匹配。
+  assert.ok(
+    combined.replace(/[\r\n]+/g, '').includes(emptyDir),
+    `error should mention searched dir ${emptyDir}`,
+  );
 });
 
 function escapeRegExp(value: string): string {
