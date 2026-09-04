@@ -21,10 +21,13 @@
 #   preflight/package/publish  版本发布（tag 流水线，artifact 永久保留）
 #
 # Tauri 更新签名（createUpdaterArtifacts: true）：GitLab 变量必须单行（masked
-# 规则禁止换行），因此 TAURI_SIGNING_PRIVATE_KEY 存的是 minisign 私钥文件的
-# base64（base64 -w0 < tauri-updater.key）。tauri-cli 只接受「文件路径」或
-# 「原始多行内容」、不会自己解 base64，所以每个打包作业先跑
-# scripts/stage-tauri-key.sh|.ps1 把变量解码成临时文件再指向它。
+# 规则禁止换行），因此 TAURI_SIGNING_PRIVATE_KEY 存的是 minisign 私钥的
+# base64（base64 -w0 < tauri-updater.key）。tauri-cli v2 (>=2.10) 会自己把
+# 该值（文件路径的内容或原始字符串）按 base64 解码（见
+# crates/tauri-cli/src/helpers/updater_signature.rs 的 secret_key/decode_key），
+# 所以 scripts/stage-tauri-key.sh|.ps1 只把 base64 值原样落到临时文件再指向它，
+# 绝不能再 base64 解码一次（否则 tauri 拿到 "untrusted comment:" 原文会报
+# "failed to decode base64 secret key: Invalid symbol 32"）。
 stages: [verify, compile, daily-package, audit, version, preflight, package, publish]
 
 default:
