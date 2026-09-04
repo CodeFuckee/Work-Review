@@ -24,7 +24,10 @@ fi
 PKGS=(libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev)
 if [[ $FOR_PACKAGE -eq 1 ]]; then
   # Additional packages needed by the release bundling stage (deb/rpm/appimage).
-  PKGS+=(patchelf libfuse2 rpm rpm2cpio cpio binutils)
+  # NOTE: libfuse2 is intentionally NOT required: the tauri bundler runs
+  # linuxdeploy with `--appimage-extract-and-run` (and sets
+  # APPIMAGE_EXTRACT_AND_RUN=1), so building the AppImage works without FUSE.
+  PKGS+=(patchelf rpm rpm2cpio cpio binutils)
 fi
 
 MISSING=()
