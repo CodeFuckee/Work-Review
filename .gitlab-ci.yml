@@ -219,16 +219,28 @@ build-release-windows:
 
 # Shared pre-package steps for the Windows packaging jobs (PowerShell):
 # 1) stage the updater signing key (see scripts/stage-tauri-key.ps1);
-# 2) repair a stale NSIS tool cache: tauri caches NSIS under
-#    %LOCALAPPDATA%\tauri\NSIS and skips re-download when the directory
-#    exists; if makensis.exe is missing from a previously (partially)
-#    extracted cache, the bundler dies with "Unable to start child process,
-#    error 0x2". Removing the broken cache forces a fresh download.
+# 2) redirect LOCALAPPDATA for the job process tree. The runner service
+#    runs as LocalSystem, and tauri extracts NSIS under
+#    %LOCALAPPDATA%\tauri\NSIS (= systemprofile's AppData). Files placed
+#    there exist but cannot be executed: the bundler dies with
+#    "Unable to start child process, error 0x2" (tauri#9895). Pointing
+#    LOCALAPPDATA at a regular directory makes the toolset runnable.
+# 3) repair a stale NSIS tool cache: tauri skips re-download when the
+#    cache directory exists; if makensis.exe is missing from a
+#    previously (partially) extracted cache, remove it to force a
+#    fresh download.
 .windows-package-pre-steps:
   steps:
     - |
       $ErrorActionPreference = "Stop"
       & "$env:CI_PROJECT_DIR\scripts\stage-tauri-key.ps1"
+      $buildsRoot = if ($env:CI_BUILDS_DIR) { $env:CI_BUILDS_DIR } else { "$env:SystemDrive\GitLab-Runner\builds" }
+      $toolLocalAppData = Join-Path (Split-Path -Parent $buildsRoot) "tauri-localappdata"
+      New-Item -ItemType Directory -Path $toolLocalAppData -Force | Out-Null
+      if ($env:LOCALAPPDATA -ne $toolLocalAppData) {
+        Write-Output "Redirecting LOCALAPPDATA to $toolLocalAppData (tauri#9895 workaround)."
+      }
+      $env:LOCALAPPDATA = $toolLocalAppData
       $nsisCache = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
       if (Test-Path $nsisCache) {
         if (Test-Path (Join-Path $nsisCache "makensis.exe")) {
