@@ -218,38 +218,20 @@ build-release-windows:
       - target/release/Work_Review.exe
 
 # Shared pre-package steps for the Windows packaging jobs (PowerShell):
-# 1) stage the updater signing key (see scripts/stage-tauri-key.ps1);
-# 2) redirect LOCALAPPDATA for the job process tree. The runner service
-#    runs as LocalSystem, and tauri extracts NSIS under
-#    %LOCALAPPDATA%\tauri\NSIS (= systemprofile's AppData). Files placed
-#    there exist but cannot be executed: the bundler dies with
-#    "Unable to start child process, error 0x2" (tauri#9895). Pointing
-#    LOCALAPPDATA at a regular directory makes the toolset runnable.
-# 3) repair a stale NSIS tool cache: tauri skips re-download when the
-#    cache directory exists; if makensis.exe is missing from a
-#    previously (partially) extracted cache, remove it to force a
-#    fresh download.
+# stage the updater signing key (see scripts/stage-tauri-key.ps1).
+#
+# NSIS toolset placement note: the runner service executes jobs as
+# LocalSystem, and tauri used to extract NSIS under systemprofile's
+# AppData where the toolset exists but cannot be executed ("Unable to
+# start child process, error 0x2", see tauri#9895). src-tauri/
+# tauri.windows.conf.json sets bundle.useLocalToolsDir=true so the NSIS
+# toolset is extracted under src-tauri/target/.tauri/NSIS instead, where
+# it runs fine. The zip is SHA1-verified on every fresh download.
 .windows-package-pre-steps:
   steps:
     - |
       $ErrorActionPreference = "Stop"
       & "$env:CI_PROJECT_DIR\scripts\stage-tauri-key.ps1"
-      $buildsRoot = if ($env:CI_BUILDS_DIR) { $env:CI_BUILDS_DIR } else { "$env:SystemDrive\GitLab-Runner\builds" }
-      $toolLocalAppData = Join-Path (Split-Path -Parent $buildsRoot) "tauri-localappdata"
-      New-Item -ItemType Directory -Path $toolLocalAppData -Force | Out-Null
-      if ($env:LOCALAPPDATA -ne $toolLocalAppData) {
-        Write-Output "Redirecting LOCALAPPDATA to $toolLocalAppData (tauri#9895 workaround)."
-      }
-      $env:LOCALAPPDATA = $toolLocalAppData
-      $nsisCache = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
-      if (Test-Path $nsisCache) {
-        if (Test-Path (Join-Path $nsisCache "makensis.exe")) {
-          Write-Output "NSIS cache OK: $nsisCache"
-        } else {
-          Write-Output "Stale NSIS cache without makensis.exe at $nsisCache - removing to force re-download."
-          Remove-Item -Recurse -Force $nsisCache
-        }
-      }
 
 # ---- 日常安装包：每次 push main 产三平台完整安装包并上传为 CI artifact ----
 # 用户可直接下载安装使用；GitLab 提供固定「latest」链接（自动指向最近一次成功构建）：
