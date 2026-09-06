@@ -41,6 +41,9 @@ const fallbackIconMap = new Map<string, string>([
   ['work review', '/icons/256x256.png'],
   ['work-review', '/icons/256x256.png'],
   ['work_review', '/icons/256x256.png'],
+  ['daily report', '/icons/256x256.png'],
+  ['daily-report', '/icons/256x256.png'],
+  ['daily_report', '/icons/256x256.png'],
   ['electron', electronSvg],
   ['electron helper', electronSvg],
   ['discover', discoverSvg],
@@ -100,7 +103,10 @@ export function getFallbackAppIcon(appName: unknown): string | null {
     return fallbackIconMap.get(normalized)!;
   }
 
-  if (normalized.includes('work review') || normalized.includes('work-review') || normalized.includes('work_review')) {
+  if (
+    normalized.includes('work review') || normalized.includes('work-review') || normalized.includes('work_review')
+    || normalized.includes('daily report') || normalized.includes('daily-report') || normalized.includes('daily_report')
+  ) {
     return '/icons/256x256.png';
   }
 

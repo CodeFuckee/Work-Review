@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linux CI 去掉 sudo**：rust-verify-linux / tauri-package-linux 此前在 before_script 执行 `sudo apt-get`（shell executor 无 TTY，sudo 等待密码直到 job 超时）；现改为非 sudo 的 `scripts/check-linux-deps.sh` 预检（dpkg -s），系统依赖（libwebkit2gtk-4.1-dev、libgtk-3-dev、libayatana-appindicator3-dev、librsvg2-dev，打包另加 patchelf、libfuse2、rpm、rpm2cpio、cpio、binutils）改为在 Linux runner 上一次性手动安装，缺失时打印安装指引。
 - **Windows CI 工具链引导**（rust-verify-windows / tauri-package-windows）：`.powershell-toolchain` 此前只兜底 `C:\Program Files\nodejs` 一个目录，node 由 nvm-windows / scoop / chocolatey 安装或尚未安装时直接报 `node not found` 失败；现提取为 `scripts/windows-toolchain.ps1`，自动探测官方安装、nvm-windows（取最新版本）、scoop、chocolatey 等位置，缺失时列出已查找位置；同时为 npm 12 新增项目级 `.npmrc`（allow-remote）与 package.json `allowScripts`（esbuild），修复 CI `npm ci` 的 EALLOWREMOTE 与 install-scripts 拦截；`check-linux-glibc` 测试在无 bash 的 Windows 环境跳过。
 ### 变更
+- **应用更名为 Daily-Report**：产品名（productName）、主窗口标题、侧边栏/关于页品牌、桌宠场景文案、macOS 权限提示与 i18n 版权行统一改为「Daily-Report」；前端图标/名称归一化同时兼容新旧名称（改名前的历史记录仍可正确识别为应用自身）。打包二进制名（Work_Review.exe）、包标识（com.workreview.app）、数据目录与 CI 产物命名保持不变，避免影响既有安装与升级。
 - **安全公告评估关闭**：五条 unsound 类 RustSec 跟踪 Issue（#167-#171：anyhow / event-listener / glib / memmap2 / rand）经 `cargo tree --target all` 依赖路径评估，确认触发条件在本项目均不可达（自有代码不调用受影响 API，相关 crate 均为传递依赖，rand 0.7 仅存在于构建依赖链），全部评估关闭；unsound / 漏洞类公告继续按 Issue 跟踪。
 
 ## [1.1.2] - 2026-08-22

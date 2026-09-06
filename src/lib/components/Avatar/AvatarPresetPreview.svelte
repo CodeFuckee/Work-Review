@@ -12,7 +12,7 @@
   $: presetOption = getAvatarPresetOption(normalizedPresetId);
   $: previewState = {
     mode: previewMode,
-    appName: 'Work Review',
+    appName: 'Daily-Report',
     contextLabel: '办公中',
     hint: '',
     isIdle: false,

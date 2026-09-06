@@ -61,8 +61,8 @@ export function getPreferredTimelineAppName(activity: TimelineActivityLike = {})
     && (
       appComparable.includes(titleComparable)
       || (
-        appComparable.startsWith('workreview')
-        && titleComparable.startsWith('workreview')
+        (appComparable.startsWith('workreview') || appComparable.startsWith('dailyreport'))
+        && (titleComparable.startsWith('workreview') || titleComparable.startsWith('dailyreport'))
         && appComparable.endsWith('setup')
         && titleComparable.endsWith('setup')
       )

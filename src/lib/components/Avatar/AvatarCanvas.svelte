@@ -312,7 +312,7 @@
 
   export let state: AvatarCanvasState = {
     mode: 'idle',
-    appName: 'Work Review',
+    appName: 'Daily-Report',
     contextLabel: '待命中',
     hint: '',
     isIdle: true,
@@ -366,7 +366,7 @@
   $: sceneSrc = preset.sceneSrc;
   $: contentTransform = preset.contentTransform ?? '';
   $: staticCoverSrc = preset.staticCoverSrc ?? null;
-  $: sceneAlt = t('avatar.sceneAlt', { name: state.appName || 'Work Review' });
+  $: sceneAlt = t('avatar.sceneAlt', { name: state.appName || 'Daily-Report' });
   $: frameIndex = Math.floor(motionBeat / 2);
   $: useSourceKeyboardMode = renderMode === 'source-keyboard';
   $: standardHandSrc = keyboardActive

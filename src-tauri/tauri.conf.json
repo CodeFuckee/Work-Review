@@ -74,7 +74,7 @@
       }
     }
   },
-  "productName": "Work Review",
+  "productName": "Daily-Report",
   "mainBinaryName": "Work_Review",
   "version": "1.1.18",
   "identifier": "com.workreview.app",
@@ -95,7 +95,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Work Review",
+        "title": "Daily-Report",
         "width": 1000,
         "height": 700,
         "visible": false,

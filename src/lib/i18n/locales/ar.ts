@@ -369,7 +369,7 @@ export default {
       feedbackIssue: 'الإبلاغ عن مشكلة',
       feedbackHint: 'انقر «نسخ معلومات البيئة» قبل الإبلاغ — يساعد ذلك على تحديد المشكلة أسرع.',
       allLicenses: '← جميع تراخيص الأطراف الثالثة',
-      licenseLine: '© 2026 Work Review · رخصة MIT',
+      licenseLine: '© 2026 Daily-Report · رخصة MIT',
       envInfoTitle: 'معلومات البيئة',
     },
     memoryPage: {

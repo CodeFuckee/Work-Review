@@ -363,7 +363,7 @@ export default {
       feedbackIssue: '回報問題',
       feedbackHint: '回報前先點「複製環境資訊」,問題能更快被定位。',
       allLicenses: '全部第三方授權 →',
-      licenseLine: '© 2026 Work Review · MIT License',
+      licenseLine: '© 2026 Daily-Report · MIT License',
       envInfoTitle: '環境資訊',
     },
     memoryPage: {

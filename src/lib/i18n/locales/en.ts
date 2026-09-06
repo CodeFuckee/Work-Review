@@ -372,7 +372,7 @@ export default {
       feedbackIssue: 'Report an issue',
       feedbackHint: 'Click "Copy environment info" before reporting — it helps locate the issue faster.',
       allLicenses: 'All third-party licenses →',
-      licenseLine: '© 2026 Work Review · MIT License',
+      licenseLine: '© 2026 Daily-Report · MIT License',
       envInfoTitle: 'Environment info',
     },
     memoryPage: {

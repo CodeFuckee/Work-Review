@@ -363,7 +363,7 @@ export default {
       feedbackIssue: '反馈问题',
       feedbackHint: '反馈前先点「复制环境信息」,问题能更快被定位。',
       allLicenses: '全部第三方许可 →',
-      licenseLine: '© 2026 Work Review · MIT License',
+      licenseLine: '© 2026 Daily-Report · MIT License',
       envInfoTitle: '环境信息',
     },
     memoryPage: {

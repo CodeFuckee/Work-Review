@@ -10,9 +10,9 @@ test('时间线应优先显示更友好的窗口标题作为应用名', () => {
   assert.equal(
     getPreferredTimelineAppName({
       appName: 'uninstall',
-      windowTitle: 'Work Review Uninstall',
+      windowTitle: 'Daily-Report Uninstall',
     }),
-    'Work Review Uninstall'
+    'Daily-Report Uninstall'
   );
 
   assert.equal(
@@ -23,6 +23,16 @@ test('时间线应优先显示更友好的窗口标题作为应用名', () => {
     'XFLTD'
   );
 
+  assert.equal(
+    getPreferredTimelineAppName({
+      appName: 'Daily-Report_1.1.17_x64-setup',
+      windowTitle: 'Daily-Report Setup',
+    }),
+    'Daily-Report Setup'
+  );
+});
+
+test('时间线应兼容改名前的 Work Review 历史记录', () => {
   assert.equal(
     getPreferredTimelineAppName({
       appName: 'Work_Review.v1.0.35_x64-setup',
@@ -36,15 +46,15 @@ test('时间线只应对明确安装器优先使用 fallback icon', () => {
   assert.equal(
     shouldPreferTimelineFallbackIcon({
       appName: 'uninstall',
-      windowTitle: 'Work Review Uninstall',
+      windowTitle: 'Daily-Report Uninstall',
     }),
     true
   );
 
   assert.equal(
     shouldPreferTimelineFallbackIcon({
-      appName: 'Work_Review.v1.0.35_x64-setup',
-      windowTitle: 'Work Review Setup',
+      appName: 'Daily-Report_1.1.17_x64-setup',
+      windowTitle: 'Daily-Report Setup',
     }),
     true
   );
