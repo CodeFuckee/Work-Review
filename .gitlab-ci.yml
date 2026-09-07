@@ -632,6 +632,12 @@ publish-release:
     - VERSION="${CI_COMMIT_TAG#v}"
     - awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > release_notes.md
     - test -s release_notes.md || printf '版本 %s 更新\n' "$VERSION" > release_notes.md
+    # bash 默认不开 globstar，`**` 只匹配「恰好一层」目录；而 Windows 的 NSIS
+    # 产物在 target/release/bundle/nsis/（target 与 release 之间零层），macOS/Linux
+    # 在 target/<triple>/release/...（一层）。shopt -s globstar 让 `**` 匹配
+    # 「零层或多层」目录，避免未匹配的 glob 原样传给 glab 报
+    # "stat target/**/release/bundle/nsis/*.exe: no such file or directory"。
+    - shopt -s globstar
     - >-
       glab release create "$CI_COMMIT_TAG" --name "Work Review $CI_COMMIT_TAG"
       --notes-file release_notes.md
