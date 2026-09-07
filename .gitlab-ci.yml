@@ -437,15 +437,35 @@ cargo-audit:
   tags: ["$LINUX_X64_RUNNER_TAG"]
   script:
     - cargo install cargo-audit --locked
-    - >-
-      cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
-      --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0411 --ignore RUSTSEC-2024-0412
-      --ignore RUSTSEC-2024-0413 --ignore RUSTSEC-2024-0414 --ignore RUSTSEC-2024-0415
-      --ignore RUSTSEC-2024-0416 --ignore RUSTSEC-2024-0417 --ignore RUSTSEC-2024-0418
-      --ignore RUSTSEC-2024-0419 --ignore RUSTSEC-2024-0420 --ignore RUSTSEC-2024-0436
-      --ignore RUSTSEC-2025-0057 --ignore RUSTSEC-2025-0075 --ignore RUSTSEC-2025-0080
-      --ignore RUSTSEC-2025-0081 --ignore RUSTSEC-2025-0098 --ignore RUSTSEC-2025-0100
-      --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0258
+    # cargo audit 首次会从 github.com/RustSec/advisory-db 拉取漏洞库，GitHub
+    # 网络抖动会让整个发布链（preflight/package/publish）被卡死，这里重试 3 次。
+    - |
+      set -e
+      success=0
+      for i in 1 2 3; do
+        echo "=== cargo-audit attempt $i/3 ==="
+        if cargo audit \
+          --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 \
+          --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0411 --ignore RUSTSEC-2024-0412 \
+          --ignore RUSTSEC-2024-0413 --ignore RUSTSEC-2024-0414 --ignore RUSTSEC-2024-0415 \
+          --ignore RUSTSEC-2024-0416 --ignore RUSTSEC-2024-0417 --ignore RUSTSEC-2024-0418 \
+          --ignore RUSTSEC-2024-0419 --ignore RUSTSEC-2024-0420 --ignore RUSTSEC-2024-0436 \
+          --ignore RUSTSEC-2025-0057 --ignore RUSTSEC-2025-0075 --ignore RUSTSEC-2025-0080 \
+          --ignore RUSTSEC-2025-0081 --ignore RUSTSEC-2025-0098 --ignore RUSTSEC-2025-0100 \
+          --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0258; then
+          echo "cargo-audit passed on attempt $i"
+          success=1
+          break
+        fi
+        if [ "$i" -lt 3 ]; then
+          echo "attempt $i failed, retrying in 15s..."
+          sleep 15
+        fi
+      done
+      if [ "$success" -eq 0 ]; then
+        echo "cargo-audit failed after 3 attempts" >&2
+        exit 1
+      fi
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - changes: ["**/Cargo.toml", "**/Cargo.lock", package.json, package-lock.json]
