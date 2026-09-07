@@ -441,7 +441,9 @@ cargo-audit:
   stage: audit
   tags: ["$LINUX_X64_RUNNER_TAG"]
   script:
-    - cargo install cargo-audit --locked
+    # 越秀服务器可预装：cargo install cargo-audit --locked
+    # 已装则跳过编译（crates.io 编译每次 ~1-2 分钟，且避免网络波动）。
+    - command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
     # 优先用 linux-x64 runner 上预下载的 advisory-db（--no-fetch，零网络）；
     # 未预下载则回退网络拉取——GitHub 抖动曾把发布链（preflight/package/publish）
     # 卡死在 audit 阶段，网络路径带 3 次重试。
