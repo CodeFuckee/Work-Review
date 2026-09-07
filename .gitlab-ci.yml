@@ -47,6 +47,10 @@ variables:
   # 无对应设备（runner）的架构默认「掠过」：设为 "true" 才启用该平台产物与发布。
   PACKAGE_LINUX_ARM64: "false"
   PACKAGE_MACOS_X64: "false"
+  # 预下载的 RustSec advisory-db（在 linux-x64 runner=越秀服务器 上一次性
+  # git clone https://github.com/RustSec/advisory-db <此路径>）。cargo-audit 优先
+  # 用 --no-fetch 本地审计（零网络）；未预下载时回退到网络拉取（带重试）。
+  ADVISORY_DB_PATH: "/opt/ci-cache/rustsec-advisory-db"
 
 workflow:
   auto_cancel:
@@ -235,6 +239,7 @@ build-release-windows:
     - |
       $ErrorActionPreference = "Stop"
       & "$env:CI_PROJECT_DIR\scripts\stage-tauri-key.ps1"
+      & "$env:CI_PROJECT_DIR\scripts\stage-nsis.ps1"
 
 # ---- 日常安装包：每次 push main 产三平台完整安装包并上传为 CI artifact ----
 # 用户可直接下载安装使用；GitLab 提供固定「latest」链接（自动指向最近一次成功构建）：
@@ -437,34 +442,42 @@ cargo-audit:
   tags: ["$LINUX_X64_RUNNER_TAG"]
   script:
     - cargo install cargo-audit --locked
-    # cargo audit 首次会从 github.com/RustSec/advisory-db 拉取漏洞库，GitHub
-    # 网络抖动会让整个发布链（preflight/package/publish）被卡死，这里重试 3 次。
+    # 优先用 linux-x64 runner 上预下载的 advisory-db（--no-fetch，零网络）；
+    # 未预下载则回退网络拉取——GitHub 抖动曾把发布链（preflight/package/publish）
+    # 卡死在 audit 阶段，网络路径带 3 次重试。
     - |
       set -e
-      success=0
-      for i in 1 2 3; do
-        echo "=== cargo-audit attempt $i/3 ==="
-        if cargo audit \
-          --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 \
-          --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0411 --ignore RUSTSEC-2024-0412 \
-          --ignore RUSTSEC-2024-0413 --ignore RUSTSEC-2024-0414 --ignore RUSTSEC-2024-0415 \
-          --ignore RUSTSEC-2024-0416 --ignore RUSTSEC-2024-0417 --ignore RUSTSEC-2024-0418 \
-          --ignore RUSTSEC-2024-0419 --ignore RUSTSEC-2024-0420 --ignore RUSTSEC-2024-0436 \
-          --ignore RUSTSEC-2025-0057 --ignore RUSTSEC-2025-0075 --ignore RUSTSEC-2025-0080 \
-          --ignore RUSTSEC-2025-0081 --ignore RUSTSEC-2025-0098 --ignore RUSTSEC-2025-0100 \
-          --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0258; then
-          echo "cargo-audit passed on attempt $i"
-          success=1
-          break
+      AUDIT_ARGS="--ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 \
+        --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0411 --ignore RUSTSEC-2024-0412 \
+        --ignore RUSTSEC-2024-0413 --ignore RUSTSEC-2024-0414 --ignore RUSTSEC-2024-0415 \
+        --ignore RUSTSEC-2024-0416 --ignore RUSTSEC-2024-0417 --ignore RUSTSEC-2024-0418 \
+        --ignore RUSTSEC-2024-0419 --ignore RUSTSEC-2024-0420 --ignore RUSTSEC-2024-0436 \
+        --ignore RUSTSEC-2025-0057 --ignore RUSTSEC-2025-0075 --ignore RUSTSEC-2025-0080 \
+        --ignore RUSTSEC-2025-0081 --ignore RUSTSEC-2025-0098 --ignore RUSTSEC-2025-0100 \
+        --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0258"
+      if [ -d "$ADVISORY_DB_PATH/.git" ]; then
+        echo "=== cargo-audit: pre-downloaded advisory-db at $ADVISORY_DB_PATH (--no-fetch) ==="
+        cargo audit --no-fetch --db "$ADVISORY_DB_PATH" $AUDIT_ARGS
+      else
+        echo "advisory-db not found at $ADVISORY_DB_PATH, fetching from GitHub with retry."
+        echo "Tip: on the linux-x64 runner run: git clone https://github.com/RustSec/advisory-db \"$ADVISORY_DB_PATH\""
+        success=0
+        for i in 1 2 3; do
+          echo "=== cargo-audit attempt $i/3 ==="
+          if cargo audit $AUDIT_ARGS; then
+            echo "cargo-audit passed on attempt $i"
+            success=1
+            break
+          fi
+          if [ "$i" -lt 3 ]; then
+            echo "attempt $i failed, retrying in 15s..."
+            sleep 15
+          fi
+        done
+        if [ "$success" -eq 0 ]; then
+          echo "cargo-audit failed after 3 attempts" >&2
+          exit 1
         fi
-        if [ "$i" -lt 3 ]; then
-          echo "attempt $i failed, retrying in 15s..."
-          sleep 15
-        fi
-      done
-      if [ "$success" -eq 0 ]; then
-        echo "cargo-audit failed after 3 attempts" >&2
-        exit 1
       fi
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
@@ -648,6 +661,11 @@ publish-release:
     - job: tauri-package-linux-arm64
       optional: true
     - job: tauri-package-windows
+  before_script:
+    - bash scripts/stage-tauri-key.sh
+  variables:
+    # jedisct1/minisign (>=0.10) 从该环境变量读取私钥口令，非交互签名。
+    MINISIGN_PASSWORD: "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
   script:
     - VERSION="${CI_COMMIT_TAG#v}"
     - awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > release_notes.md
@@ -658,6 +676,33 @@ publish-release:
     # 「零层或多层」目录，避免未匹配的 glob 原样传给 glab 报
     # "stat target/**/release/bundle/nsis/*.exe: no such file or directory"。
     - shopt -s globstar
+    # mac runner 偶发在 artifact 上传时丢 .app.tar.gz.sig（v1.1.20 曾出现
+    # "File ignored: lstat ... no such file"），对缺失的 .sig 用同一把私钥补签
+    # （更新器只校验签名有效性，任何合法 minisign 签名均可）。minisign 二进制
+    # 可预下载到 linux-x64 runner 的 /opt/ci-cache/bin/minisign（见下方提示），
+    # 缺失且恰好有 .sig 丢失时才报错。
+    - |
+      set -e
+      MS="$(command -v minisign 2>/dev/null || true)"
+      if [ -z "$MS" ] && [ -x /opt/ci-cache/bin/minisign ]; then MS=/opt/ci-cache/bin/minisign; fi
+      for f in target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/nsis/*.exe; do
+        [ -f "$f" ] || continue
+        sig="${f}.sig"
+        if [ ! -s "$sig" ]; then
+          echo ">>> regenerating missing updater signature: $sig"
+          if [ -z "$MS" ]; then
+            echo "minisign not found in PATH nor /opt/ci-cache/bin/minisign" >&2
+            echo "Download once on the linux-x64 runner:" >&2
+            echo "  https://github.com/jedisct1/minisign/releases/latest  (minisign-*-linux-x86_64.tar.gz)" >&2
+            echo "  -> extract minisign to /opt/ci-cache/bin/minisign" >&2
+            exit 1
+          fi
+          rawkey="$(mktemp)"
+          base64 -d "$TAURI_SIGNING_PRIVATE_KEY" > "$rawkey"
+          "$MS" -S -s "$rawkey" -m "$f" -x "$sig"
+          rm -f "$rawkey"
+        fi
+      done
     - >-
       glab release create "$CI_COMMIT_TAG" --name "Work Review $CI_COMMIT_TAG"
       --notes-file release_notes.md
