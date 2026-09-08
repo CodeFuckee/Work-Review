@@ -666,6 +666,13 @@ publish-release:
   before_script:
     - bash scripts/stage-tauri-key.sh
   variables:
+    # glab 在 shell executor 里靠 git remote 推断自托管 GitLab host，遇到
+    # 非标准端口（如 home.chenkaidi.top:509）会识别失败并退出
+    # （"none of the git remotes... point to a known GitLab host"）。
+    # 显式传入 host 与 token。CI_SERVER_URL 完整含端口；token 用本作业
+    # 自动注入的 CI_JOB_TOKEN（对当前项目有创建 release 的权限）。
+    GITLAB_HOST: "$CI_SERVER_URL"
+    GITLAB_TOKEN: "$CI_JOB_TOKEN"
     # jedisct1/minisign (>=0.10) 从该环境变量读取私钥口令，非交互签名。
     MINISIGN_PASSWORD: "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
   script:
