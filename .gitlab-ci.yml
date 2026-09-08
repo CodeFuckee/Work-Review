@@ -694,9 +694,9 @@ publish-release:
           echo ">>> regenerating missing updater signature: $sig"
           if [ -z "$MS" ]; then
             echo "minisign not found in PATH nor /opt/ci-cache/bin/minisign" >&2
-            echo "Download once on the linux-x64 runner:" >&2
-            echo "  https://github.com/jedisct1/minisign/releases/latest  (minisign-*-linux-x86_64.tar.gz)" >&2
-            echo "  -> extract minisign to /opt/ci-cache/bin/minisign" >&2
+            echo "Download once on the linux-x64 runner (minisign 0.12, linux x86_64):" >&2
+            echo "  curl -fL -o /tmp/minisign.tar.gz https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz" >&2
+            echo "  tar -xzf /tmp/minisign.tar.gz -C /tmp && install -m 755 /tmp/minisign-linux/x86_64/minisign /opt/ci-cache/bin/minisign" >&2
             exit 1
           fi
           rawkey="$(mktemp)"
