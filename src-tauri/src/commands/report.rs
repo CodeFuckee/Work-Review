@@ -181,6 +181,9 @@ pub(crate) async fn generate_report_inner(
         )
     };
 
+    // 文本模型兜底：用户未配置（出厂默认）且编译期注入了内置模型时，改用内置模型生成日报
+    let text_model = work_review_core::config::effective_text_model(&config.text_model);
+
     let avatar_start_state = {
         let mut state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         state.avatar_generating_report = true;
@@ -221,13 +224,13 @@ pub(crate) async fn generate_report_inner(
     let report_timeout =
         std::time::Duration::from_secs(config.report_generation_timeout_secs.max(60));
 
-    // 创建分析器（使用 text_model 配置）
+    // 创建分析器（使用兜底解析后的 text_model 配置）
     let analyzer = work_review_core::analysis::create_analyzer(
         config.ai_mode,
-        config.text_model.provider,
-        &config.text_model.endpoint,
-        &config.text_model.model,
-        config.text_model.api_key.as_deref(),
+        text_model.provider,
+        &text_model.endpoint,
+        &text_model.model,
+        text_model.api_key.as_deref(),
         &config.daily_report_custom_prompt,
         config.daily_report_system_prompt_override.as_deref(),
         report_locale,
@@ -357,11 +360,8 @@ pub(crate) async fn generate_report_inner(
     if let Some(note) = gitlab_failure_note.as_deref() {
         report.push_str(&format!("\n\n{note}"));
     }
-    let (saved_ai_mode, saved_model_name) = resolve_saved_report_metadata(
-        &config.ai_mode,
-        &config.text_model.model,
-        generated_report.used_ai,
-    );
+    let (saved_ai_mode, saved_model_name) =
+        resolve_saved_report_metadata(&config.ai_mode, &text_model.model, generated_report.used_ai);
 
     // 保存报告
     {

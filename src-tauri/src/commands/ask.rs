@@ -2438,6 +2438,11 @@ pub async fn chat_work_assistant(
         user_memory_prompt.as_deref(),
         || build_realtime_context_text(&state_arc),
     );
+    // 文本模型兜底：前端未传或传出厂默认配置时，使用编译期内置模型（若已注入）
+    let model_config = match model_config {
+        Some(config) => Some(work_review_core::config::effective_text_model(&config)),
+        None => work_review_core::config::builtin_text_model(),
+    };
     let result = crate::agent::tools::with_user_memory_tool_capabilities(
         user_memory_capabilities,
         crate::agent::Orchestrator::handle(
@@ -2493,6 +2498,7 @@ pub async fn generate_text_with_model(
     system_prompt: String,
     prompt: String,
 ) -> Result<String, AppError> {
+    let model_config = work_review_core::config::effective_text_model(&model_config);
     generate_text_answer_with_model(&model_config, &system_prompt, &prompt).await
 }
 

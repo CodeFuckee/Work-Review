@@ -16,6 +16,11 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    // target/ 是 cargo 构建产物目录：dev 模式下 cargo 与 vite 并行运行，
+    // 监视其中的 dll/中间产物会在写入瞬间以 EBUSY 崩溃（Windows 实测）。
+    watch: {
+      ignored: ['**/target/**'],
+    },
     cors: {
       origin: /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/,
     },

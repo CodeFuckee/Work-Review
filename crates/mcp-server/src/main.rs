@@ -897,12 +897,14 @@ fn handle_tool_call(name: &str, args: &Value, state: &Arc<Mutex<AppState>>) -> V
                 .and_then(|p| serde_json::from_value(p.clone()).ok())
                 .unwrap_or_default();
 
+            // 文本模型兜底：用户未配置时使用编译期内置模型（若已注入）
+            let text_model = work_review_core::config::effective_text_model(&s.config.text_model);
             let ctx = ExecutionContext {
                 params: params_map,
                 db_path: String::new(),
-                ai_endpoint: Some(s.config.text_model.endpoint.clone()),
-                ai_api_key: s.config.text_model.api_key.clone(),
-                ai_model: Some(s.config.text_model.model.clone()),
+                ai_endpoint: Some(text_model.endpoint.clone()),
+                ai_api_key: text_model.api_key.clone(),
+                ai_model: Some(text_model.model.clone()),
                 // MCP 客户端属外部调用方，默认拒绝含 Script 步骤的技能
                 allow_script_skills: false,
             };

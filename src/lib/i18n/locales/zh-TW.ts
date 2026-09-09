@@ -960,6 +960,7 @@ export default {
       sectionModel: '模型設定',
       sectionWeb: '助手連網',
       sectionMemory: '語義記憶',
+      builtinModelHint: '未設定模型時將使用內建模型，開箱即用；生成內容會傳送至內建模型對應的第三方 AI 服務。',
       connectionTitle: '連線',
       statusConnected: '已連線',
       statusFailed: '連線失敗',

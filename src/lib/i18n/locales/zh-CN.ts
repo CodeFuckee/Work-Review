@@ -959,6 +959,7 @@ export default {
       sectionModel: '模型配置',
       sectionWeb: '助手联网',
       sectionMemory: '语义记忆',
+      builtinModelHint: '未配置模型时将使用内置模型，开箱即用；生成内容会发送至内置模型对应的第三方 AI 服务。',
       connectionTitle: '连接',
       statusConnected: '已连接',
       statusFailed: '连接失败',

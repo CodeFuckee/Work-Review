@@ -361,6 +361,19 @@
   $: isTextModelConfigured = textConnectionVerified;
   $: hasTextModelConfig = !!(config?.text_model?.endpoint && config?.text_model?.model);
 
+  // 内置兜底模型：仅在「出厂默认配置」时生效，判定与后端 is_factory_default_text 保持一致
+  // （含旧版迁移产生的幽灵默认：模型名恰为 Ollama 默认模型 qwen3）
+  let hasBuiltinModel = false;
+  $: ollamaProvider = providers.find(p => p.id === 'ollama');
+  $: ollamaDefaultEndpoint = ollamaProvider?.default_endpoint || 'http://localhost:11434';
+  $: ollamaDefaultModel = ollamaProvider?.default_model || 'qwen3';
+  $: usingBuiltinModel = hasBuiltinModel
+    && config?.text_model?.provider === 'ollama'
+    && (config?.text_model?.endpoint || '').trim() === ollamaDefaultEndpoint
+    && !(config?.text_model?.api_key || '').trim()
+    && (!(config?.text_model?.model || '').trim()
+      || (config?.text_model?.model || '').trim() === ollamaDefaultModel);
+
   // 本地 API（LM Studio / Ollama / 任意 localhost 端点）的自动测试会触发模型加载，
   // 耗时且无必要 —— 这类端点跳过进入页面时的自动测试，由用户手动点"测试"。
   function isLocalEndpoint() {
@@ -664,6 +677,11 @@
 
   onMount(async () => {
     refreshSemanticStats();
+    try {
+      hasBuiltinModel = await invoke<boolean>('has_builtin_model');
+    } catch {
+      hasBuiltinModel = false;
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
 
     const currentHash = getConfigHash();
@@ -782,6 +800,14 @@
         {/each}
       </div>
     </div>
+
+    <!-- 内置兜底模型提示：仅在编译期注入了内置模型且用户未配置时显示 -->
+    {#if usingBuiltinModel}
+      <div class="mb-4 flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50/70 px-3.5 py-2.5 dark:border-[#1f4468] dark:bg-[#112240]/70">
+        <span class="mt-px text-[13px] leading-5 text-sky-600 dark:text-[#79b8ff]">ℹ</span>
+        <span class="text-[12px] leading-5 text-sky-700 dark:text-[#8ec2ff]">{t('settingsAI.builtinModelHint')}</span>
+      </div>
+    {/if}
 
     <!-- 连接配置卡：字段分组 + 常驻状态徽标 + 紧凑测试入口 -->
     <div class="overflow-hidden rounded-xl border border-slate-200 dark:border-[#30363d]">

@@ -230,6 +230,67 @@ impl ModelConfig {
             max_output_tokens: None,
         }
     }
+
+    /// 出厂默认判定：从未被用户修改过的文本模型配置视为「未配置」。
+    ///
+    /// 覆盖两种形态：
+    /// 1. `default_text()` 原样（Ollama 本地端点 + 空 Key + 空模型名）；
+    /// 2. 旧版迁移/前端默认值产生的幽灵配置——模型名恰为 Ollama 默认模型
+    ///    （`migrate_legacy_config` 会把旧版 `ai_provider` 的 qwen3 迁入空的
+    ///    `text_model`，且随后保存落盘，从未配置过的用户磁盘上即是此形态）。
+    ///
+    /// 真实配置过的用户要么换过端点/填了 Key，要么从模型列表选过具体名字
+    /// （如 `qwen3:8b`），不会被误判。
+    pub fn is_factory_default_text(&self) -> bool {
+        if self.provider != AiProvider::Ollama
+            || self.endpoint.trim() != AiProvider::Ollama.default_endpoint()
+            || !self
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            return false;
+        }
+        let model = self.model.trim();
+        model.is_empty() || model == AiProvider::Ollama.default_model()
+    }
+}
+
+/// 内置兜底模型（编译期注入，不写入源码、不落入配置文件）。
+///
+/// API Key 通过编译期环境变量 `WORK_REVIEW_BUILTIN_MODEL_API_KEY` 注入（CI 变量）；
+/// 本地开发未设置该变量时返回 `None`，所有调用点的行为与未引入兜底机制前完全一致。
+pub fn builtin_text_model() -> Option<ModelConfig> {
+    builtin_text_model_with(option_env!("WORK_REVIEW_BUILTIN_MODEL_API_KEY"))
+}
+
+fn builtin_text_model_with(api_key: Option<&'static str>) -> Option<ModelConfig> {
+    let api_key = api_key.map(str::trim).filter(|key| !key.is_empty())?;
+    Some(ModelConfig {
+        provider: AiProvider::OpenAI,
+        endpoint: "https://laneai.dev/v1".to_string(),
+        api_key: Some(api_key.to_string()),
+        model: "deepseek-v4-flash".to_string(),
+        enable_thinking: None,
+        thinking_budget: None,
+        max_output_tokens: None,
+    })
+}
+
+/// 文本模型兜底解析：用户已配置 → 原样返回；出厂默认（未配置）且编译期注入了内置模型 → 内置模型。
+pub fn effective_text_model(config: &ModelConfig) -> ModelConfig {
+    effective_text_model_with(builtin_text_model().as_ref(), config)
+}
+
+fn effective_text_model_with(builtin: Option<&ModelConfig>, config: &ModelConfig) -> ModelConfig {
+    if config.is_factory_default_text() {
+        if let Some(builtin) = builtin {
+            return builtin.clone();
+        }
+    }
+    config.clone()
 }
 
 /// 可保存的文本模型档案
@@ -1676,8 +1737,24 @@ impl AppConfig {
                 end_minute: self.work_end_minute,
             }];
         }
-        // 如果新配置为空但旧配置有值，则迁移
-        if self.text_model.model.is_empty() && !self.ai_provider.model.is_empty() {
+        // 如果新配置为空但旧配置有值，则迁移。
+        // 例外：旧字段本身是应用的幽灵默认值（Ollama 默认端点 + 无 Key + 默认模型名
+        // qwen3）时不迁移——它不是用户的选择，迁入会把「未配置」永久污染成
+        // 「已配置 qwen3」，导致内置兜底模型永远无法生效。
+        let legacy_ai_is_ghost_default = self.ai_provider.provider == AiProvider::Ollama
+            && self.ai_provider.endpoint.trim() == AiProvider::Ollama.default_endpoint()
+            && self
+                .ai_provider
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && self.ai_provider.model.trim() == AiProvider::Ollama.default_model();
+        if self.text_model.model.is_empty()
+            && !self.ai_provider.model.is_empty()
+            && !legacy_ai_is_ghost_default
+        {
             self.text_model = ModelConfig {
                 provider: self.ai_provider.provider,
                 endpoint: self.ai_provider.endpoint.clone(),
@@ -2174,6 +2251,87 @@ mod tests {
             "work-review-config-{name}-{}",
             uuid::Uuid::new_v4()
         ))
+    }
+
+    #[test]
+    fn 出厂默认判定应识别未修改的文本模型配置() {
+        assert!(super::ModelConfig::default_text().is_factory_default_text());
+
+        // 旧版迁移产生的幽灵默认（模型名恰为 Ollama 默认模型）同样视为未配置
+        assert!(super::ModelConfig {
+            model: AiProvider::Ollama.default_model().to_string(),
+            ..super::ModelConfig::default_text()
+        }
+        .is_factory_default_text());
+
+        // 用户改了任意一项（模型名 / 端点 / Key / 提供商）都视为已配置
+        let cases = [
+            super::ModelConfig {
+                model: "qwen2.5".to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                model: "qwen3:8b".to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                endpoint: "http://192.168.1.8:11434".to_string(),
+                model: AiProvider::Ollama.default_model().to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                api_key: Some("sk-user".to_string()),
+                model: AiProvider::Ollama.default_model().to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                provider: AiProvider::OpenAI,
+                ..super::ModelConfig::default_text()
+            },
+        ];
+        for case in &cases {
+            assert!(
+                !case.is_factory_default_text(),
+                "带用户修改的配置不应被判为出厂默认: {case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 空白内置密钥不应生成内置模型() {
+        assert!(super::builtin_text_model_with(None).is_none());
+        assert!(super::builtin_text_model_with(Some("")).is_none());
+        assert!(super::builtin_text_model_with(Some("   ")).is_none());
+
+        let builtin = super::builtin_text_model_with(Some(" sk-builtin ")).expect("应生成内置模型");
+        assert_eq!(builtin.api_key.as_deref(), Some("sk-builtin"));
+        assert_eq!(builtin.endpoint, "https://laneai.dev/v1");
+        assert_eq!(builtin.model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn 兜底解析应仅在未配置时替换为内置模型() {
+        let builtin = super::builtin_text_model_with(Some("sk-builtin")).unwrap();
+
+        // 出厂默认 → 内置模型
+        let resolved =
+            super::effective_text_model_with(Some(&builtin), &super::ModelConfig::default_text());
+        assert_eq!(resolved.model, "deepseek-v4-flash");
+        assert_eq!(resolved.api_key.as_deref(), Some("sk-builtin"));
+
+        // 用户已配置 → 原样保留
+        let configured = super::ModelConfig {
+            model: "my-model".to_string(),
+            ..super::ModelConfig::default_text()
+        };
+        let resolved = super::effective_text_model_with(Some(&builtin), &configured);
+        assert_eq!(resolved.model, "my-model");
+        assert!(resolved.api_key.is_none());
+
+        // 无内置模型（未编译期注入）→ 原样保留出厂默认，行为与旧版一致
+        let resolved = super::effective_text_model_with(None, &super::ModelConfig::default_text());
+        assert_eq!(resolved.model, "");
+        assert!(resolved.api_key.is_none());
     }
 
     #[test]

@@ -1741,7 +1741,8 @@ async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
 
         let text_model = {
             let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            state_guard.config.text_model.clone()
+            // 文本模型兜底：用户未配置时使用编译期内置模型（若已注入）
+            work_review_core::config::effective_text_model(&state_guard.config.text_model)
         };
 
         let activity_decision = avatar_activity_decision(
@@ -3732,7 +3733,8 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
             url_durations,
         ) = {
             let guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            let model = guard.config.text_model.clone();
+            // 文本模型兜底：用户未配置时使用编译期内置模型（若已注入）
+            let model = work_review_core::config::effective_text_model(&guard.config.text_model);
             let category_options = guard
                 .config
                 .custom_categories
@@ -4615,6 +4617,7 @@ async fn main() {
             commands::get_screenshot_full,
             commands::test_remote_storage,
             commands::test_model,
+            commands::has_builtin_model,
             commands::get_ai_providers,
             commands::fetch_models,
             commands::get_running_apps,

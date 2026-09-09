@@ -53,12 +53,12 @@ The focus is not "monitoring". It is helping you **recall, organize, and review*
 
 - **Automatic work context recording** — Records foreground apps, browser pages, window titles, usage time, optional screenshots, and OCR text, reducing manual note-taking
 - **Unified timeline and statistics** — Overview, timeline, work assistant, and daily report share the same local records, so you can inspect trends and drill into context
-- **Questions over local records** — Use the basic template or your configured model to answer "What did I do today?", "How long did this task take?", and "What have I been focused on?"
+- **Questions over local records** — Use the basic template, your configured model, or the built-in fallback model (works out of the box when nothing is configured) to answer "What did I do today?", "How long did this task take?", and "What have I been focused on?"
 - **Daily report generation and export** — Generate structured daily reports with Markdown export, auto-export, paragraph editing, pin/hide controls, and cached AI section ordering
 - **Self-hosted GitLab integration** — Optional GitLab settings (server URL + personal access token + project allow list) enrich daily reports with your commits for that date: AI mode merges them into the report body, and a standalone section is appended when AI is unavailable
 - **Automated versioning and release pipeline** — On every green push to `main`, CI bumps the patch version (carrying over at 100, e.g. 1.2.99 → 1.3.0) across all five version sources, creates a `vX.Y.Z` tag, and runs the full three-platform packaging and release flow; every push also builds three-platform release binaries as artifacts
 - **Downloadable installers from every push** — Each green push to `main` also builds the full installers (dmg / deb / rpm / AppImage / nsis exe + portable zip) and uploads them as CI artifacts (kept 30 days). Latest-build links: `https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-windows` (also `package-daily-macos-arm64`, `package-daily-macos-x64`, `package-daily-linux-x64`, `package-daily-linux-arm64`). Tagged releases keep permanent installers via the normal Release flow.
-- **Privacy-first and locally controllable** — Data is stored in local SQLite by default; AI is optional, and model calls use your own API key without third-party relay
+- **Privacy-first and locally controllable** — Data is stored in local SQLite by default; AI is optional, and model calls use your own API key without third-party relay. When no model is configured, the built-in fallback model is used and your question/report content is sent to the third-party AI service behind it.
 - **Desktop Avatar Beta** — Shows work status through a desktop avatar and is gradually expanding toward proactive reminders and context assistance
 - **Multilingual UI** — Available in Simplified Chinese, English, Traditional Chinese, and Arabic (with RTL layout)
 

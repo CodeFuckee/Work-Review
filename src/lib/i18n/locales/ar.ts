@@ -965,6 +965,7 @@ export default {
       sectionModel: 'النماذج',
       sectionWeb: 'اتصال الإنترنت',
       sectionMemory: 'الذاكرة',
+      builtinModelHint: 'عند عدم تكوين أي نموذج، يُستخدم نموذج مدمج مباشرةً؛ ويتم إرسال المحتوى المُنشأ إلى خدمة الذكاء الاصطناعي التابعة لجهة خارجية خلفه.',
       connectionTitle: 'الاتصال',
       statusConnected: 'متصل',
       statusFailed: 'فشل الاتصال',

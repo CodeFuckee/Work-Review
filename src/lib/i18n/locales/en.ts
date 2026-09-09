@@ -975,6 +975,7 @@ export default {
       sectionModel: 'Models',
       sectionWeb: 'Web access',
       sectionMemory: 'Memory',
+      builtinModelHint: 'When no model is configured, a built-in model is used out of the box; generated content is sent to the third-party AI service behind it.',
       connectionTitle: 'Connection',
       statusConnected: 'Connected',
       statusFailed: 'Failed',

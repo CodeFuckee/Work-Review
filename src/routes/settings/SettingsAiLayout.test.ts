@@ -103,3 +103,14 @@ test('select 列表应渲染所有已获取模型并提供手动输入选项', a
   assert.match(source, /__manual__/);
   assert.doesNotMatch(source, /MANUAL_MODEL_VALUE/);
 });
+
+test('内置兜底模型提示应仅依赖编译期注入且未配置时显示', async () => {
+  const source = await readFile(
+    new URL('./components/SettingsAI.svelte', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(source, /invoke<boolean>\('has_builtin_model'\)/);
+  assert.match(source, /usingBuiltinModel/);
+  assert.match(source, /settingsAI\.builtinModelHint/);
+});

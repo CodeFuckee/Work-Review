@@ -62,6 +62,12 @@ pub(crate) fn validate_model_endpoint(endpoint: &str) -> Result<(), AppError> {
     ))
 }
 
+/// 探测是否编译期注入了内置兜底模型（只返回布尔值，不暴露任何配置内容）
+#[tauri::command]
+pub fn has_builtin_model() -> bool {
+    work_review_core::config::builtin_text_model().is_some()
+}
+
 /// 测试模型连接（新版，使用 ModelConfig）
 #[tauri::command]
 pub async fn test_model(model_config: ModelConfig) -> Result<ModelTestResult, AppError> {
