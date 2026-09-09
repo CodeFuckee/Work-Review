@@ -26,11 +26,14 @@ test('应存在五个日常安装包 job（Windows/macOS×2/Linux×2），rules 
   ]) {
     assert.match(yaml, new RegExp(`^${job}:`, 'm'), `缺少 job ${job}`);
   }
-  // 模板：非 tag、on_success
+  // 模板：非 tag、仅 main push（打安装包依赖受保护签名变量，对功能分支/MR 流水线不可见）
   const template = yaml.match(/\.package-daily:[\s\S]*?rules:[\s\S]*?\n\n/)?.[0] ?? '';
   assert.match(template, /stage: daily-package/);
   assert.match(template, /if: '\$CI_COMMIT_TAG'\s+when: never/);
-  assert.match(template, /when: on_success/);
+  assert.match(
+    template,
+    /if: '\$CI_PIPELINE_SOURCE == "push" && \$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH'/,
+  );
   // 无设备的架构默认掠过（变量开关）
   assert.match(yaml, /PACKAGE_LINUX_ARM64: "false"/);
   assert.match(yaml, /PACKAGE_MACOS_X64: "false"/);
