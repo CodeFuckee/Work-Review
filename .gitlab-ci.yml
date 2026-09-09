@@ -247,10 +247,15 @@ build-release-windows:
 # artifact 保留 30 天；tag 发布版走原 package 阶段（永久保留 + glab release）。
 .package-daily:
   stage: daily-package
+  # 仅 main push 运行（tag 跳过，发布走 package/publish 阶段）：打安装包需要
+  # 受保护变量 TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)，而受保护变量对功能分支 /
+  # MR 流水线不可见，package-daily 在非 main 分支上必然失败（first MR 流水线
+  # 实测三平台同时报 "TAURI_SIGNING_PRIVATE_KEY is not set"）。
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
-    - when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
 
 package-daily-windows:
   extends: [.powershell-toolchain, .package-daily]
