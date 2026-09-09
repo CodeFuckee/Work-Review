@@ -677,10 +677,21 @@ publish-release:
     MINISIGN_PASSWORD: "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
   before_script:
     - bash scripts/stage-tauri-key.sh
-    # glab 认证在脚本会话内 export：CI_JOB_TOKEN 在脚本环境里一定存在，
-    # 对本项目有创建 release 的权限（release-cli 同款机制）。
-    # CI_SERVER_URL 完整含端口（如 https://home.chenkaidi.top:509）。
-    - export GITLAB_HOST="$CI_SERVER_URL" GITLAB_TOKEN="$CI_JOB_TOKEN"
+    # glab 认证在脚本会话内 export（variables: 展开拿不到 CI_JOB_TOKEN）。
+    # 且本实例（GitLab 19.0.1）对 CI_JOB_TOKEN 调 Releases API 一律返回
+    # "404 Project Not Found"（GET/POST 均匿名化，v1.1.26/v1.1.27 两次实测），
+    # 故改用 version-bump 同款项目访问令牌 GIT_PUSH_TOKEN（write_repository +
+    # api scope；受保护变量，tag 流水线可读，与 TAURI_SIGNING_PRIVATE_KEY 同类）。
+    # 令牌缺失时回退 CI_JOB_TOKEN（标准 GitLab 实例可用）。
+    - |
+      if [ -n "${GIT_PUSH_TOKEN:-}" ]; then
+        export GITLAB_TOKEN="$GIT_PUSH_TOKEN"
+        echo ">>> glab auth: GIT_PUSH_TOKEN"
+      else
+        export GITLAB_TOKEN="$CI_JOB_TOKEN"
+        echo ">>> glab auth: CI_JOB_TOKEN (fallback)"
+      fi
+      export GITLAB_HOST="$CI_SERVER_URL"
   script:
     # runner 检出工作区的 origin URL 不带端口（glab 识别为
     # "home.chenkaidi.top"），与上方 GITLAB_HOST（CI_SERVER_URL，含 :509 端口）
