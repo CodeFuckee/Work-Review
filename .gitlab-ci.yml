@@ -247,10 +247,15 @@ build-release-windows:
 # artifact 保留 30 天；tag 发布版走原 package 阶段（永久保留 + glab release）。
 .package-daily:
   stage: daily-package
+  # 仅 main push 运行（tag 跳过，发布走 package/publish 阶段）：打安装包需要
+  # 受保护变量 TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)，而受保护变量对功能分支 /
+  # MR 流水线不可见，package-daily 在非 main 分支上必然失败（first MR 流水线
+  # 实测三平台同时报 "TAURI_SIGNING_PRIVATE_KEY is not set"）。
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
-    - when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
 
 package-daily-windows:
   extends: [.powershell-toolchain, .package-daily]
@@ -676,6 +681,14 @@ publish-release:
     # jedisct1/minisign (>=0.10) 从该环境变量读取私钥口令，非交互签名。
     MINISIGN_PASSWORD: "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
   script:
+    # runner 检出工作区的 origin URL 不带端口（glab 识别为
+    # "home.chenkaidi.top"），与上方 GITLAB_HOST（CI_SERVER_URL，含 :509 端口）
+    # 不一致，glab 会拒绝执行："None of the git remotes configured for this
+    # repository correspond to the GITLAB_HOST environment variable"
+    # （v1.1.24/v1.1.25 发布失败根因）。把 origin 改写成与 GITLAB_HOST 同源
+    # 的完整地址（只影响本作业工作区，不触碰 runner 配置），并配合下方
+    # glab -R 显式指定仓库，双保险绕开 remote/host 匹配检查。
+    - git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"
     - VERSION="${CI_COMMIT_TAG#v}"
     - awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > release_notes.md
     - test -s release_notes.md || printf '版本 %s 更新\n' "$VERSION" > release_notes.md
@@ -713,7 +726,7 @@ publish-release:
         fi
       done
     - >-
-      glab release create "$CI_COMMIT_TAG" --name "Work Review $CI_COMMIT_TAG"
+      glab release create "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" --name "Work Review $CI_COMMIT_TAG"
       --notes-file release_notes.md
       target/**/release/bundle/dmg/*.dmg
       target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig
