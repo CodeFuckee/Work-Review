@@ -668,18 +668,19 @@ publish-release:
     - job: tauri-package-linux-arm64
       optional: true
     - job: tauri-package-windows
+  variables:
+    # jedisct1/minisign (>=0.10) 从该环境变量读取私钥口令，非交互签名。
+    # （GITLAB_HOST / GITLAB_TOKEN 移到下方 before_script 里 export：
+    # variables: 的服务端变量展开拿不到 CI_JOB_TOKEN——job token 由 runner
+    # 在作业启动时注入，展开阶段取值为空，glab 会变成匿名调用，私有项目
+    # API 一律返回 "404 Project Not Found"（v1.1.26 发布实测）。）
+    MINISIGN_PASSWORD: "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
   before_script:
     - bash scripts/stage-tauri-key.sh
-  variables:
-    # glab 在 shell executor 里靠 git remote 推断自托管 GitLab host，遇到
-    # 非标准端口（如 home.chenkaidi.top:509）会识别失败并退出
-    # （"none of the git remotes... point to a known GitLab host"）。
-    # 显式传入 host 与 token。CI_SERVER_URL 完整含端口；token 用本作业
-    # 自动注入的 CI_JOB_TOKEN（对当前项目有创建 release 的权限）。
-    GITLAB_HOST: "$CI_SERVER_URL"
-    GITLAB_TOKEN: "$CI_JOB_TOKEN"
-    # jedisct1/minisign (>=0.10) 从该环境变量读取私钥口令，非交互签名。
-    MINISIGN_PASSWORD: "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+    # glab 认证在脚本会话内 export：CI_JOB_TOKEN 在脚本环境里一定存在，
+    # 对本项目有创建 release 的权限（release-cli 同款机制）。
+    # CI_SERVER_URL 完整含端口（如 https://home.chenkaidi.top:509）。
+    - export GITLAB_HOST="$CI_SERVER_URL" GITLAB_TOKEN="$CI_JOB_TOKEN"
   script:
     # runner 检出工作区的 origin URL 不带端口（glab 识别为
     # "home.chenkaidi.top"），与上方 GITLAB_HOST（CI_SERVER_URL，含 :509 端口）
