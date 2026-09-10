@@ -1,5 +1,6 @@
 export default {
     common: {
+      appName: 'Yue复盘',
       loadFailedRetry: '加载失败，请稍后重试',
       collapse: '收起',
       expandAll: '展开全部 {count} 条',
@@ -363,7 +364,7 @@ export default {
       feedbackIssue: '反馈问题',
       feedbackHint: '反馈前先点「复制环境信息」,问题能更快被定位。',
       allLicenses: '全部第三方许可 →',
-      licenseLine: '© 2026 Daily-Report · MIT License',
+      licenseLine: '© 2026 Yue复盘 · MIT License',
       envInfoTitle: '环境信息',
     },
     memoryPage: {

@@ -72,7 +72,7 @@
 
   let state: AvatarState = {
     mode: 'idle',
-    appName: 'Daily-Report',
+    appName: 'Yue复盘',
     contextLabel: '待命中',
     hint: '准备陪你开始工作',
     isIdle: true,

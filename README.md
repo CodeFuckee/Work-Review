@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="100" alt="Work Review">
+  <img src="src-tauri/icons/icon.png" width="100" alt="Yue-Review">
 </p>
 
-<h1 align="center">Work Review</h1>
+<h1 align="center">Yue-Review</h1>
 
 <p align="center">
   <strong>A local-first personal work review tool that records context, helps you review your day, and generates daily reports.</strong>
@@ -37,7 +37,7 @@
 
 ## What It Solves
 
-Work Review is designed for personal work review and helps answer questions like these:
+Yue-Review is designed for personal work review and helps answer questions like these:
 
 - What did I actually do today?
 - What have I been focusing on over the past few days?
@@ -144,7 +144,7 @@ The screenshots below are captured from the running desktop app with localized U
 
 <p align="center"><strong>About</strong></p>
 <p align="center">
-  <img src="docs/Introduction_en/关于.png" alt="About Work Review" width="720" />
+  <img src="docs/Introduction_en/关于.png" alt="About Yue-Review" width="720" />
 </p>
 
 </details>
@@ -153,7 +153,7 @@ The screenshots below are captured from the running desktop app with localized U
 
 ## Privacy and Boundaries
 
-Work Review is designed for personal use from the ground up. It is not intended for: employee monitoring · team attendance · performance evaluation · covert tracking
+Yue-Review is designed for personal use from the ground up. It is not intended for: employee monitoring · team attendance · performance evaluation · covert tracking
 
 You can control the recording scope as needed:
 
@@ -197,7 +197,7 @@ You can control the recording scope as needed:
 
 ## AI Modes
 
-The core of Work Review is always **local recording**. AI's role is to make records easier to read and review, not a prerequisite for usage.
+The core of Yue-Review is always **local recording**. AI's role is to make records easier to read and review, not a prerequisite for usage.
 
 | Mode | Description |
 |------|------|
@@ -222,11 +222,11 @@ Supported providers: Ollama (local) / LM Studio (local) / OpenAI compatible / De
 | Linux x86_64 (X11 / Wayland) | `.deb` / `.rpm` / `.AppImage` |
 | Linux ARM64 (aarch64) | `.deb` / `.rpm` / `.AppImage` |
 
-**macOS:** Screenshots require the "Screen Recording" permission, and avatar linkage requires "Accessibility + Input Monitoring". If you see a "damaged" warning on first launch: `sudo xattr -rd com.apple.quarantine "/Applications/Work Review.app"`
+**macOS:** Screenshots require the "Screen Recording" permission, and avatar linkage requires "Accessibility + Input Monitoring". If you see a "damaged" warning on first launch: `sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
 
 **Windows:** Depends on Microsoft Edge WebView2 Runtime.
 
-> **Windows 11 Smart App Control**: If Windows shows "Smart App Control blocked this app from running", it's because Work Review is signed with a self-signed certificate (not a commercial EV certificate). You can turn off Smart App Control in "Windows Security → App & browser control → Smart App Control". See [#139](https://github.com/wm94i/Work-Review/issues/139).
+> **Windows 11 Smart App Control**: If Windows shows "Smart App Control blocked this app from running", it's because Yue-Review is signed with a self-signed certificate (not a commercial EV certificate). You can turn off Smart App Control in "Windows Security → App & browser control → Smart App Control". See [#139](https://github.com/wm94i/Work-Review/issues/139).
 
 **Linux:** Screenshots and window tracking depend on the current session type and toolchain. <details><summary>Dependency details</summary>
 

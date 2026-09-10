@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 变更
+- **应用更名为 Yue-Review（中文名「Yue复盘」），并与旧版实现并存**：productName 与安装包/软件包命名（NSIS setup.exe、dmg、deb、rpm、AppImage 产物名）随英文名更新为 Yue-Review；主窗口标题与侧边栏/关于页品牌改为「Yue复盘」（繁体环境显示「Yue復盤」，英文/阿拉伯环境显示 Yue-Review）。时间线与图标的自身应用识别同步认识新名称，旧名称（Daily-Report、Work Review）的历史记录继续兼容。**为支持与旧版（≤v1.1.29）同时运行**，包标识由 `com.workreview.app` 改为 `com.yuereview.app`，默认数据目录由 `%APPDATA%\work-review` 改为 `%APPDATA%\yue-review`（数据目录偏好文件、OCR 临时目录、MCP Server 配置定位同步迁移）：新旧两版可同时打开、互不干扰、各自独立记录；新版本首启从空数据开始，需要旧历史时可在 设置 → 数据目录 指回旧目录。代价：macOS 需重新授予屏幕录制/辅助功能权限（按标识符记账）；WebView2 界面内缓存（localStorage）重置，业务数据不受影响；旧版自动更新到本版后即归属新标识符，旧安装目录残留一条卸载项可手动清除。二进制名 Work_Review.exe、便携版命名保持不变。另修复 vite dev 监视 target/ 目录导致 cargo 并行构建时 EBUSY 崩溃的问题。
+
 ### 新增
 - **内置兜底 AI 模型**：未配置任何文本模型时，日报生成、工作助手问答、桌宠主动 AI、实体分类、MCP 技能等全部文本 AI 功能自动改用内置模型（`deepseek-v4-flash` @ `https://laneai.dev/v1`，OpenAI 兼容），开箱即用；用户一旦在设置中配置自己的模型，始终优先用户配置。API Key 不写入源码与配置文件，由编译期环境变量 `WORK_REVIEW_BUILTIN_MODEL_API_KEY` 注入（需在 GitLab 配置该 CI 变量，未注入时行为与旧版完全一致）；设置页 AI 区块在「未配置且有内置模型」时显示提示横幅（四语言），说明内容将发送至第三方 AI 服务。内置 Key 仅存在于编译产物中，不经过 `get_config`/`save_config` 与本地 API 往返，不会在前端或配置同步中出现。
 - **日常安装包产物（可直接下载安装）**：每次推送 main 且 verify/compile 全绿后，新增 5 个 `package-daily-*` job（Windows exe+便携 zip、macOS arm64+x64 dmg、Linux arm64+x64 deb/rpm/AppImage）产出三平台完整安装包并上传为 CI artifact（保留 30 天）；提供固定「latest」下载链接（`/-/jobs/artifacts/main/download?job=package-daily-<os>`，自动指向最近成功构建）。tag 发布版仍按原 Release 流程永久保留安装包。

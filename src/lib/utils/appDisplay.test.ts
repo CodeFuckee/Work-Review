@@ -30,6 +30,14 @@ test('时间线应优先显示更友好的窗口标题作为应用名', () => {
     }),
     'Daily-Report Setup'
   );
+
+  assert.equal(
+    getPreferredTimelineAppName({
+      appName: 'Yue-Review_1.1.30_x64-setup',
+      windowTitle: 'Yue-Review Setup',
+    }),
+    'Yue-Review Setup'
+  );
 });
 
 test('时间线应兼容改名前的 Work Review 历史记录', () => {

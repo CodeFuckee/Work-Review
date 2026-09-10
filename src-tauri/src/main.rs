@@ -879,14 +879,14 @@ fn should_emit_avatar_backlog_nudge(
 
 pub(crate) fn default_data_dir() -> PathBuf {
     dirs::data_dir()
-        .map(|d| d.join("work-review"))
+        .map(|d| d.join("yue-review"))
         .unwrap_or_else(|| PathBuf::from("./data"))
 }
 
 fn data_dir_preference_path() -> PathBuf {
     dirs::config_dir()
-        .map(|d| d.join("work-review").join("data-location.json"))
-        .unwrap_or_else(|| PathBuf::from("./work-review-data-location.json"))
+        .map(|d| d.join("yue-review").join("data-location.json"))
+        .unwrap_or_else(|| PathBuf::from("./yue-review-data-location.json"))
 }
 
 fn load_data_dir_preference() -> Option<PathBuf> {

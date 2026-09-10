@@ -130,12 +130,12 @@
     <section class="page-card about-brand-card">
       <div class="about-brand-identity flex flex-col items-center">
         <div class="about-brand-mark">
-          <img src="/icons/256x256.png" alt="Daily-Report" class="h-16 w-16 rounded-lg object-cover" />
+          <img src="/icons/256x256.png" alt={t('common.appName')} class="h-16 w-16 rounded-lg object-cover" />
         </div>
 
         <div class="about-brand-copy">
           <div class="about-brand-title-row flex items-center justify-center">
-            <h1 class="about-brand-title">Daily-Report</h1>
+            <h1 class="about-brand-title">{t('common.appName')}</h1>
             <span class="about-version-badge">v{appVersion}</span>
           </div>
           <p class="about-brand-description">{t('about.description')}</p>

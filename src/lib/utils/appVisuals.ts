@@ -106,6 +106,8 @@ export function getFallbackAppIcon(appName: unknown): string | null {
   if (
     normalized.includes('work review') || normalized.includes('work-review') || normalized.includes('work_review')
     || normalized.includes('daily report') || normalized.includes('daily-report') || normalized.includes('daily_report')
+    || normalized.includes('yue review') || normalized.includes('yue-review') || normalized.includes('yue_review')
+    || normalized.includes('yue复盘') || normalized.includes('yue復盤')
   ) {
     return '/icons/256x256.png';
   }

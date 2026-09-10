@@ -1,5 +1,6 @@
 export default {
     common: {
+      appName: 'Yue-Review',
       loadFailedRetry: 'فشل التحميل، يرجى المحاولة لاحقاً.',
       collapse: 'طي',
       expandAll: 'عرض الكل {count}',
@@ -369,7 +370,7 @@ export default {
       feedbackIssue: 'الإبلاغ عن مشكلة',
       feedbackHint: 'انقر «نسخ معلومات البيئة» قبل الإبلاغ — يساعد ذلك على تحديد المشكلة أسرع.',
       allLicenses: '← جميع تراخيص الأطراف الثالثة',
-      licenseLine: '© 2026 Daily-Report · رخصة MIT',
+      licenseLine: '© 2026 Yue-Review · رخصة MIT',
       envInfoTitle: 'معلومات البيئة',
     },
     memoryPage: {

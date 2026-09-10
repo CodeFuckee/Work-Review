@@ -12,7 +12,7 @@
   $: presetOption = getAvatarPresetOption(normalizedPresetId);
   $: previewState = {
     mode: previewMode,
-    appName: 'Daily-Report',
+    appName: 'Yue复盘',
     contextLabel: '办公中',
     hint: '',
     isIdle: false,

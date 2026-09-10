@@ -24,12 +24,14 @@ test('常见系统应用在拿不到原生图标时应使用明确的兜底图�
 });
 
 test('应用自身（含改名前后名称）应使用应用图标兜底而不是字母块', () => {
-  const newNameIcon = getFallbackAppIcon('Daily-Report');
+  const newNameIcon = getFallbackAppIcon('Yue-Review');
+  const chineseNameIcon = getFallbackAppIcon('Yue复盘');
+  const dailyReportIcon = getFallbackAppIcon('Daily-Report');
   const hyphenNameIcon = getFallbackAppIcon('daily-report');
   const legacyNameIcon = getFallbackAppIcon('Work Review');
   const legacyUnderscoreIcon = getFallbackAppIcon('work_review');
 
-  for (const icon of [newNameIcon, hyphenNameIcon, legacyNameIcon, legacyUnderscoreIcon]) {
+  for (const icon of [newNameIcon, chineseNameIcon, dailyReportIcon, hyphenNameIcon, legacyNameIcon, legacyUnderscoreIcon]) {
     assert.equal(icon, '/icons/256x256.png');
   }
 });

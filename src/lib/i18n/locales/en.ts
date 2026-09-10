@@ -1,5 +1,6 @@
 export default {
     common: {
+      appName: 'Yue-Review',
       loadFailedRetry: 'Failed to load. Please try again.',
       collapse: 'Collapse',
       expandAll: 'Show all {count}',
@@ -372,7 +373,7 @@ export default {
       feedbackIssue: 'Report an issue',
       feedbackHint: 'Click "Copy environment info" before reporting — it helps locate the issue faster.',
       allLicenses: 'All third-party licenses →',
-      licenseLine: '© 2026 Daily-Report · MIT License',
+      licenseLine: '© 2026 Yue-Review · MIT License',
       envInfoTitle: 'Environment info',
     },
     memoryPage: {

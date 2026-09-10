@@ -1,5 +1,6 @@
 export default {
     common: {
+      appName: 'Yue復盤',
       loadFailedRetry: '載入失敗，請稍後重試',
       collapse: '收起',
       expandAll: '展開全部 {count} 條',
@@ -363,7 +364,7 @@ export default {
       feedbackIssue: '回報問題',
       feedbackHint: '回報前先點「複製環境資訊」,問題能更快被定位。',
       allLicenses: '全部第三方授權 →',
-      licenseLine: '© 2026 Daily-Report · MIT License',
+      licenseLine: '© 2026 Yue復盤 · MIT License',
       envInfoTitle: '環境資訊',
     },
     memoryPage: {

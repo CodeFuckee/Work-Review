@@ -74,10 +74,10 @@
       }
     }
   },
-  "productName": "Daily-Report",
+  "productName": "Yue-Review",
   "mainBinaryName": "Work_Review",
   "version": "1.1.29",
-  "identifier": "com.workreview.app",
+  "identifier": "com.yuereview.app",
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBOTFGOUMyNTQ2NzI2NjcKUldSbkptZFV3dm1SaXVWQnAzcW9SNVFBWEdyR2tycXVvVWsvN2YraUV2S0ZOaHo4K3Jyd2RmSkoK",
@@ -95,7 +95,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Daily-Report",
+        "title": "Yue复盘",
         "width": 1000,
         "height": 700,
         "visible": false,

@@ -28,7 +28,7 @@ fn main() {
     let db_path = std::env::var("WORK_REVIEW_DB_PATH").unwrap_or_else(|_| {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("work-review");
+            .join("yue-review");
         data_dir
             .join("work_review.db")
             .to_string_lossy()
@@ -40,7 +40,7 @@ fn main() {
         .unwrap_or_else(|_| {
             let data_dir = dirs::data_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("work-review");
+                .join("yue-review");
             data_dir.join("config.json")
         });
 

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="100" alt="Work Review">
+  <img src="src-tauri/icons/icon.png" width="100" alt="Yue-Review">
 </p>
 
-<h1 align="center">Work Review</h1>
+<h1 align="center">Yue复盘 <span lang="en">Yue-Review</span></h1>
 
 <p align="center">
   <strong>本地优先的个人工作回顾工具：自动记录上下文，帮你复盘和生成日报。</strong>
@@ -37,7 +37,7 @@
 
 ## 它解决什么问题
 
-Work Review 面向个人工作复盘，适合用来回答这些问题：
+Yue-Review 面向个人工作复盘，适合用来回答这些问题：
 
 - 我今天到底做了什么？
 - 这几天主要在推进什么？
@@ -144,7 +144,7 @@ Work Review 面向个人工作复盘，适合用来回答这些问题：
 
 <p align="center"><strong>关于</strong></p>
 <p align="center">
-  <img src="docs/Introduction_zh/关于.png" alt="关于 Work Review" width="720" />
+  <img src="docs/Introduction_zh/关于.png" alt="关于 Yue-Review" width="720" />
 </p>
 
 </details>
@@ -153,7 +153,7 @@ Work Review 面向个人工作复盘，适合用来回答这些问题：
 
 ## 隐私与边界
 
-Work Review 从设计上面向个人使用，不适用于：员工监控 · 团队考勤 · 绩效考核 · 隐形追踪
+Yue-Review 从设计上面向个人使用，不适用于：员工监控 · 团队考勤 · 绩效考核 · 隐形追踪
 
 你可以按需控制记录范围：
 
@@ -197,7 +197,7 @@ Work Review 从设计上面向个人使用，不适用于：员工监控 · 团�
 
 ## AI 模式
 
-Work Review 的核心始终是**本地记录**。AI 的作用是让记录更容易阅读和复盘，而不是使用前提。
+Yue-Review 的核心始终是**本地记录**。AI 的作用是让记录更容易阅读和复盘，而不是使用前提。
 
 | 模式 | 说明 |
 |------|------|
@@ -222,7 +222,7 @@ Work Review 的核心始终是**本地记录**。AI 的作用是让记录更容�
 | Linux x86_64 (X11 / Wayland) | `.deb` / `.rpm` / `.AppImage` |
 | Linux ARM64 (aarch64) | `.deb` / `.rpm` / `.AppImage` |
 
-**macOS：** 截图需「屏幕录制」权限，桌宠联动需「辅助功能 + 输入监控」。首次提示"已损坏"时：`sudo xattr -rd com.apple.quarantine "/Applications/Work Review.app"`
+**macOS：** 截图需「屏幕录制」权限，桌宠联动需「辅助功能 + 输入监控」。首次提示"已损坏"时：`sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
 
 **Windows：** 依赖 Microsoft Edge WebView2 Runtime。
 
