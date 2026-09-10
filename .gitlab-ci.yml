@@ -754,11 +754,11 @@ publish-release:
         name="$(basename "$f")"
         code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           -H "PRIVATE-TOKEN: $GIT_PUSH_TOKEN" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
         case "$code" in 200|201) ;; *) echo "package upload failed ($code): $f" >&2; exit 1;; esac
-        if glab api -R "$CI_PROJECT_PATH" "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links" | grep -q "\\\"name\\\":\\\"$name\\\""; then
+        if glab api "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links" | grep -q "\\\"name\\\":\\\"$name\\\""; then
           echo ">>> link exists, skip: $name"
           continue
         fi
-        glab api -X POST -R "$CI_PROJECT_PATH"           "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links"           -f "name=$name"           -f "url=$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name"           -f "direct_asset_path=/$name" >/dev/null
+        glab api -X POST           "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links"           -f "name=$name"           -f "url=$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name"           -f "direct_asset_path=/$name" >/dev/null
         echo ">>> asset linked: $name"
       done
   rules:
