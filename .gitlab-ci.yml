@@ -737,13 +737,29 @@ publish-release:
           rm -f "$rawkey"
         fi
       done
-    - >-
-      glab release create "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" --name "Work Review $CI_COMMIT_TAG"
-      --notes-file release_notes.md
-      target/**/release/bundle/dmg/*.dmg
-      target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig
-      target/**/release/bundle/nsis/*.exe target/**/release/bundle/nsis/*.sig
-      target/**/Work_Review_portable_*.zip target/**/release/bundle/appimage/*.AppImage
-      target/**/release/bundle/deb/*.deb target/**/release/bundle/rpm/*.rpm
+    # 资产改走 Generic Package Registry：glab release create 直接挂文件生成的
+    # 资产链接指向 uploads 路由（仅浏览器会话可访问，PRIVATE-TOKEN 也无效），
+    # 且不带 direct_asset_path——项目公开后匿名/命令行下载仍 404（v1.1.30 实测）。
+    # 包仓库对公开项目匿名可下载、永不过期；链接带 direct_asset_path 后
+    # /releases/<tag>/downloads/<file> 永久路由同样生效。
+    - |
+      set -e
+      if glab release view "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" >/dev/null 2>&1; then
+        echo ">>> release exists, skip create"
+      else
+        glab release create "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" --name "Yue-Review $CI_COMMIT_TAG" --notes-file release_notes.md
+      fi
+      for f in target/**/release/bundle/dmg/*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*.exe target/**/release/bundle/nsis/*.sig                target/**/Work_Review_portable_*.zip target/**/release/bundle/appimage/*.AppImage                target/**/release/bundle/deb/*.deb target/**/release/bundle/rpm/*.rpm; do
+        [ -f "$f" ] || continue
+        name="$(basename "$f")"
+        code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           -H "PRIVATE-TOKEN: $GIT_PUSH_TOKEN" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
+        case "$code" in 200|201) ;; *) echo "package upload failed ($code): $f" >&2; exit 1;; esac
+        if glab api -R "$CI_PROJECT_PATH" "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links" | grep -q "\\\"name\\\":\\\"$name\\\""; then
+          echo ">>> link exists, skip: $name"
+          continue
+        fi
+        glab api -X POST -R "$CI_PROJECT_PATH"           "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links"           -f "name=$name"           -f "url=$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name"           -f "direct_asset_path=/$name" >/dev/null
+        echo ">>> asset linked: $name"
+      done
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
