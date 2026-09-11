@@ -11,24 +11,50 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::UpdaterExt;
 use work_review_core::error::AppError;
 
-const GITHUB_LATEST_RELEASE_API: &str =
-    "https://api.github.com/repos/wm94i/Work-Review/releases/latest";
+// 更新源已从 GitHub 切换到自建 GitLab：安装包与 updater.json 都在
+// Generic Package Registry（匿名不可读，客户端用编译期注入的只读
+// Project Access Token 以 PRIVATE-TOKEN 头拉取）。
+const GITLAB_API_BASE: &str = "https://home.chenkaidi.top:509/api/v4";
+const GITLAB_PROJECT_PATH_ENCODED: &str = "chenkaidi%2Fwork-review";
 
-const GITHUB_LATEST_RELEASE_PAGE: &str = "https://github.com/wm94i/Work-Review/releases/latest";
+const GITLAB_LATEST_RELEASE_API: &str =
+    "https://home.chenkaidi.top:509/api/v4/projects/chenkaidi%2Fwork-review/releases?per_page=1";
+
+const GITLAB_RELEASE_PAGE: &str =
+    "https://home.chenkaidi.top:509/chenkaidi/work-review/-/releases/permalink/latest";
+
+const GITLAB_UPDATE_SOURCE_LABEL: &str = "home.chenkaidi.top:509";
+
+/// 更新清单所属的 GitLab 项目 ID 与包名（与 publish-release 上传路径一致）。
+const GITLAB_PACKAGE_SEGMENT: &str = "packages/generic/yue-review";
 
 const UPDATE_STATUS_EVENT: &str = "update-status";
-
-const UPDATER_JSON_ENDPOINTS: &[&str] = &[
-    "https://github.com/wm94i/Work-Review/releases/latest/download/updater.json",
-    "https://gh-proxy.cn/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghproxy.json",
-    "https://gh-proxy.com/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghp.json",
-];
 
 const DEFAULT_UPDATE_CHECK_INTERVAL_HOURS: u64 = 24;
 
 const UPDATE_REQUEST_TIMEOUT_SECS: u64 = 35;
 
 const UPDATE_CONNECT_TIMEOUT_SECS: u64 = 12;
+
+/// 编译期注入的只读 Project Access Token（CI 变量 UPDATER_GITLAB_TOKEN）。
+/// 未注入（如本地开发构建）时更新检查按"未配置更新源"优雅降级。
+fn updater_gitlab_token() -> Option<&'static str> {
+    option_env!("WORK_REVIEW_UPDATER_GITLAB_TOKEN")
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+}
+
+/// 由目标版本直接构造更新清单地址（Generic Package Registry 固定版本直链，
+/// GitLab 19 不支持 `latest` 别名，最新 tag 由 releases API 先行查询）。
+fn build_gitlab_manifest_url(expected_version: Option<&str>) -> Option<String> {
+    let normalized = expected_version.map(normalize_version).unwrap_or("");
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{GITLAB_API_BASE}/projects/{GITLAB_PROJECT_PATH_ENCODED}/{GITLAB_PACKAGE_SEGMENT}/{normalized}/updater.json"
+    ))
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -75,55 +101,90 @@ pub struct UpdateSettings {
 }
 
 #[derive(Deserialize, Debug)]
-struct GithubReleaseResponse {
+struct GitlabReleaseResponse {
     tag_name: String,
-    html_url: String,
-    body: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 fn default_update_check_interval() -> u64 {
     DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
 }
 
-fn update_source_label(endpoint: &str) -> String {
-    Url::parse(endpoint)
-        .ok()
-        .and_then(|url| url.host_str().map(|host| host.to_string()))
-        .unwrap_or_else(|| endpoint.to_string())
+/// 查询自建 GitLab 最新发布（releases 列表默认按发布时间倒序，首个即最新）。
+async fn fetch_latest_gitlab_release(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<GitlabReleaseResponse, AppError> {
+    let releases = client
+        .get(GITLAB_LATEST_RELEASE_API)
+        .header(reqwest::header::USER_AGENT, "WorkReview-Updater")
+        .header("PRIVATE-TOKEN", token)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Vec<GitlabReleaseResponse>>()
+        .await?;
+
+    releases
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::Unknown("自建 GitLab 尚无任何发布".to_string()))
 }
 
-fn build_versioned_updater_endpoint(endpoint: &str, version: &str) -> Option<String> {
-    let normalized_version = normalize_version(version);
-    if normalized_version.is_empty() {
-        return None;
-    }
+/// 用编译期 token 对指定版本的更新清单做可安装性检查（含签名与版本校验）。
+async fn check_installable_update(
+    app: &AppHandle,
+    expected_version: &str,
+    token: &str,
+) -> Option<GithubUpdateInfo> {
+    let manifest_url = build_gitlab_manifest_url(Some(expected_version))?;
+    let endpoint_url = match Url::parse(&manifest_url) {
+        Ok(url) => url,
+        Err(error) => {
+            log::warn!("解析更新清单地址失败: {error}");
+            return None;
+        }
+    };
 
-    endpoint.contains("releases/latest/download/").then(|| {
-        endpoint.replacen(
-            "releases/latest/download/",
-            &format!("releases/download/v{normalized_version}/"),
-            1,
-        )
-    })
-}
+    let updater = match app
+        .updater_builder()
+        .endpoints(vec![endpoint_url])
+        .map(|builder| {
+            builder
+                .timeout(Duration::from_secs(UPDATE_REQUEST_TIMEOUT_SECS))
+                .configure_client(|client| {
+                    client
+                        .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
+                        .user_agent("WorkReview-Updater")
+                })
+        })
+        .and_then(|builder| builder.header("PRIVATE-TOKEN", token))
+        .and_then(|builder| builder.build())
+    {
+        Ok(updater) => updater,
+        Err(error) => {
+            log::warn!("构建更新器失败: {error}");
+            return None;
+        }
+    };
 
-fn build_updater_manifest_candidates(
-    endpoint: &str,
-    expected_version: Option<&str>,
-) -> Vec<String> {
-    let mut candidates = Vec::new();
-
-    if let Some(expected_version) = expected_version {
-        if let Some(versioned_endpoint) =
-            build_versioned_updater_endpoint(endpoint, expected_version)
-        {
-            candidates.push(versioned_endpoint);
+    match updater.check().await {
+        Ok(Some(update)) => Some(GithubUpdateInfo {
+            current_version: update.current_version,
+            latest_version: update.version,
+            available: true,
+            auto_update_ready: true,
+            release_url: GITLAB_RELEASE_PAGE.to_string(),
+            body: update.body,
+            source: Some(GITLAB_UPDATE_SOURCE_LABEL.to_string()),
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            log::warn!("检查可安装更新失败（版本 {expected_version}）: {error}");
+            None
         }
     }
-
-    candidates.push(endpoint.to_string());
-    candidates.dedup();
-    candidates
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -149,83 +210,6 @@ fn emit_update_status(
             percent,
         },
     );
-}
-
-async fn check_installable_update(app: &AppHandle) -> Option<GithubUpdateInfo> {
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let mut last_failure = None;
-    let mut no_update_source = None;
-
-    for endpoint in UPDATER_JSON_ENDPOINTS {
-        let source_label = update_source_label(endpoint);
-        let endpoint_url = match Url::parse(endpoint) {
-            Ok(url) => url,
-            Err(error) => {
-                last_failure = Some(format!("{source_label}: 解析更新源失败: {error}"));
-                continue;
-            }
-        };
-
-        let updater = match app
-            .updater_builder()
-            .endpoints(vec![endpoint_url])
-            .map(|builder| {
-                builder
-                    .timeout(Duration::from_secs(UPDATE_REQUEST_TIMEOUT_SECS))
-                    .configure_client(|client| {
-                        client
-                            .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
-                            .user_agent("WorkReview-Updater")
-                    })
-            })
-            .and_then(|builder| builder.build())
-        {
-            Ok(updater) => updater,
-            Err(error) => {
-                last_failure = Some(format!("{source_label}: 构建更新器失败: {error}"));
-                continue;
-            }
-        };
-
-        match updater.check().await {
-            Ok(Some(update)) => {
-                return Some(GithubUpdateInfo {
-                    current_version: update.current_version,
-                    latest_version: update.version,
-                    available: true,
-                    auto_update_ready: true,
-                    release_url: GITHUB_LATEST_RELEASE_PAGE.to_string(),
-                    body: update.body,
-                    source: Some(source_label),
-                });
-            }
-            Ok(None) => {
-                no_update_source = Some(source_label);
-                continue;
-            }
-            Err(error) => {
-                last_failure = Some(format!("{source_label}: 检查可安装更新失败: {error}"));
-            }
-        }
-    }
-
-    if let Some(source) = no_update_source {
-        return Some(GithubUpdateInfo {
-            current_version: current_version.clone(),
-            latest_version: current_version,
-            available: false,
-            auto_update_ready: true,
-            release_url: GITHUB_LATEST_RELEASE_PAGE.to_string(),
-            body: None,
-            source: Some(source),
-        });
-    }
-
-    if let Some(failure) = last_failure {
-        log::warn!("安装型更新检查失败，回退到 GitHub Release API: {failure}");
-    }
-
-    None
 }
 
 impl Default for UpdateSettings {
@@ -385,9 +369,24 @@ pub async fn quit_app_for_update(app: AppHandle) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 基于 updater.json 优先检查更新；若自动更新元数据暂未就绪，则回退到 GitHub Release API。
+/// 基于自建 GitLab 检查更新：先查最新发布 tag 做版本比较，再对更新清单
+/// （包仓库固定版本直链）做可安装性检查；清单不可用时回退为提示手动下载。
 #[tauri::command]
 pub async fn check_github_update(app: AppHandle) -> Result<GithubUpdateInfo, AppError> {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let Some(token) = updater_gitlab_token() else {
+        log::warn!("未注入 WORK_REVIEW_UPDATER_GITLAB_TOKEN，按未配置更新源处理");
+        return Ok(GithubUpdateInfo {
+            current_version: current_version.clone(),
+            latest_version: current_version,
+            available: false,
+            auto_update_ready: false,
+            release_url: GITLAB_RELEASE_PAGE.to_string(),
+            body: None,
+            source: Some("gitlab-unconfigured".to_string()),
+        });
+    };
+
     let client = reqwest::Client::builder()
         .user_agent("WorkReview-Updater")
         .timeout(Duration::from_secs(UPDATE_REQUEST_TIMEOUT_SECS))
@@ -395,21 +394,7 @@ pub async fn check_github_update(app: AppHandle) -> Result<GithubUpdateInfo, App
         .build()
         .map_err(|e| AppError::Unknown(format!("创建更新检查客户端失败: {e}")))?;
 
-    if let Some(update_info) = check_installable_update(&app).await {
-        return Ok(update_info);
-    }
-
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let release = client
-        .get(GITHUB_LATEST_RELEASE_API)
-        .header(reqwest::header::USER_AGENT, "WorkReview-Updater")
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<GithubReleaseResponse>()
-        .await?;
-
+    let release = fetch_latest_gitlab_release(&client, token).await?;
     let latest_version = normalize_version(&release.tag_name).to_string();
     let has_update = compare_versions(&current_version, &latest_version) == Ordering::Less;
 
@@ -418,222 +403,262 @@ pub async fn check_github_update(app: AppHandle) -> Result<GithubUpdateInfo, App
             current_version,
             latest_version,
             available: false,
-            auto_update_ready: false,
-            release_url: release.html_url,
-            body: release.body,
-            source: Some("github-release-api".to_string()),
+            auto_update_ready: true,
+            release_url: GITLAB_RELEASE_PAGE.to_string(),
+            body: release.description,
+            source: Some(GITLAB_UPDATE_SOURCE_LABEL.to_string()),
         });
     }
+
+    let auto_update_ready = check_installable_update(&app, &latest_version, token)
+        .await
+        .is_some();
 
     Ok(GithubUpdateInfo {
         current_version,
         latest_version,
         available: true,
-        auto_update_ready: false,
-        release_url: release.html_url,
-        body: release.body,
-        source: Some("github-release-api".to_string()),
+        auto_update_ready,
+        release_url: GITLAB_RELEASE_PAGE.to_string(),
+        body: release.description,
+        source: Some(GITLAB_UPDATE_SOURCE_LABEL.to_string()),
     })
 }
 
-/// 逐个尝试更新源进行在线更新，避免某个代理只返回 updater.json 但下载失败时直接中断。
+/// 对指定版本执行在线更新：从自建 GitLab 包仓库拉取更新清单并下载安装，
+/// 全程携带 PRIVATE-TOKEN 认证头，进度通过 update-status 事件上报。
 #[tauri::command]
 pub async fn download_and_install_github_update(
     app: AppHandle,
     expected_version: Option<String>,
 ) -> Result<GithubUpdateInstallResult, AppError> {
+    let Some(token) = updater_gitlab_token() else {
+        return Err(AppError::Unknown(
+            "未配置更新令牌（WORK_REVIEW_UPDATER_GITLAB_TOKEN），无法在线更新".to_string(),
+        ));
+    };
+
     let mut attempted_sources = Vec::new();
     let mut failures = Vec::new();
 
-    for endpoint in UPDATER_JSON_ENDPOINTS {
-        let source_label = update_source_label(endpoint);
-        attempted_sources.push(source_label.clone());
+    // 目标版本优先取调用方传入（与检查阶段一致），缺省时现查最新发布。
+    let target_version = match expected_version.as_deref() {
+        Some(raw) if !normalize_version(raw).is_empty() => normalize_version(raw).to_string(),
+        _ => {
+            let client = reqwest::Client::builder()
+                .user_agent("WorkReview-Updater")
+                .timeout(Duration::from_secs(UPDATE_REQUEST_TIMEOUT_SECS))
+                .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
+                .build()
+                .map_err(|e| AppError::Unknown(format!("创建更新客户端失败: {e}")))?;
+            normalize_version(&fetch_latest_gitlab_release(&client, token).await?.tag_name)
+                .to_string()
+        }
+    };
 
-        emit_update_status(
-            &app,
-            "checking",
-            format!("正在检查更新源 {source_label}..."),
-            Some(source_label.clone()),
-            expected_version.clone(),
-            None,
-            None,
-            None,
-        );
+    let Some(manifest_url) = build_gitlab_manifest_url(Some(&target_version)) else {
+        return Err(AppError::Unknown(format!(
+            "无法为版本 {target_version} 构造更新清单地址"
+        )));
+    };
 
-        let manifest_candidates =
-            build_updater_manifest_candidates(endpoint, expected_version.as_deref());
+    let source_label = GITLAB_UPDATE_SOURCE_LABEL.to_string();
+    attempted_sources.push(source_label.clone());
 
-        let mut update = None;
-        let mut last_check_error = None;
+    emit_update_status(
+        &app,
+        "checking",
+        format!("正在检查更新源 {source_label}..."),
+        Some(source_label.clone()),
+        Some(target_version.clone()),
+        None,
+        None,
+        None,
+    );
 
-        for manifest_endpoint in manifest_candidates {
-            let endpoint_url = Url::parse(&manifest_endpoint).map_err(|e| {
-                AppError::Unknown(format!("解析更新源失败 ({manifest_endpoint}): {e}"))
-            })?;
+    let endpoint_url = Url::parse(&manifest_url)
+        .map_err(|e| AppError::Unknown(format!("解析更新源失败 ({manifest_url}): {e}")))?;
 
-            let updater = match app
-                .updater_builder()
-                .endpoints(vec![endpoint_url])
-                .map_err(|e| AppError::Unknown(format!("配置更新源失败 ({source_label}): {e}")))?
+    let updater = match app
+        .updater_builder()
+        .endpoints(vec![endpoint_url])
+        .map(|builder| {
+            builder
                 .timeout(Duration::from_secs(UPDATE_REQUEST_TIMEOUT_SECS))
                 .configure_client(|client| {
                     client
                         .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
                         .user_agent("WorkReview-Updater")
                 })
-                .build()
-            {
-                Ok(updater) => updater,
-                Err(error) => {
-                    last_check_error = Some(format!("{source_label}: 构建更新器失败: {error}"));
-                    continue;
-                }
-            };
-
-            match updater.check().await {
-                Ok(Some(found_update)) => {
-                    update = Some(found_update);
-                    last_check_error = None;
-                    break;
-                }
-                Ok(None) => {
-                    last_check_error = Some(format!("{source_label}: 未返回可安装的更新包"));
-                }
-                Err(error) => {
-                    last_check_error = Some(format!("{source_label}: 检查更新失败: {error}"));
-                }
-            }
+        })
+        .and_then(|builder| builder.header("PRIVATE-TOKEN", token))
+        .and_then(|builder| builder.build())
+    {
+        Ok(updater) => updater,
+        Err(error) => {
+            return Err(AppError::Unknown(format!(
+                "{source_label}: 构建更新器失败: {error}"
+            )));
         }
+    };
 
-        let Some(update) = update else {
-            if let Some(error) = last_check_error {
-                failures.push(error);
-            } else {
-                failures.push(format!("{source_label}: 未返回可安装的更新包"));
-            }
-            continue;
-        };
-
-        if let Some(expected) = expected_version.as_deref() {
-            if compare_versions(&update.version, expected) == Ordering::Less {
-                failures.push(format!(
-                    "{source_label}: 返回版本 {}，低于目标版本 {}",
-                    update.version, expected
-                ));
-                continue;
-            }
+    let update = match updater.check().await {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            let message =
+                format!("在线更新失败，已尝试全部更新源：{source_label}: 未返回可安装的更新包");
+            emit_update_status(
+                &app,
+                "failed",
+                message.clone(),
+                None,
+                Some(target_version.clone()),
+                None,
+                None,
+                None,
+            );
+            return Err(AppError::Unknown(message));
         }
+        Err(error) => {
+            let message =
+                format!("在线更新失败，已尝试全部更新源：{source_label}: 检查更新失败: {error}");
+            emit_update_status(
+                &app,
+                "failed",
+                message.clone(),
+                None,
+                Some(target_version.clone()),
+                None,
+                None,
+                None,
+            );
+            return Err(AppError::Unknown(message));
+        }
+    };
 
+    if compare_versions(&update.version, &target_version) == Ordering::Less {
+        let message = format!(
+            "在线更新失败，已尝试全部更新源：{source_label}: 返回版本 {}，低于目标版本 {target_version}",
+            update.version
+        );
         emit_update_status(
             &app,
-            "found",
-            format!(
-                "发现新版本 {}，准备从 {source_label} 下载...",
-                update.version
-            ),
-            Some(source_label.clone()),
-            Some(update.version.clone()),
+            "failed",
+            message.clone(),
+            None,
+            Some(target_version.clone()),
             None,
             None,
             None,
         );
+        return Err(AppError::Unknown(message));
+    }
 
-        let progress_app = app.clone();
-        let progress_source = source_label.clone();
-        let progress_version = update.version.clone();
-        let mut downloaded_bytes = 0_u64;
+    emit_update_status(
+        &app,
+        "found",
+        format!(
+            "发现新版本 {}，准备从 {source_label} 下载...",
+            update.version
+        ),
+        Some(source_label.clone()),
+        Some(update.version.clone()),
+        None,
+        None,
+        None,
+    );
 
-        let finish_app = app.clone();
-        let finish_source = source_label.clone();
-        let finish_version = update.version.clone();
+    let progress_app = app.clone();
+    let progress_source = source_label.clone();
+    let progress_version = update.version.clone();
+    let mut downloaded_bytes = 0_u64;
 
-        match update
-            .download_and_install(
-                move |chunk_length, total_bytes| {
-                    downloaded_bytes += chunk_length as u64;
-                    let percent = total_bytes.and_then(|total| {
-                        downloaded_bytes
-                            .saturating_mul(100)
-                            .checked_div(total)
-                            .map(|percent| percent.min(100))
-                    });
+    let finish_app = app.clone();
+    let finish_source = source_label.clone();
+    let finish_version = update.version.clone();
 
-                    let message = if let Some(percent) = percent {
-                        format!("正在下载更新 {percent}%（{progress_source}）")
-                    } else {
-                        let mb = ((downloaded_bytes as f64) / 1024.0 / 1024.0).max(0.1);
-                        format!("正在下载更新 {mb:.1} MB（{progress_source}）")
-                    };
+    match update
+        .download_and_install(
+            move |chunk_length, total_bytes| {
+                downloaded_bytes += chunk_length as u64;
+                let percent = total_bytes.and_then(|total| {
+                    downloaded_bytes
+                        .saturating_mul(100)
+                        .checked_div(total)
+                        .map(|percent| percent.min(100))
+                });
 
-                    emit_update_status(
-                        &progress_app,
-                        "downloading",
-                        message,
-                        Some(progress_source.clone()),
-                        Some(progress_version.clone()),
-                        Some(downloaded_bytes),
-                        total_bytes,
-                        percent,
-                    );
-                },
-                move || {
-                    emit_update_status(
-                        &finish_app,
-                        "installing",
-                        format!("下载完成，正在安装（{finish_source}）..."),
-                        Some(finish_source.clone()),
-                        Some(finish_version.clone()),
-                        None,
-                        None,
-                        Some(100),
-                    );
-                },
-            )
-            .await
-        {
-            Ok(()) => {
+                let message = if let Some(percent) = percent {
+                    format!("正在下载更新 {percent}%（{progress_source}）")
+                } else {
+                    let mb = ((downloaded_bytes as f64) / 1024.0 / 1024.0).max(0.1);
+                    format!("正在下载更新 {mb:.1} MB（{progress_source}）")
+                };
+
                 emit_update_status(
-                    &app,
-                    "completed",
-                    format!("更新安装完成，来源 {source_label}"),
-                    Some(source_label.clone()),
-                    Some(update.version.clone()),
+                    &progress_app,
+                    "downloading",
+                    message,
+                    Some(progress_source.clone()),
+                    Some(progress_version.clone()),
+                    Some(downloaded_bytes),
+                    total_bytes,
+                    percent,
+                );
+            },
+            move || {
+                emit_update_status(
+                    &finish_app,
+                    "installing",
+                    format!("下载完成，正在安装（{finish_source}）..."),
+                    Some(finish_source.clone()),
+                    Some(finish_version.clone()),
                     None,
                     None,
                     Some(100),
                 );
+            },
+        )
+        .await
+    {
+        Ok(()) => {
+            emit_update_status(
+                &app,
+                "completed",
+                format!("更新安装完成，来源 {source_label}"),
+                Some(source_label.clone()),
+                Some(update.version.clone()),
+                None,
+                None,
+                Some(100),
+            );
 
-                return Ok(GithubUpdateInstallResult {
-                    updated: true,
-                    available: true,
-                    version: Some(update.version),
-                    source: Some(source_label),
-                    message: "在线更新已完成".to_string(),
-                    attempted_sources,
-                });
-            }
-            Err(error) => {
-                failures.push(format!("{source_label}: 下载或安装失败: {error}"));
-                emit_update_status(
-                    &app,
-                    "retrying",
-                    format!("源 {source_label} 更新失败，准备尝试下一个源..."),
-                    Some(source_label),
-                    Some(update.version.clone()),
-                    None,
-                    None,
-                    None,
-                );
-            }
+            return Ok(GithubUpdateInstallResult {
+                updated: true,
+                available: true,
+                version: Some(update.version),
+                source: Some(source_label),
+                message: "在线更新已完成".to_string(),
+                attempted_sources,
+            });
+        }
+        Err(error) => {
+            failures.push(format!("{source_label}: 下载或安装失败: {error}"));
+            emit_update_status(
+                &app,
+                "retrying",
+                format!("源 {source_label} 更新失败，准备尝试下一个源..."),
+                Some(source_label),
+                Some(update.version.clone()),
+                None,
+                None,
+                None,
+            );
         }
     }
 
     let message = if failures.is_empty() {
-        if let Some(expected) = expected_version.as_deref() {
-            format!("未找到可用于版本 {expected} 的在线更新源")
-        } else {
-            "当前未发现可安装的在线更新".to_string()
-        }
+        format!("未找到可用于版本 {target_version} 的在线更新源")
     } else {
         format!("在线更新失败，已尝试全部更新源：{}", failures.join("；"))
     };
@@ -643,7 +668,7 @@ pub async fn download_and_install_github_update(
         "failed",
         message.clone(),
         None,
-        expected_version.clone(),
+        Some(target_version.clone()),
         None,
         None,
         None,
@@ -657,46 +682,76 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 更新清单候选应优先显式版本地址再回退latest地址() {
-        let candidates = build_updater_manifest_candidates(
-            "https://github.com/wm94i/Work-Review/releases/latest/download/updater.json",
-            Some("1.0.24"),
-        );
-
+    fn 更新清单地址应由目标版本构造且去除v前缀() {
         assert_eq!(
-            candidates,
-            vec![
-                "https://github.com/wm94i/Work-Review/releases/download/v1.0.24/updater.json"
-                    .to_string(),
-                "https://github.com/wm94i/Work-Review/releases/latest/download/updater.json"
-                    .to_string(),
-            ]
+            build_gitlab_manifest_url(Some("v1.1.35")).as_deref(),
+            Some(
+                "https://home.chenkaidi.top:509/api/v4/projects/chenkaidi%2Fwork-review/packages/generic/yue-review/1.1.35/updater.json"
+            )
+        );
+        assert_eq!(
+            build_gitlab_manifest_url(Some(" 1.1.35 ")).as_deref(),
+            Some(
+                "https://home.chenkaidi.top:509/api/v4/projects/chenkaidi%2Fwork-review/packages/generic/yue-review/1.1.35/updater.json"
+            )
         );
     }
 
     #[test]
-    fn 更新清单候选应保留代理前缀并规范化版本号() {
-        let candidates = build_updater_manifest_candidates(
-            "https://gh-proxy.cn/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghproxy.json",
-            Some("v1.0.24"),
-        );
+    fn 更新清单地址缺少有效版本时应返回空() {
+        assert_eq!(build_gitlab_manifest_url(None), None);
+        assert_eq!(build_gitlab_manifest_url(Some("")), None);
+        assert_eq!(build_gitlab_manifest_url(Some("   ")), None);
+        assert_eq!(build_gitlab_manifest_url(Some("vvv")), None);
+    }
 
+    #[test]
+    fn 最新版本查询应指向自建gitlab的releases接口() {
         assert_eq!(
-            candidates,
-            vec![
-                "https://gh-proxy.cn/https://github.com/wm94i/Work-Review/releases/download/v1.0.24/updater-ghproxy.json"
-                    .to_string(),
-                "https://gh-proxy.cn/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghproxy.json"
-                    .to_string(),
-            ]
+            GITLAB_LATEST_RELEASE_API,
+            "https://home.chenkaidi.top:509/api/v4/projects/chenkaidi%2Fwork-review/releases?per_page=1"
         );
     }
 
     #[test]
-    fn 更新源应优先官方_github() {
+    fn 发布页应指向自建gitlab最新发布永久链接() {
         assert_eq!(
-            UPDATER_JSON_ENDPOINTS.first().copied(),
-            Some("https://github.com/wm94i/Work-Review/releases/latest/download/updater.json")
+            GITLAB_RELEASE_PAGE,
+            "https://home.chenkaidi.top:509/chenkaidi/work-review/-/releases/permalink/latest"
         );
+    }
+
+    #[test]
+    fn 更新相关地址不应再包含github() {
+        for raw in [
+            GITLAB_LATEST_RELEASE_API,
+            GITLAB_RELEASE_PAGE,
+            build_gitlab_manifest_url(Some("v9.9.9"))
+                .unwrap_or_default()
+                .as_str(),
+        ] {
+            assert!(
+                !raw.to_ascii_lowercase().contains("github"),
+                "更新地址不应包含 github: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn 版本比较应处理v前缀与进位边界() {
+        assert_eq!(compare_versions("1.1.9", "1.1.10"), Ordering::Less);
+        assert_eq!(compare_versions("v1.1.34", "1.1.34"), Ordering::Equal);
+        assert_eq!(compare_versions("1.2", "1.1.99"), Ordering::Greater);
+        assert_eq!(compare_versions("1.1", "1.1.0"), Ordering::Equal);
+    }
+
+    #[test]
+    fn 更新令牌缺失时应能优雅降级() {
+        // updater_gitlab_token 是 option_env! 的包装：本地/CI 未注入该变量时必须
+        // 返回 None（调用方按"未配置更新源"降级），而不是 panic 或空串误判为已配置。
+        let token = updater_gitlab_token();
+        if let Some(raw) = token {
+            assert!(!raw.trim().is_empty());
+        }
     }
 }

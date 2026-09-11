@@ -81,11 +81,6 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBOTFGOUMyNTQ2NzI2NjcKUldSbkptZFV3dm1SaXVWQnAzcW9SNVFBWEdyR2tycXVvVWsvN2YraUV2S0ZOaHo4K3Jyd2RmSkoK",
-      "endpoints": [
-        "https://github.com/wm94i/Work-Review/releases/latest/download/updater.json",
-        "https://gh-proxy.cn/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghproxy.json",
-        "https://gh-proxy.com/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghp.json"
-      ],
       "windows": {
         "installMode": "passive"
       }
