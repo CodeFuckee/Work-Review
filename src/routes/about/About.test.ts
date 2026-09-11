@@ -2,34 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('关于页应提供赞助支持按钮并展示微信与支付宝收款码', async () => {
+test('关于页不应包含 GitHub 与赞助入口及其弹层死代码', async () => {
   const source = await readFile(new URL('./About.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /let isSponsorshipOpen = false;/);
-  assert.match(source, /about\.sponsorship/);
-  assert.match(source, /text-rose-500/);
-  assert.match(source, /about\.wechat/);
-  assert.match(source, /about\.alipay/);
-  assert.match(source, /docs\/sponsorship\/vx\.png/);
-  assert.match(source, /docs\/sponsorship\/zfb\.png/);
+  assert.doesNotMatch(source, /openGitHub/);
+  assert.doesNotMatch(source, /github\.com/);
+  assert.doesNotMatch(source, /sponsorship|Sponsorship/i);
+  assert.doesNotMatch(source, /about\.sponsorship/);
+  assert.doesNotMatch(source, /zoomedQr/);
+  assert.doesNotMatch(source, /docs\/sponsorship\//);
+  assert.doesNotMatch(source, /plugin-shell/);
+  assert.match(source, /about\.openDataDir/);
+  assert.match(source, /open_data_dir/);
 });
 
-test('关于页赞助弹层应保留完整交互，检查更新应位于三个轻量操作之后', async () => {
+test('关于页操作区应保留数据目录入口且检查更新位于下方状态区', async () => {
   const source = await readFile(new URL('./About.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /about\.supportCopy/);
-  assert.match(source, /about\.supportCopy2/);
-  assert.doesNotMatch(source, /推荐微信扫码支持/);
-  assert.doesNotMatch(source, /也可以使用支付宝扫码/);
-  assert.match(source, /if \(event\.key === 'Escape' && isSponsorshipOpen\)/);
-  assert.match(source, /on:click=\{\(\) => zoomedQr = wechatSponsorshipQr\}/);
-  assert.match(source, /on:click=\{\(\) => zoomedQr = alipaySponsorshipQr\}/);
+  assert.match(source, /about-action-row/);
   assert.match(source, /role="switch"/);
   assert.match(source, /aria-checked=\{autoCheckUpdate\}/);
   assert.ok(
-    source.indexOf("t('about.sponsorship')")
+    source.indexOf("t('about.openDataDir')")
       < source.indexOf("t('about.checkUpdates')"),
-    'GitHub、数据目录和赞助支持应先展示，检查更新应位于下方状态区'
+    '数据目录应先展示，检查更新应位于下方状态区'
   );
 });
 

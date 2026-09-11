@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 变更
+- **关于页移除 GitHub 链接与赞助入口**：操作区仅保留「打开数据目录」，赞助弹层（微信/支付宝/Buy Me a Coffee 收款码）连同其状态、Esc 关闭、二维码放大交互与 `.about-support-link` 样式一并删除；四语言的赞助相关 i18n 文案同步清理（词典叶子数 1340 → 1329）。
 - **二进制名与便携版更名，彻底消除与旧版的安装冲突**：`mainBinaryName` 由 `Work_Review` 改为 `Yue_Review`——此前 NSIS 安装器按二进制名查杀同名进程，旧版 Work-Review 运行中安装 Yue复盘 会弹「yue-review is running, click ok to kill it」并杀掉旧版进程（E2E 实测复现）。现安装后的主程序为 `Yue_Review.exe`，便携版更名为 `Yue_Review_portable_x64.zip`；CI 便携打包/产物路径/glibc 检查参数同步更新；进程自识别表（categorize/monitor/前端图标与时间线归一化）加入新名并保留旧名兼容。新增安装器隔离 E2E（`tests/e2e/installer-isolation/run.ps1`，Windows）：静默安装/启动并存/静默卸载全链路断言旧进程不被影响，以及独立性契约测试 `appIndependence.test.ts`。
 - **应用更名为 Yue-Review（中文名「Yue复盘」），并与旧版实现并存**：productName 与安装包/软件包命名（NSIS setup.exe、dmg、deb、rpm、AppImage 产物名）随英文名更新为 Yue-Review；主窗口标题与侧边栏/关于页品牌改为「Yue复盘」（繁体环境显示「Yue復盤」，英文/阿拉伯环境显示 Yue-Review）。时间线与图标的自身应用识别同步认识新名称，旧名称（Daily-Report、Work Review）的历史记录继续兼容。**为支持与旧版（≤v1.1.29）同时运行**，包标识由 `com.workreview.app` 改为 `com.yuereview.app`，默认数据目录由 `%APPDATA%\work-review` 改为 `%APPDATA%\yue-review`（数据目录偏好文件、OCR 临时目录、MCP Server 配置定位同步迁移）：新旧两版可同时打开、互不干扰、各自独立记录；新版本首启从空数据开始，需要旧历史时可在 设置 → 数据目录 指回旧目录。代价：macOS 需重新授予屏幕录制/辅助功能权限（按标识符记账）；WebView2 界面内缓存（localStorage）重置，业务数据不受影响；旧版自动更新到本版后即归属新标识符，旧安装目录残留一条卸载项可手动清除。二进制名 Work_Review.exe、便携版命名保持不变。另修复 vite dev 监视 target/ 目录导致 cargo 并行构建时 EBUSY 崩溃的问题。
 
