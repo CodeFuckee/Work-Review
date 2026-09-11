@@ -101,6 +101,17 @@ pub fn normalize_display_app_name(app_name: &str) -> String {
         .filter(|ch| ch.is_ascii_alphanumeric())
         .collect::<String>();
 
+    if (normalized.contains("yue_review")
+        || normalized.contains("yue review")
+        || compact.contains("yuereview"))
+        && (normalized.contains("setup")
+            || normalized.contains("installer")
+            || compact.contains("setup")
+            || compact.contains("installer"))
+    {
+        return "Yue Review Setup".to_string();
+    }
+
     if (normalized.contains("work_review")
         || normalized.contains("work-review")
         || normalized.contains("work review")
@@ -124,6 +135,7 @@ pub fn normalize_display_app_name(app_name: &str) -> String {
     match normalized.as_str() {
         // ── 本应用 ──
         "work-review" | "work_review" | "workreview" | "work review" => "Work Review".to_string(),
+        "yue-review" | "yue_review" | "yuereview" | "yue review" => "Yue复盘".to_string(),
         // ── 浏览器 ──
         "chrome" | "google chrome" => "Google Chrome".to_string(),
         "msedge" | "edge" | "microsoft edge" => "Microsoft Edge".to_string(),
@@ -1070,6 +1082,11 @@ mod tests {
             normalize_display_app_name("Work_Review.v1.0.35_x64-setup"),
             "Work Review Setup"
         );
+        assert_eq!(
+            normalize_display_app_name("Yue-Review_1.1.33_x64-setup"),
+            "Yue Review Setup"
+        );
+        assert_eq!(normalize_display_app_name("yue_review"), "Yue复盘");
         assert_eq!(normalize_display_app_name("xfltd"), "XFLTD");
     }
 

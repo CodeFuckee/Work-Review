@@ -193,7 +193,7 @@ build-release-linux:
     when: always
     expire_in: 1 week
     paths:
-      - target/release/Work_Review
+      - target/release/Yue_Review
 
 build-release-macos:
   extends: .release-compile
@@ -203,7 +203,7 @@ build-release-macos:
     when: always
     expire_in: 1 week
     paths:
-      - target/release/Work_Review
+      - target/release/Yue_Review
 
 build-release-windows:
   extends: .powershell-toolchain
@@ -222,7 +222,7 @@ build-release-windows:
     when: always
     expire_in: 1 week
     paths:
-      - target/release/Work_Review.exe
+      - target/release/Yue_Review.exe
 
 # Shared pre-package steps for the Windows packaging jobs (PowerShell):
 # stage the updater signing key (see scripts/stage-tauri-key.ps1).
@@ -268,7 +268,7 @@ package-daily-windows:
   after_script:
     - |
       $ErrorActionPreference = "Stop"
-      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Work_Review.exe" |
+      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Yue_Review.exe" |
         Where-Object {
           $_.FullName -match '\\release\\' -and
           $_.FullName -notmatch '\\build\\' -and
@@ -276,16 +276,16 @@ package-daily-windows:
         } |
         Select-Object -First 1
       if (-not $exe) {
-        throw "Work_Review.exe not found; cannot create the portable package."
+        throw "Yue_Review.exe not found; cannot create the portable package."
       }
       $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
       @(
         "Work Review Portable",
         "",
-        "- Double-click Work_Review.exe to run; no install needed.",
+        "- Double-click Yue_Review.exe to run; no install needed.",
         "- Requires the WebView2 Runtime (usually preinstalled on Win10/11)."
       ) | Set-Content -Path $readme -Encoding utf8
-      $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
+      $archive = Join-Path $exe.DirectoryName "Yue_Review_portable_x64.zip"
       Compress-Archive -Path $exe.FullName, $readme -DestinationPath $archive -Force
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
@@ -294,7 +294,7 @@ package-daily-windows:
     paths:
       - target/**/release/bundle/nsis/*.exe
       - target/**/release/bundle/nsis/*.sig
-      - target/**/Work_Review_portable_*.zip
+      - target/**/Yue_Review_portable_*.zip
 
 package-daily-linux-x64:
   extends: [.rust-node, .package-daily]
@@ -541,7 +541,7 @@ release-preflight:
       - target/**/release/bundle/macos/*.app.tar.gz.sig
       - target/**/release/bundle/nsis/*.exe
       - target/**/release/bundle/nsis/*.sig
-      - target/**/Work_Review_portable_*.zip
+      - target/**/Yue_Review_portable_*.zip
       - target/**/release/bundle/appimage/*.AppImage
       - target/**/release/bundle/deb/*.deb
       - target/**/release/bundle/rpm/*.rpm
@@ -582,7 +582,7 @@ tauri-package-macos-x64:
     - bash scripts/stage-tauri-key.sh
   after_script:
     - >-
-      bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Work_Review
+      bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Yue_Review
       $(find target -type f \( -path '*/release/bundle/appimage/*.AppImage' -o -path '*/release/bundle/deb/*.deb' -o -path '*/release/bundle/rpm/*.rpm' \) | sort)
 
 tauri-package-linux-x64:
@@ -621,7 +621,7 @@ tauri-package-windows:
     - |
       $ErrorActionPreference = "Stop"
 
-      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Work_Review.exe" |
+      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Yue_Review.exe" |
         Where-Object {
           $_.FullName -match '\\release\\' -and
           $_.FullName -notmatch '\\build\\' -and
@@ -630,18 +630,18 @@ tauri-package-windows:
         Select-Object -First 1
 
       if (-not $exe) {
-        throw "Work_Review.exe not found; cannot create the portable package."
+        throw "Yue_Review.exe not found; cannot create the portable package."
       }
 
       $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
       @(
         "Work Review Portable",
         "",
-        "- Double-click Work_Review.exe to run; no install needed.",
+        "- Double-click Yue_Review.exe to run; no install needed.",
         "- Requires the WebView2 Runtime (usually preinstalled on Win10/11)."
       ) | Set-Content -Path $readme -Encoding utf8
 
-      $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
+      $archive = Join-Path $exe.DirectoryName "Yue_Review_portable_x64.zip"
       Compress-Archive `
         -Path $exe.FullName, $readme `
         -DestinationPath $archive `
@@ -653,7 +653,7 @@ tauri-package-windows:
     paths:
       - target/**/release/bundle/nsis/*.exe
       - target/**/release/bundle/nsis/*.sig
-      - target/**/Work_Review_portable_*.zip
+      - target/**/Yue_Review_portable_*.zip
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
 
@@ -749,7 +749,7 @@ publish-release:
       else
         glab release create "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" --name "Yue-Review $CI_COMMIT_TAG" --notes-file release_notes.md
       fi
-      for f in target/**/release/bundle/dmg/*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*.exe target/**/release/bundle/nsis/*.sig                target/**/Work_Review_portable_*.zip target/**/release/bundle/appimage/*.AppImage                target/**/release/bundle/deb/*.deb target/**/release/bundle/rpm/*.rpm; do
+      for f in target/**/release/bundle/dmg/*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*.exe target/**/release/bundle/nsis/*.sig                target/**/Yue_Review_portable_*.zip target/**/release/bundle/appimage/*.AppImage                target/**/release/bundle/deb/*.deb target/**/release/bundle/rpm/*.rpm; do
         [ -f "$f" ] || continue
         name="$(basename "$f")"
         code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           -H "PRIVATE-TOKEN: $GIT_PUSH_TOKEN" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"

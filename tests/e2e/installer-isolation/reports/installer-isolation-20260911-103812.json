@@ -1,0 +1,34 @@
+﻿{
+    "Time":  "2026-09-11 10:38:12",
+    "Installer":  "C:/Users/Administrator/AppData/Local/Temp/yue-e2e/Yue-Review_1.1.32_x64-setup.exe",
+    "OldPidsBefore":  "29880",
+    "Total":  4,
+    "Passed":  0,
+    "Failed":  4,
+    "Cases":  [
+                  {
+                      "Id":  "E2E-001",
+                      "Name":  "旧版运行中安装 Yue-Review，旧进程不被杀",
+                      "Passed":  false,
+                      "Detail":  "安装器执行异常: 无法对参数“ArgumentList”执行参数验证。该参数为 Null、为空或参数集合的某个元素包含 Null 值。请提供一个不包含任何 Null 值的集合，然后重试此命令。"
+                  },
+                  {
+                      "Id":  "E2E-002",
+                      "Name":  "安装产物存在且旧进程仍存活",
+                      "Passed":  false,
+                      "Detail":  "新装 exe 不存在: C:\\Users\\Administrator\\AppData\\Local\\Yue-Review\\Yue_Review.exe"
+                  },
+                  {
+                      "Id":  "E2E-003",
+                      "Name":  "启动新装应用，新旧两进程并存",
+                      "Passed":  false,
+                      "Detail":  "前置失败：新装 exe 不存在"
+                  },
+                  {
+                      "Id":  "E2E-004",
+                      "Name":  "静默卸载不影响旧版进程",
+                      "Passed":  false,
+                      "Detail":  "卸载异常: 无法对参数“ArgumentList”执行参数验证。该参数为 Null、为空或参数集合的某个元素包含 Null 值。请提供一个不包含任何 Null 值的集合，然后重试此命令。"
+                  }
+              ]
+}

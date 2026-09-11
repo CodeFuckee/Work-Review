@@ -2735,6 +2735,9 @@ fn normalize_electron_app_name(process_name: &str, window_title: &str) -> String
         ("work-review", "Work Review"),
         ("work_review", "Work Review"),
         ("workreview", "Work Review"),
+        ("yue-review", "Yue复盘"),
+        ("yue_review", "Yue复盘"),
+        ("yuereview", "Yue复盘"),
     ];
 
     for (pattern, real_name) in process_aliases.iter() {

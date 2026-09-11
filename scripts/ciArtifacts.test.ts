@@ -56,7 +56,7 @@ test('Windows 日常打包应生成便携 zip 产物', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
   const windows = yaml.split(/^(?=package-daily-windows)/m).find((s) => s.startsWith('package-daily-windows'));
   assert.ok(windows);
-  assert.match(windows, /Work_Review_portable_x64\.zip/);
+  assert.match(windows, /Yue_Review_portable_x64\.zip/);
   assert.match(windows, /target\/\*\*\/release\/bundle\/nsis\/\*\.exe/);
 });
 
