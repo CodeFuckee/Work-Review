@@ -951,6 +951,8 @@ export default {
       sectionWeb: '助手連網',
       sectionMemory: '語義記憶',
       builtinModelHint: '軟體已內建 AI 模型，無需設定即可使用 AI 功能；生成內容會傳送至內建模型對應的第三方 AI 服務。',
+      builtinNoConfig: '無需設定，開箱即用',
+      builtinConfigNote: '內建模型無需任何設定即可使用。點擊右上角「測試連線」可驗證其是否可用；如需使用自己的模型，在上方切換其他供應商即可。',
       builtinAvailableHint: '已內建 AI 模型，無需設定也可使用 AI 功能；目前優先使用你設定的模型。',
       connectionTitle: '連線',
       statusConnected: '已連線',

@@ -966,6 +966,8 @@ export default {
       sectionWeb: 'Web access',
       sectionMemory: 'Memory',
       builtinModelHint: 'A built-in AI model is included, so AI features work without any configuration; generated content is sent to the third-party AI service behind it.',
+      builtinNoConfig: 'Zero configuration, works out of the box',
+      builtinConfigNote: 'The built-in model works with zero configuration. Use "Test Connection" to verify availability; to use your own model, switch to another provider above.',
       builtinAvailableHint: 'A built-in AI model is included and works without configuration; your configured model takes priority.',
       connectionTitle: 'Connection',
       statusConnected: 'Connected',

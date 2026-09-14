@@ -125,6 +125,22 @@ test('内置模型指示应在编译期注入后常驻显示并按使用状态�
   assert.match(source, /settingsAI\.builtinAvailableHint/);
 });
 
+test('选择内置模型供应商时应固定出厂形状并默认 AI 增强', async () => {
+  const source = await readFile(
+    new URL('./components/SettingsAI.svelte', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(source, /function selectBuiltinProvider\(\)/);
+  assert.match(source, /config\.text_model\.provider = 'builtin'/);
+  assert.match(source, /config\.ai_mode = 'summary';/);
+  // 内置选中时隐藏连接字段（出厂默认形状对用户不可见），只留说明与测试入口
+  assert.match(source, /\{#if usingBuiltinModel\}/);
+  assert.match(source, /\{:else\}/);
+  // 网格高亮：builtin 卡片在出厂默认时选中，ollama 卡片此时不选中
+  assert.match(source, /provider\.id === 'builtin'\s*\?\s*usingBuiltinModel/);
+});
+
 test('内置模型指示文案应覆盖全部四种语言', async () => {
   for (const localeName of ['zh-CN', 'zh-TW', 'en', 'ar']) {
     const localeModule = await import(`../../lib/i18n/locales/${localeName}.ts`);

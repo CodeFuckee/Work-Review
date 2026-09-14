@@ -950,6 +950,8 @@ export default {
       sectionWeb: '助手联网',
       sectionMemory: '语义记忆',
       builtinModelHint: '软件已内置 AI 模型，无需配置即可使用 AI 功能；生成内容会发送至内置模型对应的第三方 AI 服务。',
+      builtinNoConfig: '无需配置，开箱即用',
+      builtinConfigNote: '内置模型无需任何配置即可使用。点击右上角「测试连接」可验证其是否可用；如需使用自己的模型，在上方切换其他供应商即可。',
       builtinAvailableHint: '已内置 AI 模型，无需配置也可使用 AI 功能；当前优先使用你配置的模型。',
       connectionTitle: '连接',
       statusConnected: '已连接',

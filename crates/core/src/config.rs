@@ -67,6 +67,9 @@ pub enum AiProvider {
     /// 自定义 OpenAI 兼容接口
     #[serde(rename = "custom")]
     Custom,
+    /// 软件内置的兜底大模型（编译期注入，无需任何配置）
+    #[serde(rename = "builtin")]
+    Builtin,
 }
 
 impl AiProvider {
@@ -96,6 +99,7 @@ impl AiProvider {
             AiProvider::Mistral => "Mistral",
             AiProvider::LmStudio => "LM Studio (本地)",
             AiProvider::Custom => "自定义接口",
+            AiProvider::Builtin => "内置模型",
         }
     }
 
@@ -119,6 +123,7 @@ impl AiProvider {
             AiProvider::Mistral => "https://api.mistral.ai/v1",
             AiProvider::LmStudio => "http://localhost:1234/v1",
             AiProvider::Custom => "",
+            AiProvider::Builtin => "",
         }
     }
 
@@ -142,6 +147,7 @@ impl AiProvider {
             AiProvider::Mistral => "mistral-small-latest",
             AiProvider::LmStudio => "local-model",
             AiProvider::Custom => "",
+            AiProvider::Builtin => "",
         }
     }
 
@@ -163,6 +169,7 @@ impl AiProvider {
                 | AiProvider::Mistral
                 | AiProvider::LmStudio
                 | AiProvider::Custom
+                | AiProvider::Builtin
         )
     }
 }
@@ -242,6 +249,10 @@ impl ModelConfig {
     /// 真实配置过的用户要么换过端点/填了 Key，要么从模型列表选过具体名字
     /// （如 `qwen3:8b`），不会被误判。
     pub fn is_factory_default_text(&self) -> bool {
+        // 内置模型供应商：等价于「使用内置」，无论端点/模型字段为何
+        if self.provider == AiProvider::Builtin {
+            return true;
+        }
         if self.provider != AiProvider::Ollama
             || self.endpoint.trim() != AiProvider::Ollama.default_endpoint()
             || !self

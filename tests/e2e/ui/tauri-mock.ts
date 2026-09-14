@@ -32,8 +32,47 @@ export async function installTauriMock(page: Page, spec: MockSpec): Promise<void
   }, spec);
 }
 
-/** 出厂默认文本模型：与后端 is_factory_default_text 的判定对齐（Ollama 默认端点 + qwen3、无 key）。 */
+/** 出厂默认文本模型：后端 get_config 归一化后为 builtin 供应商 + AI 增强模式。 */
 export function factoryDefaultTextModel(): MockSpec {
+  return {
+    get_config: {
+      ai_mode: 'summary',
+      text_model: {
+        provider: 'builtin',
+        endpoint: '',
+        api_key: null,
+        model: '',
+      },
+    },
+  };
+}
+
+const BUILTIN_PROVIDER_ENTRY = {
+  id: 'builtin',
+  name: '内置模型',
+  description: '软件内置的兜底大模型，无需任何配置',
+  default_endpoint: '',
+  default_model: '',
+  requires_api_key: false,
+  supports_vision: false,
+  builtin: true,
+};
+
+const OLLAMA_PROVIDER_ENTRY = {
+  id: 'ollama',
+  name: 'Ollama (本地)',
+  description: '在本机运行的开源大模型，数据不出本机',
+  default_endpoint: 'http://localhost:11434',
+  default_model: 'qwen3',
+  requires_api_key: false,
+  supports_vision: false,
+};
+
+/** 无内置模型时的供应商列表（等价于本地开发未注入 key 的构建） */
+export const OLLAMA_PROVIDER_ENTRY_ONLY = [OLLAMA_PROVIDER_ENTRY];
+
+/** 出厂默认（无内置）：provider 保持 ollama 出厂形状、日报为基础模板 */
+export function factoryDefaultTextModelOllama(): MockSpec {
   return {
     get_config: {
       ai_mode: 'local',
@@ -74,6 +113,7 @@ export function baseSpec(overrides: MockSpec = {}): MockSpec {
     get_categories: [],
     get_update_settings: { autoCheck: true, lastCheckTime: 0, checkIntervalHours: 24 },
     has_builtin_model: true,
+    get_ai_providers: [BUILTIN_PROVIDER_ENTRY, OLLAMA_PROVIDER_ENTRY],
     ...overrides,
   };
 }

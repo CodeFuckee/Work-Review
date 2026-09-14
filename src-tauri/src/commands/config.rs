@@ -6,7 +6,7 @@ use crate::AppState;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
-use work_review_core::config::AppConfig;
+use work_review_core::config::{AppConfig, AiMode, AiProvider};
 use work_review_core::database::Database;
 use work_review_core::error::AppError;
 use work_review_core::privacy::PrivacyFilter;
@@ -25,10 +25,23 @@ const MANAGED_DATA_ENTRIES: &[&str] = &[
 const LIVE_DATABASE_FILES: &[&str] = &["workreview.db", "workreview.db-shm", "workreview.db-wal"];
 
 /// 获取配置
+///
+/// 归一化：编译期注入了内置模型时，「出厂默认配置」（未做任何自定义）的文本模型
+/// 供应商翻转为 `builtin`、日报模式翻转为「AI 增强」——这是开箱默认状态；用户
+/// 显式保存过的自定义配置（非出厂形状 / 非 Local 模式）不会被此逻辑改动。
 #[tauri::command]
 pub async fn get_config(state: State<'_, Arc<Mutex<AppState>>>) -> Result<AppConfig, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    Ok(state.config.clone())
+    let mut config = state.config.clone();
+    if work_review_core::config::builtin_text_model().is_some()
+        && config.text_model.is_factory_default_text()
+    {
+        config.text_model.provider = AiProvider::Builtin;
+        if config.ai_mode == AiMode::Local {
+            config.ai_mode = AiMode::Summary;
+        }
+    }
+    Ok(config)
 }
 
 /// 保存配置

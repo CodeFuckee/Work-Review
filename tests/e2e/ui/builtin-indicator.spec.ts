@@ -3,7 +3,9 @@ import {
   baseSpec,
   customTextModel,
   factoryDefaultTextModel,
+  factoryDefaultTextModelOllama,
   installTauriMock,
+  OLLAMA_PROVIDER_ENTRY_ONLY,
   type MockSpec,
 } from './tauri-mock';
 
@@ -33,7 +35,7 @@ async function reviewHold(page: Page): Promise<void> {
 }
 
 test.describe('设置页内置模型指示卡', () => {
-  test('E2E-001 内置模型+出厂默认配置（基础模板分支）：卡片可见且显示"无需配置"文案', async ({ page }) => {
+  test('E2E-001 内置模型+出厂默认配置：卡片可见且显示"无需配置"文案', async ({ page }) => {
     const spec: MockSpec = { ...baseSpec(), ...factoryDefaultTextModel() };
     await installTauriMock(page, spec);
 
@@ -46,6 +48,10 @@ test.describe('设置页内置模型指示卡', () => {
     const cardBox = await card.boundingBox();
     const legendBox = await page.getByText(MODE_LEGEND, { exact: true }).boundingBox();
     expect(cardBox && legendBox && cardBox.y < legendBox.y).toBe(true);
+    // 内置供应商卡片可见且选中，字段隐藏（只显示说明，端点输入不存在）
+    await expect(page.getByText('内置模型', { exact: true })).toBeVisible();
+    await expect(page.getByText('内置模型无需任何配置')).toBeVisible();
+    await expect(page.locator('#ai-endpoint')).toHaveCount(0);
     await reviewHold(page);
   });
 
@@ -58,17 +64,19 @@ test.describe('设置页内置模型指示卡', () => {
     await expect(page.getByText(CARD_TEXT_AVAILABLE, { exact: false })).toBeVisible();
     // 此时不应显示"正在使用内置"版本文案
     await expect(page.getByText(CARD_TEXT_ACTIVE, { exact: false })).toHaveCount(0);
-    // AI 增强分支：卡片位于模型分区提供商网格上方
-    const cardBox = await page.getByText(CARD_TEXT_AVAILABLE, { exact: false }).boundingBox();
-    const providerBox = await page.getByText(PROVIDER_LABEL, { exact: true }).boundingBox();
-    expect(cardBox && providerBox && cardBox.y < providerBox.y).toBe(true);
+    // AI 增强分支：字段可见（端点输入），内置说明不显示
+    await expect(page.locator('#ai-endpoint')).toBeVisible();
+    await expect(page.getByText('内置模型无需任何配置')).toHaveCount(0);
     await reviewHold(page);
   });
 
   test('E2E-003 复现：内置模型不可用（本地开发未注入 key 的真实场景）时卡片不可见', async ({ page }) => {
     const spec: MockSpec = {
-      ...baseSpec({ has_builtin_model: false }),
-      ...factoryDefaultTextModel(),
+      ...baseSpec({
+        has_builtin_model: false,
+        get_ai_providers: [OLLAMA_PROVIDER_ENTRY_ONLY],
+      }),
+      ...factoryDefaultTextModelOllama(),
     };
     await installTauriMock(page, spec);
 
@@ -76,6 +84,8 @@ test.describe('设置页内置模型指示卡', () => {
 
     await expect(page.getByText(CARD_TEXT_ACTIVE, { exact: false })).toHaveCount(0);
     await expect(page.getByText(CARD_TEXT_AVAILABLE, { exact: false })).toHaveCount(0);
+    // 供应商网格中不应出现内置模型卡片
+    await expect(page.getByText('内置模型', { exact: true })).toHaveCount(0);
     // 页面其余部分正常：日报模式切换仍在
     await expect(page.getByText(MODE_LEGEND, { exact: true })).toBeVisible();
     await reviewHold(page);
