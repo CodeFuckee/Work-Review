@@ -6,7 +6,7 @@ use crate::AppState;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
-use work_review_core::config::{AppConfig, AiMode, AiProvider};
+use work_review_core::config::{AiMode, AiProvider, AppConfig};
 use work_review_core::database::Database;
 use work_review_core::error::AppError;
 use work_review_core::privacy::PrivacyFilter;

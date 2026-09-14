@@ -1030,7 +1030,9 @@ fn base_provider_list() -> Vec<serde_json::Value> {
 
 #[tauri::command]
 pub async fn get_ai_providers() -> Result<Vec<serde_json::Value>, AppError> {
-    Ok(provider_list_with(work_review_core::config::builtin_text_model().is_some()))
+    Ok(provider_list_with(
+        work_review_core::config::builtin_text_model().is_some(),
+    ))
 }
 
 #[cfg(test)]
@@ -1215,10 +1217,8 @@ mod tests {
 
     #[test]
     fn 测试目标解析_出厂默认配置应替换为内置模型() {
-        let resolved = resolve_test_target_with(
-            ModelConfig::default_text(),
-            Some(builtin_model_for_test()),
-        );
+        let resolved =
+            resolve_test_target_with(ModelConfig::default_text(), Some(builtin_model_for_test()));
         assert_eq!(resolved.endpoint, "https://laneai.dev/v1");
         assert_eq!(resolved.model, "deepseek-v4-flash");
     }
@@ -1231,8 +1231,7 @@ mod tests {
         custom.api_key = Some("sk-custom".to_string());
         custom.model = "gpt-x".to_string();
 
-        let resolved =
-            resolve_test_target_with(custom.clone(), Some(builtin_model_for_test()));
+        let resolved = resolve_test_target_with(custom.clone(), Some(builtin_model_for_test()));
         assert_eq!(resolved.endpoint, custom.endpoint);
         assert_eq!(resolved.model, "gpt-x");
     }
