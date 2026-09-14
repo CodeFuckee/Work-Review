@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增
+- **设置页「内置模型」常驻指示卡 + E2E 测试套件**：AI 设置顶部新增蓝色指示卡，只要编译期注入了内置模型即常驻显示（置于日报模式切换之上，基础模板/AI 增强两个分支均可见），文案按状态切换——出厂默认配置显示「软件已内置 AI 模型，无需配置即可使用 AI 功能；生成内容会发送至内置模型对应的第三方 AI 服务」，已配置自定义模型显示「…当前优先使用你配置的模型」（四语言）。新增 Playwright E2E 套件（`tests/e2e/ui/`，4 用例：双状态卡片、无内置复现、纯 web 降级；`npx playwright test --headed` 人工过目，`E2E_HOLD_MS`/`E2E_SLOW_MS` 控制停留与放慢）。`tauri:dev` 改为包装脚本（`scripts/tauri-dev-with-key.mjs`）：从 git-ignored 的 `src-tauri/.builtin-model-key.local` 读取内置模型 key 并在编译期注入 + touch 入口强制重编（绕开 `option_env!` 不因环境变量变化重编译的坑），本地开发构建与发布版行为一致；key 缺失时照常启动并打印说明。
+
 ### 变更
 - **自动更新源从 GitHub 切换到自建 GitLab**：客户端更新端点改为 GitLab 包仓库固定版本直链（`/api/v4/projects/…/packages/generic/yue-review/<版本>/updater.json`），检查流程改为两步——先查 releases API 取最新 tag 做版本比较（GitLab 19 不支持 `latest` 包别名），再对更新清单做可安装性检查（minisign 签名校验不变）；清单不可用时回退提示手动下载，手动下载页指向 `/releases/permalink/latest`。项目保持 private，更新器以编译期注入的只读 Project Access Token（`WORK_REVIEW_UPDATER_GITLAB_TOKEN`，即 CI 变量 `UPDATER_GITLAB_TOKEN`，Guest + read_api、2027-09-10 到期可吊销）以 `PRIVATE-TOKEN` 头完成全部更新请求；未注入该变量的构建（如本地开发）按"未配置更新源"优雅降级。publish-release 新增 `scripts/generate-updater-json.mjs` 生成并上传每个版本的 updater.json（darwin-aarch64 / windows-x86_64 必备，darwin-x86_64 由 `PACKAGE_MACOS_X64` 开启时可选），`tauri.conf.json` 移除 GitHub 端点。注意过渡：v1.1.35 是首个走 GitLab 更新源的版本，存量客户端（≤v1.1.34）内置的仍是 GitHub 端点，需手动升级一次。
 - **关于页移除 GitHub 链接与赞助入口**：操作区仅保留「打开数据目录」，赞助弹层（微信/支付宝/Buy Me a Coffee 收款码）连同其状态、Esc 关闭、二维码放大交互与 `.about-support-link` 样式一并删除；四语言的赞助相关 i18n 文案同步清理（词典叶子数 1340 → 1329）。

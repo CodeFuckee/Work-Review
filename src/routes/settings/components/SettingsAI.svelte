@@ -707,6 +707,21 @@
   });
 </script>
 
+<!-- 内置模型指示：编译期注入后常驻显示，让用户知道无需配置也能使用 AI 功能。
+     置于日报模式切换之上，两个分支（AI 增强/基础模板）都可见。 -->
+{#if hasBuiltinModel}
+  <div class="mb-4 flex items-start gap-2 rounded-xl border border-sky-300 bg-sky-50 px-3.5 py-3 dark:border-[#2a6496] dark:bg-[#112240]">
+    <span class="mt-px text-[13px] leading-5 text-sky-600 dark:text-[#79b8ff]">✦</span>
+    <div class="min-w-0 text-[12px] leading-5 text-sky-800 dark:text-[#a8d4ff]">
+      {#if usingBuiltinModel}
+        <p class="font-medium">{t('settingsAI.builtinModelHint')}</p>
+      {:else}
+        <p>{t('settingsAI.builtinAvailableHint')}</p>
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <!-- 日报模式切换 -->
 <fieldset class="mb-5" data-locale={currentLocale}>
   <legend class="settings-label mb-2">{t('settingsAI.modeLegend')}</legend>
@@ -800,14 +815,6 @@
         {/each}
       </div>
     </div>
-
-    <!-- 内置兜底模型提示：仅在编译期注入了内置模型且用户未配置时显示 -->
-    {#if usingBuiltinModel}
-      <div class="mb-4 flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50/70 px-3.5 py-2.5 dark:border-[#1f4468] dark:bg-[#112240]/70">
-        <span class="mt-px text-[13px] leading-5 text-sky-600 dark:text-[#79b8ff]">ℹ</span>
-        <span class="text-[12px] leading-5 text-sky-700 dark:text-[#8ec2ff]">{t('settingsAI.builtinModelHint')}</span>
-      </div>
-    {/if}
 
     <!-- 连接配置卡：字段分组 + 常驻状态徽标 + 紧凑测试入口 -->
     <div class="overflow-hidden rounded-xl border border-slate-200 dark:border-[#30363d]">
