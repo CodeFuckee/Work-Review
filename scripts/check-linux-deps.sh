@@ -21,7 +21,10 @@ if [[ "${1:-}" == "--for-package" ]]; then
 fi
 
 # Packages needed to compile/verify the Tauri app (Ubuntu 22.04 names).
-PKGS=(libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev)
+# libssl-dev + pkg-config: openssl-sys（reqwest 默认 TLS）编译期定位 OpenSSL
+# 全靠它们；runner 重装系统后最容易漏装，缺失时报的是晦涩的
+# "Could not find directory of OpenSSL installation" 而非缺包名。
+PKGS=(libssl-dev pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev)
 if [[ $FOR_PACKAGE -eq 1 ]]; then
   # Additional packages needed by the release bundling stage (deb/rpm/appimage).
   # NOTE: libfuse2 is intentionally NOT required: the tauri bundler runs

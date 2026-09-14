@@ -35,6 +35,12 @@ test('gitlab-ci: Linux jobs run the non-sudo dependency precheck', () => {
   assert.match(yaml, /check-linux-deps\.sh/);
 });
 
+test('check-linux-deps.sh 应预检 openssl-sys 编译依赖（libssl-dev/pkg-config）', () => {
+  const script = readFileSync(DEPS_SCRIPT, 'utf8');
+  assert.match(script, /libssl-dev/, '必须预检 libssl-dev（openssl-sys 编译依赖）');
+  assert.match(script, /pkg-config/, '必须预检 pkg-config（*-sys crate 定位系统库依赖它）');
+});
+
 test('check-linux-deps.sh must only verify, never run sudo/apt itself', () => {
   const script = readFileSync(DEPS_SCRIPT, 'utf8');
   const lines = script.split(/\r?\n/);
