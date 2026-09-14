@@ -30,7 +30,7 @@ impl PrivacyFilter {
             // 身份证号
             Regex::new(r"\b\d{17}[\dXx]\b").unwrap(),
             // 邮箱
-            Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap(),
+            Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap(),
             // 密码字段
             Regex::new(r"(?i)(password|密码|pwd|passwd)[\s:：=]+\S+").unwrap(),
             // API Key

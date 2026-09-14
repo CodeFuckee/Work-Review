@@ -1805,17 +1805,12 @@ async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
             state_guard.cached_active_window = Some((sampled_at, active_window.clone()));
             let rules = &state_guard.config.app_category_rules;
             let cats = &state_guard.config.custom_categories;
-            let sig = rules.len() as u64
-                | rules.last().map_or(0u64, |r| {
-                    let mut h: u64 = 0;
-                    for b in r.app_name.as_bytes() {
-                        h = h.wrapping_add(*b as u64);
-                    }
-                    for b in r.category.as_bytes() {
-                        h = h.wrapping_mul(31).wrapping_add(*b as u64);
-                    }
-                    h
-                });
+            // 签名必须覆盖全部规则内容：只哈希末条规则时，改/删非末尾规则
+            // 不会改变签名，缓存永不失效，桌宠会一直用旧分类
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            use std::hash::{Hash, Hasher};
+            rules.hash(&mut hasher);
+            let sig = hasher.finish();
             if sig != cached_rules_signature {
                 cached_rules = rules.clone();
                 cached_custom_categories = cats.clone();
@@ -2152,7 +2147,7 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         let guard = state.lock().unwrap_or_else(|e| e.into_inner());
         guard.config.idle_threshold_minutes as u64
     };
-    let idle_detector = idle_detector::IdleDetector::new(idle_threshold_minutes.max(1));
+    let mut idle_detector = idle_detector::IdleDetector::new(idle_threshold_minutes.max(1));
     let mut last_idle_log_time = std::time::Instant::now();
     let mut is_currently_idle = false; // 当前是否处于空闲状态
 
@@ -2173,14 +2168,19 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
 
     loop {
         // 首先检查录制状态并获取配置
-        let decision = {
+        let (decision, idle_threshold_minutes) = {
             let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            recording_loop_decision(
-                state_guard.is_recording,
-                state_guard.is_paused,
-                state_guard.config.screenshot_interval,
+            (
+                recording_loop_decision(
+                    state_guard.is_recording,
+                    state_guard.is_paused,
+                    state_guard.config.screenshot_interval,
+                ),
+                state_guard.config.idle_threshold_minutes as u64,
             )
         };
+        // 空闲阈值随配置热更新（截图间隔本就每轮读取，仅此处此前漏了）
+        idle_detector.set_idle_timeout_minutes(idle_threshold_minutes.max(1));
 
         if decision.reset_capture_clock {
             last_capture_time = std::time::Instant::now();

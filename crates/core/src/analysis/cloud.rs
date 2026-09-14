@@ -280,7 +280,7 @@ impl Analyzer for CloudAnalyzer {
                 if !gitlab.local_section.is_empty() {
                     base.push_str(&format!("\n\n{}", gitlab.local_section));
                 }
-                base.push_str(&format!("\n\n---\n*{reason}"));
+                base.push_str(&format!("\n\n---\n*{reason}*"));
                 (base, false, Some(reason))
             }
         };

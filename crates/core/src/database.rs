@@ -1146,7 +1146,7 @@ impl Database {
              SET rebuild_required = CASE WHEN status = 'ready' THEN 1 ELSE rebuild_required END,
                  status = CASE WHEN status = 'ready' THEN 'idle' ELSE status END,
                  build_id = CASE WHEN status = 'ready' THEN '' ELSE build_id END,
-                 total_activities = (SELECT COUNT(*) FROM activities),
+                 total_activities = total_activities + 1,
                  updated_at = ?1
              WHERE singleton_id = 1",
             params![chrono::Utc::now().timestamp()],
@@ -1312,14 +1312,17 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
-        // 获取现有的 OCR 内容
-        let existing_ocr: Option<String> = conn
-            .query_row(
-                "SELECT ocr_text FROM activities WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .ok();
+        // 获取现有的 OCR 内容；行不存在按无 OCR 处理，其余错误必须向上传播，
+        // 否则读失败后仍继续 UPDATE，merged_ocr 只剩新内容、历史 OCR 被覆盖丢失
+        let existing_ocr: Option<String> = match conn.query_row(
+            "SELECT ocr_text FROM activities WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(AppError::Database(e)),
+        };
 
         // 合并 OCR：追加新内容
         let merged_ocr = match (existing_ocr, new_ocr) {
@@ -2750,9 +2753,18 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
+        // 用 upsert 而非 INSERT OR REPLACE：REPLACE 触发的隐式删除在默认配置
+        // （recursive_triggers 关闭）下不会触发 AFTER DELETE 触发器，FTS 会残留
+        // 旧词条；DO UPDATE 会正常走 AFTER UPDATE 触发器的 delete+insert 维护
         conn.execute(
-            "INSERT OR REPLACE INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(date, locale) DO UPDATE SET
+                content = excluded.content,
+                ai_mode = excluded.ai_mode,
+                model_name = excluded.model_name,
+                fallback_reason = excluded.fallback_reason,
+                created_at = excluded.created_at",
             params![
                 report.date,
                 report.locale,
@@ -2860,10 +2872,20 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
+        // 用 upsert 而非 INSERT OR REPLACE：REPLACE 的隐式删除不触发 AFTER DELETE
+        // 触发器，hourly_summaries_fts 会残留旧词条且 rowid 持续膨胀；DO UPDATE
+        // 走 AFTER UPDATE 触发器正确维护 FTS，并保持原 rowid 稳定
         conn.execute(
-            "INSERT OR REPLACE INTO hourly_summaries 
+            "INSERT INTO hourly_summaries
              (date, hour, summary, main_apps, activity_count, total_duration, representative_screenshots, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(date, hour) DO UPDATE SET
+                summary = excluded.summary,
+                main_apps = excluded.main_apps,
+                activity_count = excluded.activity_count,
+                total_duration = excluded.total_duration,
+                representative_screenshots = excluded.representative_screenshots,
+                created_at = excluded.created_at",
             params![
                 summary.date,
                 summary.hour,
@@ -3294,7 +3316,7 @@ impl Database {
         let tokens: Vec<String> = query
             .split_whitespace()
             .map(|t| t.trim().trim_matches(is_punct))
-            .filter(|t| !t.is_empty() && !t.is_empty())
+            .filter(|t| !t.is_empty())
             .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
             .collect();
 

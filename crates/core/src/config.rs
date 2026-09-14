@@ -394,7 +394,7 @@ pub struct AppPrivacyRule {
 }
 
 /// 应用分类规则
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AppCategoryRule {
     /// 应用名称
     pub app_name: String,
@@ -565,7 +565,8 @@ impl PrivacyConfig {
             .collect();
         let mut migrated = false;
         for app in self.excluded_apps.drain(..) {
-            if !existing_names.contains(&app.to_lowercase()) {
+            // 空条目迁移成空规则名会命中一切应用，跳过
+            if !app.trim().is_empty() && !existing_names.contains(&app.to_lowercase()) {
                 self.app_rules.push(AppPrivacyRule {
                     app_name: app,
                     level: PrivacyLevel::Ignored,
@@ -1546,6 +1547,15 @@ impl AppConfig {
     /// 规范化配置，兼容旧字段并补齐助手可用的文本模型档案
     pub fn normalize(&mut self) {
         self.migrate_legacy_config();
+        // 空白规则名/空关键词会以子串 contains("") 恒真命中一切：
+        // 空规则名静默停掉全部记录、空关键词让所有窗口永久触发脱敏，
+        // 在规范化阶段直接剔除
+        self.privacy
+            .app_rules
+            .retain(|rule| !rule.app_name.trim().is_empty());
+        self.privacy
+            .excluded_keywords
+            .retain(|k| !k.trim().is_empty());
         normalize_custom_categories(&mut self.custom_categories);
         normalize_app_category_rules(&mut self.app_category_rules, &self.custom_categories);
         // Seed defaults BEFORE rule validation so built-in categories are present
@@ -1579,11 +1589,6 @@ impl AppConfig {
         self.text_model.thinking_budget = normalize_positive_token(self.text_model.thinking_budget);
         self.text_model.max_output_tokens =
             normalize_positive_token(self.text_model.max_output_tokens);
-        if self.text_model.enable_thinking == Some(true)
-            && self.text_model.thinking_budget == Some(0)
-        {
-            self.text_model.thinking_budget = None;
-        }
         self.daily_report_custom_prompt = self.daily_report_custom_prompt.trim().to_string();
         normalize_prompt_presets(&mut self.daily_report_prompt_presets);
         self.daily_report_export_dir =

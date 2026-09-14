@@ -101,10 +101,7 @@ pub fn commit_belongs_to_user(commit: &GitlabCommit, user: &GitlabUser) -> bool 
     if !commit_email.is_empty() && !user_email.is_empty() && commit_email == user_email {
         return true;
     }
-    if !commit_email.is_empty() && user_email.is_empty() {
-        // token 对应用户不暴露邮箱时，邮箱不作为负判据（继续按名字匹配）
-        let _ = commit_email;
-    }
+    // token 对应用户不暴露邮箱时，邮箱不作为负判据（继续按名字匹配）
     let commit_name = commit.author_name.trim().to_lowercase();
     if commit_name.is_empty() {
         return false;
@@ -328,10 +325,16 @@ pub struct GitlabClient {
 
 impl GitlabClient {
     pub fn new(base_url: &str, token: &str) -> Self {
+        // 必须显式设超时：reqwest 默认无超时，GitLab 挂起时日报生成会无限阻塞
+        let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             token: token.trim().to_string(),
-            http: reqwest::Client::new(),
+            http,
         }
     }
 
@@ -487,7 +490,11 @@ impl GitlabClient {
                 .await
             {
                 Ok(commits) => commits,
-                Err(_) => continue,
+                Err(e) => {
+                    // 部分失败不能静默：否则该项目提交无声丢失、无从排查
+                    log::warn!("拉取项目 {} 提交失败，已跳过: {e}", project.id);
+                    continue;
+                }
             };
             for commit in commits {
                 if !commit_belongs_to_user(&commit, &user) {

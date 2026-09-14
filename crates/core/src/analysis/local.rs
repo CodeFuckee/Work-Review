@@ -87,7 +87,13 @@ impl LocalAnalyzer {
         }
     }
 
-    fn generation_prompt(&self, date: &str, stats: &DailyStats, activities: &[Activity]) -> String {
+    fn generation_prompt(
+        &self,
+        date: &str,
+        stats: &DailyStats,
+        activities: &[Activity],
+        semantic_name_overrides: &HashMap<String, String>,
+    ) -> String {
         let apps_list = join_list(
             self.locale,
             stats
@@ -110,7 +116,7 @@ impl LocalAnalyzer {
                 .domain_usage
                 .iter()
                 .take(3)
-                .map(|domain| format_domain_label(domain, self.locale, &HashMap::new()))
+                .map(|domain| format_domain_label(domain, self.locale, semantic_name_overrides))
                 .collect(),
         );
 
@@ -318,8 +324,9 @@ Do not add any extra preface or explanation."#,
         date: &str,
         stats: &DailyStats,
         activities: &[Activity],
+        semantic_name_overrides: &HashMap<String, String>,
     ) -> Result<String> {
-        let prompt = self.generation_prompt(date, stats, activities);
+        let prompt = self.generation_prompt(date, stats, activities, semantic_name_overrides);
 
         let response = self
             .client
@@ -387,7 +394,10 @@ impl Analyzer for LocalAnalyzer {
         );
         report.push_str(&stats_sections);
 
-        match self.generate_with_ollama(date, stats, activities).await {
+        match self
+            .generate_with_ollama(date, stats, activities, &semantic_name_overrides)
+            .await
+        {
             Ok(ai_content) => {
                 report.push('\n');
                 report.push_str(&ai_content);

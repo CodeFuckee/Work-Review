@@ -299,7 +299,6 @@ fn openai_compatible_chat_completion_urls(endpoint: &str) -> Vec<String> {
     if !base.ends_with("/v1") {
         urls.push(format!("{base}/v1/chat/completions"));
     }
-    urls.dedup();
     urls
 }
 
@@ -474,9 +473,16 @@ impl SummaryAnalyzer {
         let max_tokens_steps: &[u32] = &[4096, 2048, 1024];
 
         for &max_tokens in max_tokens_steps {
+            // 端点防重复拼接：用户可能直接粘贴完整 .../messages 地址
+            let endpoint = self.endpoint.trim_end_matches('/');
+            let messages_url = if endpoint.ends_with("/messages") {
+                endpoint.to_string()
+            } else {
+                format!("{endpoint}/messages")
+            };
             let response = self
                 .client
-                .post(format!("{}/messages", self.endpoint))
+                .post(messages_url)
                 .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
@@ -648,6 +654,7 @@ impl SummaryAnalyzer {
         stats: &DailyStats,
         activities: &[Activity],
         gitlab_ai_context: Option<&str>,
+        semantic_name_overrides: &HashMap<String, String>,
     ) -> String {
         let apps_list = join_list(
             self.locale,
@@ -671,7 +678,7 @@ impl SummaryAnalyzer {
                 .domain_usage
                 .iter()
                 .take(5)
-                .map(|domain| format_domain_label(domain, self.locale, &HashMap::new()))
+                .map(|domain| format_domain_label(domain, self.locale, semantic_name_overrides))
                 .collect(),
         );
 
@@ -1131,7 +1138,13 @@ impl Analyzer for SummaryAnalyzer {
                 .collect(),
         );
 
-        let ai_prompt = self.build_ai_prompt(date, stats, activities, gitlab.ai_context.as_deref());
+        let ai_prompt = self.build_ai_prompt(
+            date,
+            stats,
+            activities,
+            gitlab.ai_context.as_deref(),
+            &semantic_name_overrides,
+        );
         let ai_content = match tokio::time::timeout_at(
             ai_deadline,
             self.generate_ai_content(&ai_prompt),
@@ -1391,7 +1404,7 @@ mod tests {
     fn ai提示词应要求固定观察证据建议小结结构() {
         let analyzer = test_analyzer(AppLocale::ZhCn);
         let stats = sample_stats_for_ai_structure();
-        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None);
+        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None, &HashMap::new());
 
         assert!(prompt.contains("### 观察"));
         assert!(prompt.contains("### 证据"));
@@ -1418,7 +1431,7 @@ mod tests {
     fn 英文ai提示词和回退内容应使用固定英文结构() {
         let analyzer = test_analyzer(AppLocale::En);
         let stats = sample_stats_for_ai_structure();
-        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None);
+        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None, &HashMap::new());
         let fallback = analyzer.generate_fallback_ai_content("VS Code (1h)");
 
         for content in [prompt, fallback] {

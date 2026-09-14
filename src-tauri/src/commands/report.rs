@@ -754,8 +754,13 @@ pub(crate) fn export_reports_range_inner(
 
     let target_path_buf = PathBuf::from(target);
     if let Some(parent) = target_path_buf.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            std::fs::create_dir_all(parent)?;
+        if !parent.as_os_str().is_empty() {
+            // 目录来自请求方，与单篇导出同样需要校验（拒绝隐藏/敏感目录，
+            // 防止向 .ssh、LaunchAgents 等位置写文件），缺失时才创建
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+            validate_export_dir(parent)?;
         }
     }
     std::fs::write(&target_path_buf, markdown)?;

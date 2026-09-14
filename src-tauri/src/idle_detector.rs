@@ -25,6 +25,12 @@ impl IdleDetector {
         }
     }
 
+    /// 更新空闲阈值（分钟）。用户在设置里调整阈值后，采集循环据此热更新，
+    /// 无需重启应用
+    pub fn set_idle_timeout_minutes(&mut self, minutes: u64) {
+        self.idle_timeout_secs = minutes.max(1) * 60;
+    }
+
     /// 第一阶段：检查键鼠是否超时
     /// 返回 true 表示键鼠超时（可能空闲），需要进一步用截图哈希确认
     pub fn is_input_idle(&self) -> bool {

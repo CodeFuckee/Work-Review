@@ -136,6 +136,11 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), AppError> {
             "非法路径：不允许使用绝对路径".to_string(),
         ));
     }
+    // Windows 上形如 `\Windows\x.png` 的路径没有盘符前缀、不算绝对路径，
+    // 但 `Path::join` 会用根路径替换掉 base 的其余部分而逃逸 data_dir，必须一并拒绝
+    if p.has_root() {
+        return Err(AppError::Unknown("非法路径：不允许使用根路径".to_string()));
+    }
     if p.components()
         .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
     {
@@ -144,6 +149,21 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+/// 校验相对路径后拼接到 base 目录下，并二次确认结果仍位于 base 内
+pub(crate) fn validated_join(
+    base: &std::path::Path,
+    path: &str,
+) -> Result<std::path::PathBuf, AppError> {
+    validate_relative_path(path)?;
+    let full = base.join(path);
+    if !full.starts_with(base) {
+        return Err(AppError::Unknown(
+            "非法路径：路径越出了数据目录".to_string(),
+        ));
+    }
+    Ok(full)
 }
 
 pub(crate) fn collect_privacy_filters(state: &AppState) -> (Vec<String>, Vec<String>) {

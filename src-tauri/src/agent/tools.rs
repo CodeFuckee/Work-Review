@@ -1378,21 +1378,21 @@ fn fetch_url_parameters() -> Value {
 /// 注：域名解析到内网 IP 的绕过（DNS rebinding）不在此防护范围——
 /// 单用户本地应用的主要威胁是字面量地址，完整防护需逐跳解析校验。
 fn ensure_public_http_url(url: &str) -> Result<(), String> {
-    let lower = url.trim().to_ascii_lowercase();
-    let rest = lower
-        .strip_prefix("https://")
-        .or_else(|| lower.strip_prefix("http://"))
-        .ok_or_else(|| "仅支持 http/https 链接".to_string())?;
-
-    // 主机段：截到 path/query/fragment 之前，剥离 userinfo 与端口
-    let host_port = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
-    let host = if let Some(inner) = host_port.strip_prefix('[') {
-        inner.split(']').next().unwrap_or("")
-    } else {
-        host_port.split(':').next().unwrap_or(host_port)
-    };
-
+    // 用 WHATWG 规范化解析取主机：手写 host 截取对抗不了 url crate 的主机归一，
+    // `http://2130706433/`、`http://0x7f000001/`、`http://127.0.0.1./`、
+    // `http://[::ffff:127.0.0.1]/` 等形式经规范化后才是真实要连接的地址
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "URL 格式无效".to_string())?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err("仅支持 http/https 链接".to_string());
+    }
+    let raw_host = parsed.host_str().unwrap_or("");
+    // IPv6 的 host_str 带方括号（如 "[::1]"），先剥掉再解析；尾点与裸 IP 等价
+    let host = raw_host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if host.is_empty() {
         return Err("URL 缺少主机名".to_string());
     }
@@ -1409,26 +1409,32 @@ fn ensure_public_http_url(url: &str) -> Result<(), String> {
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         let private = match ip {
-            std::net::IpAddr::V4(v4) => {
-                v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_unspecified()
-                    || v4.is_broadcast()
-            }
-            std::net::IpAddr::V6(v6) => {
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    // 唯一本地 fc00::/7 与链路本地 fe80::/10
-                    || (v6.segments()[0] & 0xfe00) == 0xfc00
-                    || (v6.segments()[0] & 0xffc0) == 0xfe80
-            }
+            std::net::IpAddr::V4(v4) => is_non_public_v4(&v4),
+            std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+                // IPv4-mapped IPv6（如 ::ffff:127.0.0.1）实际连接的是映射的 IPv4
+                Some(v4) => is_non_public_v4(&v4),
+                None => {
+                    v6.is_loopback()
+                        || v6.is_unspecified()
+                        // 唯一本地 fc00::/7 与链路本地 fe80::/10
+                        || (v6.segments()[0] & 0xfe00) == 0xfc00
+                        || (v6.segments()[0] & 0xffc0) == 0xfe80
+                }
+            },
         };
         if private {
             return Err("不允许访问本机/内网 IP".to_string());
         }
     }
     Ok(())
+}
+
+fn is_non_public_v4(v4: &std::net::Ipv4Addr) -> bool {
+    v4.is_loopback()
+        || v4.is_private()
+        || v4.is_link_local()
+        || v4.is_unspecified()
+        || v4.is_broadcast()
 }
 
 /// 极简 HTML → 正文：剥 script/style/注释与标签，解码常见实体，压缩空白。
@@ -3387,6 +3393,15 @@ mod tests {
         assert!(ensure_public_http_url("http://router.lan/").is_err());
         assert!(ensure_public_http_url("http://nas.home/").is_err());
         assert!(ensure_public_http_url("http://1.0.0.10.in-addr.arpa/").is_err());
+
+        // 主机规范化绕过形态（url crate 归一后仍是内网地址，必须拦截）
+        assert!(ensure_public_http_url("http://2130706433/").is_err());
+        assert!(ensure_public_http_url("http://0x7f000001/").is_err());
+        assert!(ensure_public_http_url("http://127.0.0.1./").is_err());
+        assert!(ensure_public_http_url("http://[::ffff:127.0.0.1]:47831/").is_err());
+        assert!(ensure_public_http_url("http://[::ffff:a00:1]/").is_err());
+        assert!(ensure_public_http_url("http://0x7f.1/").is_err());
+        assert!(ensure_public_http_url("http://0177.0.0.1/").is_err());
     }
 
     /// HTML 提取：剥 script/style/注释/标签，解实体，压空白，可截断。

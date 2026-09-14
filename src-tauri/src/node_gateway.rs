@@ -38,14 +38,10 @@ pub(crate) fn get_node_gateway_status(
     state: &Arc<Mutex<AppState>>,
 ) -> Result<NodeGatewayStatusPayload> {
     let identity = ensure_node_identity(state)?;
-    let (device_name_override, data_dir) = {
+    let device_name_override = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-        (
-            state.config.node_gateway.device_name.clone(),
-            state.data_dir.clone(),
-        )
+        state.config.node_gateway.device_name.clone()
     };
-    let _ = data_dir;
 
     let system_name = system_device_name();
     let device_name = resolve_node_device_name(device_name_override.as_deref(), &system_name);

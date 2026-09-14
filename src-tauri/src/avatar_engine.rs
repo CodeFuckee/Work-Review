@@ -104,34 +104,26 @@ pub struct AvatarBubblePayload {
 }
 
 impl AvatarBubblePayload {
-    pub fn info(message: impl Into<String>) -> Self {
+    fn with_tone(message: impl Into<String>, tone: &str, duration_ms: Option<u64>) -> Self {
         Self {
             message: message.into(),
-            tone: "info".to_string(),
-            persistent: false,
-            duration_ms: Some(4200),
+            tone: tone.to_string(),
+            persistent: duration_ms.is_none(),
+            duration_ms,
             clear: false,
         }
+    }
+
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::with_tone(message, "info", Some(4200))
     }
 
     pub fn success(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            tone: "success".to_string(),
-            persistent: false,
-            duration_ms: Some(4200),
-            clear: false,
-        }
+        Self::with_tone(message, "success", Some(4200))
     }
 
     pub fn persistent_info(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            tone: "info".to_string(),
-            persistent: true,
-            duration_ms: None,
-            clear: false,
-        }
+        Self::with_tone(message, "info", None)
     }
 
     pub fn clear() -> Self {

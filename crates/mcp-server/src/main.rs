@@ -203,7 +203,7 @@ fn handle_request(request: &Value, state: &Arc<Mutex<AppState>>) -> Value {
                     },
                     "serverInfo": {
                         "name": "work-review-mcp-server",
-                        "version": "0.1.0"
+                        "version": env!("CARGO_PKG_VERSION")
                     }
                 }
             })

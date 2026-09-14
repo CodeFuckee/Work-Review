@@ -121,9 +121,8 @@ pub async fn get_screenshot_thumbnail(
     path: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, AppError> {
-    super::shared::validate_relative_path(&path)?;
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    let full_path = state.data_dir.join(&path);
+    let full_path = super::shared::validated_join(&state.data_dir, &path)?;
     state
         .screenshot_service
         .generate_thumbnail_base64(&full_path, 400)
@@ -135,9 +134,8 @@ pub async fn get_screenshot_full(
     path: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, AppError> {
-    super::shared::validate_relative_path(&path)?;
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    let full_path = state.data_dir.join(&path);
+    let full_path = super::shared::validated_join(&state.data_dir, &path)?;
     state
         .screenshot_service
         .generate_full_image_base64(&full_path)

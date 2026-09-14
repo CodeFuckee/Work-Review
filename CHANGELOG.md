@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 修复
+- **全量代码评审后的安全与正确性修复（第一批，Rust 后端）**：
+  - **截图读取路径逃逸（P0）**：`get_screenshot_thumbnail`/`get_screenshot_full` 的路径校验未拒绝 Windows 无盘符根路径（如 `\Windows\x.png`），`Path::join` 会用它替换 data_dir 前缀逃逸出数据目录读取任意图片；现于 `validate_relative_path` 中拒绝 `has_root()`，并新增 `validated_join` 在拼接后二次确认结果仍在 data_dir 内。
+  - **日报合并导出绕过目录校验（P0）**：`export_reports_range` 此前对目标路径不校验即可写文件（单篇导出有 `validate_export_dir` 防护，属校验旁路），可写入 `.ssh`/`LaunchAgents` 等敏感位置；现对目标父目录应用同一校验（缺失时先创建再校验）。
+  - **Agent 联网工具 SSRF 护栏绕过（P0）**：`ensure_public_http_url` 手写主机解析无法对抗 WHATWG 主机归一，`http://2130706433/`、`http://0x7f000001/`、`http://127.0.0.1./`、`http://[::ffff:127.0.0.1]/` 等形式可绕过内网拦截直连本机/内网；现改用 `reqwest::Url` 规范化解析（IPv6 的 `host_str` 带方括号，剥壳后再判定），IPv4-mapped IPv6 按映射的 IPv4 判定，并补 7 组绕过形态回归测试。
+  - **全文检索索引损坏（P1）**：`save_report`/`save_hourly_summary` 用 `INSERT OR REPLACE` 写触发器同步的 FTS5 外部内容表——REPLACE 的隐式删除在默认配置（`recursive_triggers` 关闭）下不触发 AFTER DELETE 触发器，旧词条残留、搜索持续命中过期内容；改为 `ON CONFLICT DO UPDATE` upsert 走 UPDATE 触发器正确维护索引。
+  - **插入热路径全表扫描（P1）**：`insert_activity` 每条活动都执行 `total_activities=(SELECT COUNT(*) FROM activities)`，随历史行数线性变慢；改为 `total_activities+1` 自增（重建/删除路径本就重算精确值自愈）。
+  - **合并活动静默丢历史 OCR（P1）**：`merge_activity` 读旧 OCR 的错误被 `.ok()` 吞掉后仍继续 UPDATE，瞬时错误即覆盖丢失历史 OCR；现仅"行不存在"按无 OCR 处理，其余错误向上传播。
+  - **分类规则缓存永不失效（P1）**：桌宠循环的规则缓存签名只哈希末条规则，改/删非末尾规则后缓存不刷新、分类一直用旧规则；改为对全部规则做内容哈希（`AppCategoryRule` 补 `Hash` 派生）。
+  - **空闲阈值改后不生效（P1）**：截图循环仅在启动时读一次 `idle_threshold_minutes`，用户改设置后需重启才生效；现每轮循环随配置热更新（`IdleDetector` 新增 setter）。
+  - **GitLab 拉取无超时且失败静默（P1）**：`GitlabClient` 的 reqwest 客户端未设任何超时，GitLab 挂起时日报生成无限阻塞；补 10s 连接/30s 总超时。逐项目拉取提交失败此前完全静默，现记 warn 日志便于排查。
+  - **隐私过滤正则笔误（P2）**：邮箱 TLD 字符类 `[A-Z|a-z]` 中的 `|` 为字面量管道符（可匹配 `a@b.c|`），改为 `[A-Za-z]`。
+  - **空隐私规则静默全量停记（P2）**：空白规则名/空排除关键词经子串匹配"恒真"命中一切——空规则名会静默停掉全部记录、空关键词让所有窗口永久脱敏；`normalize` 阶段剔除空条目，旧版迁移同样跳过空应用名。
+  - **小修**：Claude 端点防重复拼接 `/messages`；云端日报回退斜体标记补闭合 `*`；删除 `urls.dedup()`、`build_fts_query` 重复条件、`node_gateway` 死绑定、`gitlab.rs` 无效果死分支等四处死代码；AI 提示词/本地模板的域名标签此前硬传空映射、忽略用户语义分类改名，现传入真实 overrides；MCP `serverInfo.version` 改用 `env!("CARGO_PKG_VERSION")`；桌宠气泡 `info/success/persistent_info` 构造器去重。
+
 ### 新增
 - **AI 设置新增「内置模型」供应商并设为默认**：供应商网格首位新增「内置模型」卡片（仅编译期注入了内置模型时显示），默认选中；选中后连接细节（端点/模型/密钥）对用户完全隐藏，只保留「测试连接」按钮（真实请求内置模型验证可用性）与说明文案（四语言）。选中内置即自动进入「AI 增强」日报模式；后端 `get_config` 归一化会把出厂默认配置的供应商翻转为 `builtin`、模式翻转为 AI 增强，新增 `AiProvider::Builtin` 类型（OpenAI 兼容协议，配置文件中端点/模型留空）。出厂默认之外的自定义配置行为不变。
 - **设置页「内置模型」常驻指示卡 + E2E 测试套件**：AI 设置顶部新增蓝色指示卡，只要编译期注入了内置模型即常驻显示（置于日报模式切换之上，基础模板/AI 增强两个分支均可见），文案按状态切换——出厂默认配置显示「软件已内置 AI 模型，无需配置即可使用 AI 功能；生成内容会发送至内置模型对应的第三方 AI 服务」，已配置自定义模型显示「…当前优先使用你配置的模型」（四语言）。新增 Playwright E2E 套件（`tests/e2e/ui/`，4 用例：双状态卡片、无内置复现、纯 web 降级；`npx playwright test --headed` 人工过目，`E2E_HOLD_MS`/`E2E_SLOW_MS` 控制停留与放慢）。`tauri:dev` 改为包装脚本（`scripts/tauri-dev-with-key.mjs`）：从 git-ignored 的 `src-tauri/.builtin-model-key.local` 读取内置模型 key 并在编译期注入 + touch 入口强制重编（绕开 `option_env!` 不因环境变量变化重编译的坑），本地开发构建与发布版行为一致；key 缺失时照常启动并打印说明。
