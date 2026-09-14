@@ -1,7 +1,7 @@
 {
   "name": "work-review",
   "private": true,
-  "version": "1.1.36",
+  "version": "1.1.37",
   "license": "MIT",
   "type": "module",
   "engines": {
