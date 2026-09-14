@@ -5056,8 +5056,11 @@ mod tests {
     fn 时间线应使用最新记录详情并累计分组时长() {
         let db_path = temp_db_path("timeline");
         let db = Database::new(&db_path).expect("创建测试数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         let records = vec![
             Activity {
@@ -5248,8 +5251,11 @@ mod tests {
     fn 今日统计应合并应用别名避免重复显示() {
         let db_path = temp_db_path("daily-stats-merge");
         let db = Database::new(&db_path).expect("创建测试数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         let records = vec![
             Activity {
@@ -6498,8 +6504,11 @@ mod tests {
     fn 时间线应返回最新记录的可执行路径() {
         let db_path = temp_db_path("timeline-executable-path");
         let db = Database::new(&db_path).expect("创建测试数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         let records = vec![
             Activity {
@@ -6791,8 +6800,11 @@ mod tests {
         let source_path = temp_db_path("backup-source");
         let backup_path = temp_db_path("backup-target");
         let db = Database::new(&source_path).expect("创建源数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         db.insert_activity(&Activity {
             id: None,
