@@ -349,6 +349,9 @@ package-daily-macos-arm64:
     - !reference [.rust-node, before_script]
     - rustup target add aarch64-apple-darwin x86_64-apple-darwin
     - bash scripts/stage-tauri-key.sh
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -377,6 +380,9 @@ package-daily-macos-x64:
     - !reference [.rust-node, before_script]
     - rustup target add aarch64-apple-darwin x86_64-apple-darwin
     - bash scripts/stage-tauri-key.sh
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -556,6 +562,9 @@ tauri-package-macos-arm64:
     - !reference [.rust-node, before_script]
     - rustup target add aarch64-apple-darwin x86_64-apple-darwin
     - bash scripts/stage-tauri-key.sh
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -568,6 +577,9 @@ tauri-package-macos-x64:
     - !reference [.rust-node, before_script]
     - rustup target add aarch64-apple-darwin x86_64-apple-darwin
     - bash scripts/stage-tauri-key.sh
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
