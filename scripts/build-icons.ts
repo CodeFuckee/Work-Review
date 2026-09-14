@@ -19,16 +19,17 @@ const windowsMasterIcon = path.join(
 );
 const tauriIconsDir = path.join(projectRoot, 'src-tauri', 'icons');
 const publicIconsDir = path.join(projectRoot, 'public', 'icons');
-const tauriCliPath = path.join(
+const tauriCliJs = path.join(
   projectRoot,
   'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tauri.cmd' : 'tauri'
+  '@tauri-apps',
+  'cli',
+  'tauri.js'
 );
 const hasFfmpeg = commandExists('ffmpeg');
 const hasSips = commandExists('sips');
 const hasIconutil = commandExists('iconutil', ['-h']);
-const hasTauriCli = existsSync(tauriCliPath);
+const hasTauriCli = existsSync(tauriCliJs);
 const hasDedicatedWindowsIcon = existsSync(windowsMasterIcon);
 
 const persistentTargets = [
@@ -176,7 +177,7 @@ async function buildNativeIconsWithTauri(tempDir: string): Promise<boolean> {
   const tauriTempDir = path.join(tempDir, 'tauri-icons');
   await mkdir(tauriTempDir, { recursive: true });
 
-  run(tauriCliPath, ['icon', masterIcon, '-o', tauriTempDir]);
+  run(process.execPath, [tauriCliJs, 'icon', masterIcon, '-o', tauriTempDir]);
   if (!hasDedicatedWindowsIcon) {
     await copyFile(
       path.join(tauriTempDir, 'icon.ico'),
