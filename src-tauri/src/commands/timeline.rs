@@ -54,22 +54,37 @@ pub async fn get_activity(
     state.database.get_activity_by_id(id)
 }
 
+/// 校验时间线导出目标路径：非空且以 .json 结尾。路径来自请求方，
+/// 写文件前的第一道限定（父目录校验由 validate_export_dir 负责）。
+fn validate_timeline_export_target(target: &str) -> Result<PathBuf, AppError> {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Config("请先选择导出文件路径".to_string()));
+    }
+    let target_path_buf = PathBuf::from(trimmed);
+    let is_json = target_path_buf
+        .extension()
+        .map(|ext| ext.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    if !is_json {
+        return Err(AppError::Config("导出文件必须以 .json 结尾".to_string()));
+    }
+    Ok(target_path_buf)
+}
+
 /// 导出指定日期的时间线为 JSON 文件
 ///
 /// - 复用 `get_timeline_inner` 的隐私过滤（忽略应用 / 排除域名）
 /// - `include_ocr = false` 时，OCR 文本会被清空，避免泄露屏幕内容
-/// - 写入路径为用户选择的 `target_path`，必须以 `.json` 结尾
+/// - 写入路径为用户选择的 `target_path`，必须以 `.json` 结尾，父目录经
+///   `validate_export_dir` 校验（拒绝隐藏/敏感目录，防止任意路径写入）
 pub(crate) fn export_timeline_json_inner(
     date: String,
     target_path: String,
     include_ocr: bool,
     state: &Arc<Mutex<AppState>>,
 ) -> Result<String, AppError> {
-    let target = target_path.trim();
-    if target.is_empty() {
-        return Err(AppError::Config("请先选择导出文件路径".to_string()));
-    }
-    let target_path_buf = PathBuf::from(target);
+    let target_path_buf = validate_timeline_export_target(&target_path)?;
 
     // 走完整时间线（不分页），并应用隐私过滤
     let mut activities = get_timeline_inner(date.clone(), None, None, state)?;
@@ -81,8 +96,11 @@ pub(crate) fn export_timeline_json_inner(
 
     // 父目录可能不存在（用户选了新位置），尝试创建
     if let Some(parent) = target_path_buf.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            std::fs::create_dir_all(parent)?;
+        if !parent.as_os_str().is_empty() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+            super::report::validate_export_dir(parent)?;
         }
     }
 
@@ -139,4 +157,32 @@ pub async fn get_screenshot_full(
     state
         .screenshot_service
         .generate_full_image_base64(&full_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 时间线导出路径必须以json结尾() {
+        assert!(validate_timeline_export_target("").is_err(), "空路径应拒绝");
+        assert!(
+            validate_timeline_export_target("   ").is_err(),
+            "纯空白路径应拒绝"
+        );
+        assert!(
+            validate_timeline_export_target("/tmp/work-review-export").is_err(),
+            "无后缀应拒绝"
+        );
+        assert!(
+            validate_timeline_export_target("/tmp/work-review-export.md").is_err(),
+            "非 json 后缀应拒绝"
+        );
+        let ok = validate_timeline_export_target("/tmp/work-review-export.JSON")
+            .expect("大写 .JSON 应放行（大小写不敏感）");
+        assert!(
+            ok.to_string_lossy().to_lowercase().ends_with(".json"),
+            "放行路径应以 .json 结尾"
+        );
+    }
 }

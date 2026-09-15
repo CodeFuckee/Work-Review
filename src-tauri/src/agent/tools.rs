@@ -1457,7 +1457,6 @@ fn html_to_text(html: &str) -> String {
         match next_block {
             Some((offset, tag)) => {
                 cleaned.push_str(&html[pos..pos + offset]);
-                let close = if tag == "<!--" { "-->" } else { ">" };
                 let close_tag = match tag {
                     "<script" => "</script",
                     "<style" => "</style",
@@ -1475,7 +1474,6 @@ fn html_to_text(html: &str) -> String {
                         lower[after..].find('>').map(|j| after + j + 1)
                     })
                 };
-                let _ = close;
                 match end {
                     Some(e) => pos = e,
                     None => {

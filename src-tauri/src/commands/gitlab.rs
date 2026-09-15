@@ -44,11 +44,9 @@ pub async fn gitlab_list_projects(
 
     match outcome {
         Ok(Ok(mut projects)) => {
-            projects.sort_by(|a, b| {
-                a.path_with_namespace
-                    .to_lowercase()
-                    .cmp(&b.path_with_namespace.to_lowercase())
-            });
+            // 每次比较都 to_lowercase 会产生 O(n log n) 次字符串分配，
+            // cached_key 只对每个项目算一次键
+            projects.sort_by_cached_key(|p| p.path_with_namespace.to_lowercase());
             Ok(GitlabProjectListResult {
                 ok: true,
                 projects: projects

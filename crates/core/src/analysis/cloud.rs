@@ -57,11 +57,12 @@ impl CloudAnalyzer {
         custom_prompt: &str,
         locale: AppLocale,
     ) -> Self {
+        // 构建失败不得回退为无超时 Client（会把快速失败变成永久挂起）
         let client = Client::builder()
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .expect("reqwest Client 初始化失败（TLS 后端不可用）");
 
         Self {
             api_key: api_key.to_string(),

@@ -333,11 +333,12 @@ impl SummaryAnalyzer {
         generation_timeout: Duration,
     ) -> Self {
         let ai_budget = summary_request_timeout(generation_timeout);
+        // 构建失败不得回退为无超时 Client（会把快速失败变成永久挂起）
         let client = Client::builder()
             .timeout(ai_budget)
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .expect("reqwest Client 初始化失败（TLS 后端不可用）");
 
         Self {
             provider,

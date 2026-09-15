@@ -403,7 +403,7 @@ pub struct AppCategoryRule {
 }
 
 /// 用户自定义分类
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash)]
 pub struct CustomCategory {
     /// 唯一标识（slug 格式，如 "project-mgmt"）
     pub key: String,
@@ -1264,7 +1264,7 @@ pub struct AppConfig {
     /// 隐藏桌宠本体（仅保留通知气泡与卡片），窗口收缩到仅容纳通知区（#137 诉求二）
     #[serde(default)]
     pub avatar_body_hidden: bool,
-    /// 桌宠缩放比例（0.7 - 1.3）
+    /// 桌宠缩放比例（0.4 - 1.3，以 normalize_avatar_scale 的 clamp 为准）
     #[serde(default = "default_avatar_scale")]
     pub avatar_scale: f64,
     /// 桌宠猫体透明度（0.45 - 1.0）

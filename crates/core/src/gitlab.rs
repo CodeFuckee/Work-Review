@@ -260,18 +260,20 @@ fn truncated_hint(skipped: usize, locale: AppLocale) -> String {
 }
 
 fn integration_instruction(locale: AppLocale) -> String {
+    // 小节标题从 gitlab_section_title 注入（单一来源），避免双份维护漂移
+    let title = gitlab_section_title(locale);
     match locale {
         AppLocale::ZhCn => {
-            "若提供了上述 GitLab 提交，请在日报中单列一个「GitLab 今日提交」小节（与其他小节同级），从提交信息归纳当日代码工作：实现了什么功能、修复了什么问题、进行了哪些重构或配置调整，逐条概括说明；不得编造列表之外的提交，也不要逐字罗列原始提交信息。".to_string()
+            format!("若提供了上述 GitLab 提交，请在日报中单列一个「{title}」小节（与其他小节同级），从提交信息归纳当日代码工作：实现了什么功能、修复了什么问题、进行了哪些重构或配置调整，逐条概括说明；不得编造列表之外的提交，也不要逐字罗列原始提交信息。")
         }
         AppLocale::ZhTw => {
-            "若提供了上述 GitLab 提交，請在日報中單列一個「GitLab 今日提交」小節（與其他小節同級），從提交資訊歸納當日程式碼工作：實現了什麼功能、修復了什麼問題、進行了哪些重構或配置調整，逐條概括說明；不得虛構清單之外的提交，也不要逐字羅列原始提交資訊。".to_string()
+            format!("若提供了上述 GitLab 提交，請在日報中單列一個「{title}」小節（與其他小節同級），從提交資訊歸納當日程式碼工作：實現了什麼功能、修復了什麼問題、進行了哪些重構或配置調整，逐條概括說明；不得虛構清單之外的提交，也不要逐字羅列原始提交資訊。")
         }
         AppLocale::En => {
-            "If the GitLab commits above are provided, add a dedicated \"GitLab Commits Today\" section (at the same level as other sections) to the report. Summarize the day's coding work from the commit messages: what features were implemented, what bugs were fixed, what refactors or configuration changes were made — one concise item each. Do not invent commits not listed, and do not quote raw commit messages verbatim.".to_string()
+            format!("If the GitLab commits above are provided, add a dedicated \"{title}\" section (at the same level as other sections) to the report. Summarize the day's coding work from the commit messages: what features were implemented, what bugs were fixed, what refactors or configuration changes were made — one concise item each. Do not invent commits not listed, and do not quote raw commit messages verbatim.")
         }
         AppLocale::Ar => {
-            "إذا قُدمت تسليمات GitLab أعلاه، فأضف قسمًا مستقلًا بعنوان \"تسليمات GitLab اليوم\" إلى التقرير (بنفس مستوى الأقسام الأخرى)، ولخِّص عمل اليوم البرمجي من رسائل التسليم: ما الميزات التي نُفذت، وما الأخطاء التي أُصلحت، وما إعادة الهيكلة أو تعديلات الإعداد — بند موجز لكل واحدة. ولا تخترع تسليمات غير مذكورة، ولا تنقل رسائل التسليم حرفيًا.".to_string()
+            format!("إذا قُدمت تسليمات GitLab أعلاه، فأضف قسمًا مستقلًا بعنوان \"{title}\" إلى التقرير (بنفس مستوى الأقسام الأخرى)، ولخِّص عمل اليوم البرمجي من رسائل التسليم: ما الميزات التي نُفذت، وما الأخطاء التي أُصلحت، وما إعادة الهيكلة أو تعديلات الإعداد — بند موجز لكل واحدة. ولا تخترع تسليمات غير مذكورة، ولا تنقل رسائل التسليم حرفيًا.")
         }
     }
 }
@@ -350,12 +352,14 @@ pub struct GitlabClient {
 
 impl GitlabClient {
     pub fn new(base_url: &str, token: &str) -> Self {
-        // 必须显式设超时：reqwest 默认无超时，GitLab 挂起时日报生成会无限阻塞
+        // 必须显式设超时：reqwest 默认无超时，GitLab 挂起时日报生成会无限阻塞。
+        // 构建失败（TLS 后端初始化失败）不能静默回退为无超时 Client——那会把
+        // 快速失败变成永久挂起，这里直接 panic 暴露环境问题。
         let http = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .unwrap_or_default();
+            .expect("reqwest Client 初始化失败（TLS 后端不可用）");
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             token: token.trim().to_string(),

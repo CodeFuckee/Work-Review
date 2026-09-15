@@ -1805,11 +1805,13 @@ async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
             state_guard.cached_active_window = Some((sampled_at, active_window.clone()));
             let rules = &state_guard.config.app_category_rules;
             let cats = &state_guard.config.custom_categories;
-            // 签名必须覆盖全部规则内容：只哈希末条规则时，改/删非末尾规则
-            // 不会改变签名，缓存永不失效，桌宠会一直用旧分类
+            // 签名必须覆盖缓存的全部输入：只哈希末条规则时，改/删非末尾规则
+            // 不会改变签名；只哈希规则不含自定义分类时，单独改/删分类同样
+            // 永不失效——两者任一变化都必须刷新缓存，桌宠才不会用旧分类
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             use std::hash::{Hash, Hasher};
             rules.hash(&mut hasher);
+            cats.hash(&mut hasher);
             let sig = hasher.finish();
             if sig != cached_rules_signature {
                 cached_rules = rules.clone();

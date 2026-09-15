@@ -4717,7 +4717,9 @@ impl Database {
         )?;
         let mut rows = stmt.query(params![SEMANTIC_MEMORY_CURSOR_CHUNK_KEY])?;
 
-        // 小顶堆语义：保留分数最高的 limit 条（用 Vec + 阈值淘汰，K 很小）
+        // 小顶堆语义：保留分数最高的 limit 条（用 Vec + 阈值淘汰，K 很小）。
+        // top 按 score 升序维护：top[0] 是当前最差命中，作为淘汰门槛；
+        // 返回前翻转为降序（最优在前），调用方 RRF 融合按排名赋权。
         let mut top: Vec<SemanticMemoryHit> = Vec::with_capacity(limit + 1);
         while let Some(row) = rows.next()? {
             let blob: Vec<u8> = row.get(6)?;
@@ -4731,7 +4733,7 @@ impl Database {
                 .map(|(a, b)| a * b)
                 .sum();
             let score = f64::from(score);
-            if top.len() >= limit && top.last().map(|h| h.score).unwrap_or(f64::MIN) >= score {
+            if top.len() >= limit && top.first().map(|h| h.score).unwrap_or(f64::MIN) >= score {
                 continue;
             }
             let content: String = row.get(5)?;
@@ -4744,18 +4746,21 @@ impl Database {
                 excerpt: truncate_excerpt(&content, 240),
                 score,
             };
+            // 标准约定：闭包返回「元素相对目标」的序，才能在升序数组上得到
+            // 正确的插入点（原实现写成 score.cmp(&h.score)，插入点错乱）
             let pos = top
                 .binary_search_by(|h| {
-                    score
-                        .partial_cmp(&h.score)
+                    h.score
+                        .partial_cmp(&score)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .unwrap_or_else(|p| p);
             top.insert(pos, hit);
             if top.len() > limit {
-                top.pop();
+                top.remove(0);
             }
         }
+        top.reverse();
         Ok(top)
     }
 
@@ -7290,6 +7295,46 @@ mod tests {
         assert_eq!(stats.total_chunks, 1);
         assert_eq!(stats.embedded_chunks, 0);
         assert_eq!(stats.last_indexed_activity_id, 20);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn 语义检索应保留分数最高的limit条并按降序返回() {
+        let db_path = temp_db_path("semantic-topk");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        // 三个块按“低分→高分→最高分”的扫描顺序写入，limit=2 时应保留最高分的
+        // 两个并按分数降序返回（调用方 RRF 融合按排名赋权，顺序即语义）。
+        let vectors: &[(&str, [f32; 2])] = &[
+            ("chunk-low", [0.0, 1.0]),
+            ("chunk-mid", [0.6, 0.8]),
+            ("chunk-top", [1.0, 0.0]),
+        ];
+        for (key, _) in vectors {
+            db.upsert_memory_chunk(key, "2026-09-16", "Code", key, None, key, 1)
+                .expect("写入语义块失败");
+        }
+        let pending = db
+            .get_unembedded_memory_chunks(10)
+            .expect("读取待嵌入语义块失败");
+        assert_eq!(pending.len(), 3);
+        for (chunk_id, content) in &pending {
+            let vector = &vectors
+                .iter()
+                .find(|(key, _)| *key == content.as_str())
+                .expect("未知语义块内容")
+                .1;
+            db.set_memory_chunk_embedding(*chunk_id, &super::encode_embedding(vector))
+                .expect("写入嵌入失败");
+        }
+
+        let hits = db
+            .search_memory_chunks_semantic(&[1.0, 0.0], 2)
+            .expect("语义检索失败");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].title, "chunk-top");
+        assert_eq!(hits[1].title, "chunk-mid");
+        assert!(hits[0].score > hits[1].score);
         let _ = std::fs::remove_file(db_path);
     }
 
