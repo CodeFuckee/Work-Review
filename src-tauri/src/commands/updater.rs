@@ -658,10 +658,7 @@ pub async fn download_and_install_github_update(
                 version: Some(update.version),
                 source: Some(sanitize_update_text(&source_label)),
                 message: "在线更新已完成".to_string(),
-                attempted_sources: attempted_sources
-                    .iter()
-                    .map(sanitize_update_text)
-                    .collect(),
+                attempted_sources: attempted_sources.iter().map(sanitize_update_text).collect(),
             });
         }
         Err(error) => {
