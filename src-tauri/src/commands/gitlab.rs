@@ -1,4 +1,4 @@
-//! GitLab 集成命令（设置页「测试连接」）。
+//! GitLab 集成命令（设置页「测试连接」与「仓库选择器」）。
 
 use serde::Serialize;
 use work_review_core::gitlab::GitlabClient;
@@ -12,6 +12,65 @@ pub struct GitlabConnectionTestResult {
     pub project_count: usize,
     pub allowed_count: usize,
     pub message: Option<String>,
+}
+
+/// 仓库选择器条目（设置页「从 GitLab 选择仓库」）
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabProjectOption {
+    pub path_with_namespace: String,
+}
+
+/// 仓库列表拉取结果
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabProjectListResult {
+    pub ok: bool,
+    pub projects: Vec<GitlabProjectOption>,
+    pub message: Option<String>,
+}
+
+/// 拉取 token 有权限的全部项目（按路径排序），供仓库选择器勾选。
+/// 不读取已保存配置：设置页可在未保存前先选。
+#[tauri::command]
+pub async fn gitlab_list_projects(
+    url: String,
+    token: String,
+) -> Result<GitlabProjectListResult, String> {
+    let client = GitlabClient::new(&url, &token);
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        client.fetch_all_projects(),
+    )
+    .await;
+
+    match outcome {
+        Ok(Ok(mut projects)) => {
+            projects.sort_by(|a, b| {
+                a.path_with_namespace
+                    .to_lowercase()
+                    .cmp(&b.path_with_namespace.to_lowercase())
+            });
+            Ok(GitlabProjectListResult {
+                ok: true,
+                projects: projects
+                    .into_iter()
+                    .map(|p| GitlabProjectOption {
+                        path_with_namespace: p.path_with_namespace,
+                    })
+                    .collect(),
+                message: None,
+            })
+        }
+        Ok(Err(error)) => Ok(GitlabProjectListResult {
+            ok: false,
+            projects: Vec::new(),
+            message: Some(error.to_string()),
+        }),
+        Err(_) => Ok(GitlabProjectListResult {
+            ok: false,
+            projects: Vec::new(),
+            message: Some(String::from("获取仓库列表超时（8 秒）")),
+        }),
+    }
 }
 
 /// 验证 GitLab URL + Token 是否有效，返回当前用户与有权限项目数。
@@ -76,6 +135,18 @@ mod tests {
         .await
         .expect("命令不应直接失败");
         assert!(!result.ok, "不可达地址应判定为失败");
+        let message = result.message.unwrap_or_default();
+        assert!(!message.is_empty(), "失败时应给出可展示的原因");
+    }
+
+    #[tokio::test]
+    async fn 仓库列表指向不可达地址应返回结构化失败而不是panic() {
+        let result =
+            gitlab_list_projects("http://127.0.0.1:1".to_string(), "stub-token".to_string())
+                .await
+                .expect("命令不应直接失败");
+        assert!(!result.ok, "不可达地址应判定为失败");
+        assert!(result.projects.is_empty(), "失败时不应携带项目数据");
         let message = result.message.unwrap_or_default();
         assert!(!message.is_empty(), "失败时应给出可展示的原因");
     }

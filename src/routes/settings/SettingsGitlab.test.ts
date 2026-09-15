@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 // GitLab 集成设置：静态校验设置页注册了新 tab、测试连接命令调用与 i18n 完整性。
 const SETTINGS = fileURLToPath(new URL('./Settings.svelte', import.meta.url));
 const GITLAB_COMPONENT = fileURLToPath(new URL('./components/SettingsGitlab.svelte', import.meta.url));
+const PICKER_COMPONENT = fileURLToPath(new URL('./components/GitlabProjectPicker.svelte', import.meta.url));
 const LOCALES = fileURLToPath(new URL('../../lib/i18n/locales', import.meta.url));
 
 function read(path: string): string {
@@ -44,6 +45,30 @@ test('GitLab 组件应提供纳入作者名单输入并接解析函数', () => {
   assert.match(source, /t\('settingsGitlab\.authorsLabel'\)/);
   assert.match(source, /t\('settingsGitlab\.authorsHint'\)/);
   assert.match(source, /t\('settingsGitlab\.authorsPlaceholder'\)/);
+});
+
+test('GitLab 组件应提供仓库选择器按钮并写回允许列表', () => {
+  const source = read(GITLAB_COMPONENT);
+  assert.match(source, /import GitlabProjectPicker from '\.\/GitlabProjectPicker\.svelte'/);
+  assert.match(source, /gitlab_list_projects/);
+  assert.match(source, /t\('settingsGitlab\.pickButton'\)/);
+  assert.match(source, /onPickerSave/);
+  assert.match(source, /project_filter = event\.detail/);
+  const picker = read(PICKER_COMPONENT);
+  assert.match(picker, /use:trapFocus/);
+  assert.match(picker, /role="dialog"/);
+  assert.match(picker, /filterProjectOptions/);
+  assert.match(picker, /t\('settingsGitlab\.pickCount'/);
+  assert.match(picker, /t\('settingsGitlab\.pickCountAll'/);
+});
+
+test('四个语言的 i18n 都应包含仓库选择器文案', () => {
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ar']) {
+    const file = read(`${LOCALES}/${locale}.ts`);
+    for (const key of ['pickButton', 'pickTitle', 'pickSearchPlaceholder', 'pickSelectAll', 'pickClear', 'pickSave', 'pickCancel', 'pickCount', 'pickCountAll', 'pickLoadFailed']) {
+      assert.match(file, new RegExp(`${key}: `), `locale ${locale} missing settingsGitlab.${key}`);
+    }
+  }
 });
 
 test('四个语言的 i18n 都应包含纳入作者文案', () => {

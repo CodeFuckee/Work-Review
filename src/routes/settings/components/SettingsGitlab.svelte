@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { locale, t } from '$lib/i18n/index.ts';
   import { parseWorkAuthorsInput } from '../gitlabWorkAuthors.ts';
+  import GitlabProjectPicker from './GitlabProjectPicker.svelte';
 
   interface GitlabSettings {
     url: string | null;
@@ -20,6 +21,11 @@
   let showToken = false;
   let testing = false;
   let testResult: { ok: boolean; message: string | null; detail: string } | null = null;
+
+  let showProjectPicker = false;
+  let pickerLoading = false;
+  let pickerProjects: string[] = [];
+  let pickerError: string | null = null;
 
   function gitlab(): GitlabSettings {
     if (!config.gitlab) {
@@ -64,6 +70,38 @@
     const value = (event.currentTarget as HTMLTextAreaElement).value;
     gitlab().work_authors = parseWorkAuthorsInput(value);
     handleChange();
+  }
+
+  async function openProjectPicker() {
+    const current = gitlab();
+    pickerLoading = true;
+    pickerError = null;
+    try {
+      const result = await invoke<{
+        ok: boolean;
+        projects: { path_with_namespace: string }[];
+        message: string | null;
+      }>('gitlab_list_projects', {
+        url: current.url ?? '',
+        token: current.token ?? '',
+      });
+      if (!result.ok) {
+        pickerError = result.message ?? t('settingsGitlab.pickLoadFailed');
+        return;
+      }
+      pickerProjects = result.projects.map((p) => p.path_with_namespace);
+      showProjectPicker = true;
+    } catch (e) {
+      pickerError = `${t('settingsGitlab.pickLoadFailed')}: ${String(e)}`;
+    } finally {
+      pickerLoading = false;
+    }
+  }
+
+  function onPickerSave(event: CustomEvent<string[]>) {
+    gitlab().project_filter = event.detail;
+    handleChange();
+    showProjectPicker = false;
   }
 
   function onEnabledToggle() {
@@ -157,17 +195,31 @@
     </div>
 
     <div class="settings-block">
-      <label class="block">
+      <div class="flex items-center justify-between gap-2">
         <span class="settings-text">{t('settingsGitlab.filterLabel')}</span>
-        <textarea
-          rows="3"
-          placeholder="group/project-a&#10;group/project-b"
-          value={(gitlab().project_filter ?? []).join('\n')}
-          on:input={onFilterInput}
-          class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
-        />
-        <span class="settings-muted">{t('settingsGitlab.filterHint')}</span>
-      </label>
+        <button
+          type="button"
+          on:click={openProjectPicker}
+          disabled={pickerLoading || !((gitlab().url ?? '').trim() && (gitlab().token ?? '').trim())}
+          class="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#2d3843] dark:text-slate-400 dark:hover:text-slate-200"
+        >
+          {#if pickerLoading}
+            <span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent"></span>
+          {/if}
+          {t('settingsGitlab.pickButton')}
+        </button>
+      </div>
+      <textarea
+        rows="3"
+        placeholder="group/project-a&#10;group/project-b"
+        value={(gitlab().project_filter ?? []).join('\n')}
+        on:input={onFilterInput}
+        class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
+      />
+      {#if pickerError}
+        <p class="mt-1 break-all text-xs text-rose-500">{pickerError}</p>
+      {/if}
+      <span class="settings-muted">{t('settingsGitlab.filterHint')}</span>
     </div>
 
     <div class="settings-block">
@@ -229,3 +281,12 @@
     </div>
   </div>
 </div>
+
+{#if showProjectPicker}
+  <GitlabProjectPicker
+    projects={pickerProjects}
+    initialSelected={gitlab().project_filter ?? []}
+    on:save={onPickerSave}
+    on:close={() => (showProjectPicker = false)}
+  />
+{/if}
