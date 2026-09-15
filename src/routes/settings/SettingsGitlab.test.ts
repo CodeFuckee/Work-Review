@@ -36,6 +36,25 @@ test('GitLab 组件应以掩码形式输入令牌并支持切换显示', () => {
   assert.match(source, /autocomplete="off"/);
 });
 
+test('GitLab 组件应提供纳入作者名单输入并接解析函数', () => {
+  const source = read(GITLAB_COMPONENT);
+  assert.match(source, /import \{ parseWorkAuthorsInput \} from '\.\.\/gitlabWorkAuthors\.ts'/);
+  assert.match(source, /work_authors/);
+  assert.match(source, /onAuthorsInput/);
+  assert.match(source, /t\('settingsGitlab\.authorsLabel'\)/);
+  assert.match(source, /t\('settingsGitlab\.authorsHint'\)/);
+  assert.match(source, /t\('settingsGitlab\.authorsPlaceholder'\)/);
+});
+
+test('四个语言的 i18n 都应包含纳入作者文案', () => {
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ar']) {
+    const file = read(`${LOCALES}/${locale}.ts`);
+    for (const key of ['authorsLabel', 'authorsHint', 'authorsPlaceholder']) {
+      assert.match(file, new RegExp(`${key}: `), `locale ${locale} missing settingsGitlab.${key}`);
+    }
+  }
+});
+
 test('GitLab 组件应本地化令牌展示与连接结果文案', () => {
   const source = read(GITLAB_COMPONENT);
   assert.match(source, /t\('settingsGitlab\.title'\)/);

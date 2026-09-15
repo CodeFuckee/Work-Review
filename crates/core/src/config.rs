@@ -746,6 +746,10 @@ pub struct GitlabConfig {
     /// 项目允许列表（path_with_namespace，一行一个；空 = 全部有权限项目）
     #[serde(default)]
     pub project_filter: Vec<String>,
+    /// 纳入日报的作者名单（姓名或邮箱，忽略大小写与提交的 author_email/
+    /// author_name 精确比对；与 token 账号取并集；空 = 仅当前账号）
+    #[serde(default)]
+    pub work_authors: Vec<String>,
     /// 日报生成时是否注入 GitLab 今日提交（快速开关；需已配置 url+token）
     #[serde(default = "default_true")]
     pub report_enabled: bool,
@@ -1381,6 +1385,22 @@ fn normalize_positive_token(value: Option<u32>) -> Option<u32> {
     value.filter(|n| *n > 0)
 }
 
+/// 纳入作者名单规范化：去首尾空白、剔空条目、按忽略大小写去重（保留首次写法）。
+fn normalize_work_author_list(items: &[String]) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for item in items {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_lowercase()) {
+            result.push(trimmed.to_string());
+        }
+    }
+    result
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -1556,6 +1576,7 @@ impl AppConfig {
         self.privacy
             .excluded_keywords
             .retain(|k| !k.trim().is_empty());
+        self.gitlab.work_authors = normalize_work_author_list(&self.gitlab.work_authors);
         normalize_custom_categories(&mut self.custom_categories);
         normalize_app_category_rules(&mut self.app_category_rules, &self.custom_categories);
         // Seed defaults BEFORE rule validation so built-in categories are present
@@ -2255,12 +2276,47 @@ mod tests {
         default_avatar_preset, default_avatar_scale, default_ui_visual_style,
         normalize_app_category_rules, normalize_avatar_followups, normalize_avatar_opacity,
         normalize_avatar_persona, normalize_avatar_preset, normalize_avatar_scale,
-        normalize_ui_visual_style, update_config_backup_with_sync, AiProvider, AppCategoryRule,
-        AppConfig, AvatarFollowupItem, ConfigLoadStatus, PendingConfigFile, RemoteStorageProvider,
-        ScreenshotDisplayMode, WebsiteSemanticRule, DEFAULT_LOCALHOST_API_PORT,
+        normalize_ui_visual_style, normalize_work_author_list, update_config_backup_with_sync,
+        AiProvider, AppCategoryRule, AppConfig, AvatarFollowupItem, ConfigLoadStatus,
+        PendingConfigFile, RemoteStorageProvider, ScreenshotDisplayMode, WebsiteSemanticRule,
+        DEFAULT_LOCALHOST_API_PORT,
     };
     use std::io::{self, Write};
     use std::path::PathBuf;
+
+    #[test]
+    fn 纳入作者名单规范化应去空白去空并按大小写去重() {
+        let input = vec![
+            "  李四 ".to_string(),
+            "LISI@corp.com".to_string(),
+            "lisi@CORP.com".to_string(),
+            String::new(),
+            "   ".to_string(),
+            "王五".to_string(),
+        ];
+        assert_eq!(
+            normalize_work_author_list(&input),
+            vec![
+                "李四".to_string(),
+                "LISI@corp.com".to_string(),
+                "王五".to_string()
+            ],
+            "去首尾空白、剔空条目、忽略大小写去重并保留首次写法"
+        );
+        assert!(normalize_work_author_list(&[]).is_empty());
+    }
+
+    #[test]
+    fn 配置规范化应处理纳入作者名单() {
+        let mut config = AppConfig::default();
+        config.gitlab.work_authors = vec![
+            " a@x.com ".to_string(),
+            "A@X.COM".to_string(),
+            String::new(),
+        ];
+        config.normalize();
+        assert_eq!(config.gitlab.work_authors, vec!["a@x.com".to_string()]);
+    }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

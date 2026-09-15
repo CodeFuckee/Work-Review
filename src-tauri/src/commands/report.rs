@@ -38,11 +38,12 @@ async fn fetch_gitlab_supplement(
         .unwrap_or_else(|_| chrono::Local::now().date_naive());
     let offset = work_review_core::gitlab::local_offset_now();
     let project_filter = config.gitlab.project_filter.clone();
+    let work_authors = config.gitlab.work_authors.clone();
     let client = work_review_core::gitlab::GitlabClient::new(url, token);
 
     match tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        client.fetch_today_commits(offset, date_local, &project_filter),
+        client.fetch_today_commits(offset, date_local, &project_filter, &work_authors),
     )
     .await
     {

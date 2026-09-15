@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **小修**：Claude 端点防重复拼接 `/messages`；云端日报回退斜体标记补闭合 `*`；删除 `urls.dedup()`、`build_fts_query` 重复条件、`node_gateway` 死绑定、`gitlab.rs` 无效果死分支等四处死代码；AI 提示词/本地模板的域名标签此前硬传空映射、忽略用户语义分类改名，现传入真实 overrides；MCP `serverInfo.version` 改用 `env!("CARGO_PKG_VERSION")`；桌宠气泡 `info/success/persistent_info` 构造器去重。
 
 ### 新增
+- **GitLab 集成新增「纳入工作的作者」**：同一份工作常以不同 git 身份提交（不同机器的 user.email/user.name、公司/个人邮箱混用），此前日报只统计 token 账号本人的提交、信息不完整。现可在 设置 → GitLab 集成 → 「纳入工作的作者」维护作者名单（姓名或邮箱，一行一个、兼容逗号分隔，自动去首尾空白/空行/忽略大小写去重）；生成日报时这些作者的提交与 token 账号本人取并集纳入（每条名单同时与提交的 author_email/author_name 忽略大小写精确比对，不做子串匹配避免误伤同名前缀）；名单留空 = 仅统计当前账号，行为与旧版完全一致。配置存于 `gitlab.work_authors`（旧配置文件自动兼容），规范化阶段同步去重清洗（四语言文案）。
 - **AI 设置新增「内置模型」供应商并设为默认**：供应商网格首位新增「内置模型」卡片（仅编译期注入了内置模型时显示），默认选中；选中后连接细节（端点/模型/密钥）对用户完全隐藏，只保留「测试连接」按钮（真实请求内置模型验证可用性）与说明文案（四语言）。选中内置即自动进入「AI 增强」日报模式；后端 `get_config` 归一化会把出厂默认配置的供应商翻转为 `builtin`、模式翻转为 AI 增强，新增 `AiProvider::Builtin` 类型（OpenAI 兼容协议，配置文件中端点/模型留空）。出厂默认之外的自定义配置行为不变。
 - **设置页「内置模型」常驻指示卡 + E2E 测试套件**：AI 设置顶部新增蓝色指示卡，只要编译期注入了内置模型即常驻显示（置于日报模式切换之上，基础模板/AI 增强两个分支均可见），文案按状态切换——出厂默认配置显示「软件已内置 AI 模型，无需配置即可使用 AI 功能；生成内容会发送至内置模型对应的第三方 AI 服务」，已配置自定义模型显示「…当前优先使用你配置的模型」（四语言）。新增 Playwright E2E 套件（`tests/e2e/ui/`，4 用例：双状态卡片、无内置复现、纯 web 降级；`npx playwright test --headed` 人工过目，`E2E_HOLD_MS`/`E2E_SLOW_MS` 控制停留与放慢）。`tauri:dev` 改为包装脚本（`scripts/tauri-dev-with-key.mjs`）：从 git-ignored 的 `src-tauri/.builtin-model-key.local` 读取内置模型 key 并在编译期注入 + touch 入口强制重编（绕开 `option_env!` 不因环境变量变化重编译的坑），本地开发构建与发布版行为一致；key 缺失时照常启动并打印说明。
 

@@ -111,6 +111,31 @@ pub fn commit_belongs_to_user(commit: &GitlabCommit, user: &GitlabUser) -> bool 
     commit_name == user_name || (!user_username.is_empty() && commit_name == user_username)
 }
 
+/// 提交是否命中纳入作者名单：每条名单同时与 author_email 和 author_name
+/// 忽略大小写精确比对（名单条目容忍首尾空白；精确相等，杜绝子串与
+/// contains("") 式恒真命中）。名单为空返回 false。
+pub fn commit_matches_work_author(commit: &GitlabCommit, work_authors: &[String]) -> bool {
+    let commit_email = commit.author_email.trim().to_lowercase();
+    let commit_name = commit.author_name.trim().to_lowercase();
+    if commit_email.is_empty() && commit_name.is_empty() {
+        return false;
+    }
+    work_authors
+        .iter()
+        .map(|entry| entry.trim().to_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| commit_email == entry || commit_name == entry)
+}
+
+/// 提交是否在日报统计范围内：token 账号本人，或纳入作者名单（并集）。
+pub fn commit_in_report_scope(
+    commit: &GitlabCommit,
+    user: &GitlabUser,
+    work_authors: &[String],
+) -> bool {
+    commit_belongs_to_user(commit, user) || commit_matches_work_author(commit, work_authors)
+}
+
 /// 项目允许列表过滤：空列表 = 全部；路径大小写不敏感精确匹配。
 pub fn filter_projects_by_allowlist<'a>(
     projects: &'a [GitlabProject],
@@ -455,15 +480,16 @@ impl GitlabClient {
         serde_json::from_slice(&bytes).map_err(GitlabError::Json)
     }
 
-    /// 拉取当前用户于本地 offset 时区 `date` 当天的提交。
+    /// 拉取当前用户与纳入作者名单在本地 offset 时区 `date` 当天的提交。
     ///
     /// 流程：GET /user → 有权限项目（可选允许列表）→ 逐项目拉 commits →
-    /// 按作者与日期过滤 → 分项目截断、全局截断。
+    /// 按作者（本人 ∪ 名单）与日期过滤 → 分项目截断、全局截断。
     pub async fn fetch_today_commits(
         &self,
         offset: FixedOffset,
         date: NaiveDate,
         allowlist: &[String],
+        work_authors: &[String],
     ) -> Result<GitlabFetchResult, GitlabError> {
         let user = self.fetch_current_user().await?;
         let projects = self.fetch_all_projects().await?;
@@ -497,7 +523,7 @@ impl GitlabClient {
                 }
             };
             for commit in commits {
-                if !commit_belongs_to_user(&commit, &user) {
+                if !commit_in_report_scope(&commit, &user, work_authors) {
                     continue;
                 }
                 if !is_commit_on_local_date(&commit.committed_date, offset, date) {
@@ -754,6 +780,124 @@ mod tests {
             None,
         );
         assert!(commit_belongs_to_user(&c2, &user), "按 username 命中");
+    }
+
+    #[test]
+    fn 名单作者应命中邮箱或姓名() {
+        let c = commit(
+            "a",
+            "t",
+            "lisi@CORP.com",
+            "李四",
+            "2026-09-01T00:00:00Z",
+            None,
+        );
+        assert!(
+            commit_matches_work_author(&c, &["lisi@corp.com".into()]),
+            "条目按邮箱命中（忽略大小写）"
+        );
+        assert!(
+            commit_matches_work_author(&c, &["李四".into()]),
+            "条目按姓名命中"
+        );
+        assert!(
+            commit_matches_work_author(&c, &["wangwu@x.com".into(), "  LISI@Corp.Com  ".into()]),
+            "名单中任一条目命中即可，且容忍首尾空白"
+        );
+        assert!(
+            !commit_matches_work_author(&c, &["wangwu@x.com".into()]),
+            "不在名单不应命中"
+        );
+    }
+
+    #[test]
+    fn 名单作者空名单不应命中() {
+        let c = commit(
+            "a",
+            "t",
+            "lisi@corp.com",
+            "李四",
+            "2026-09-01T00:00:00Z",
+            None,
+        );
+        assert!(!commit_matches_work_author(&c, &[]), "空名单 = 不扩展范围");
+    }
+
+    #[test]
+    fn 名单作者不应部分匹配且空条目不应命中() {
+        let c = commit(
+            "a",
+            "t",
+            "lisi@corp.com",
+            "李四",
+            "2026-09-01T00:00:00Z",
+            None,
+        );
+        assert!(
+            !commit_matches_work_author(&c, &["li".into()]),
+            "子串不算命中（精确相等语义）"
+        );
+        assert!(!commit_matches_work_author(&c, &["李".into()]));
+        assert!(
+            !commit_matches_work_author(&c, &["".into(), "   ".into()]),
+            "空条目不得出现 contains 式恒真命中"
+        );
+        let anon = commit("b", "t", "", "", "2026-09-01T00:00:00Z", None);
+        assert!(
+            !commit_matches_work_author(&anon, &["lisi@corp.com".into()]),
+            "提交缺作者信息不应命中"
+        );
+    }
+
+    #[test]
+    fn 统计范围应为本人与名单作者并集() {
+        let user = GitlabUser {
+            id: 1,
+            username: "zhangsan".into(),
+            name: "Zhang San".into(),
+            email: "zhangsan@example.com".into(),
+        };
+        let own = commit(
+            "a",
+            "t",
+            "zhangsan@example.com",
+            "Zhang San",
+            "2026-09-01T00:00:00Z",
+            None,
+        );
+        let listed = commit(
+            "b",
+            "t",
+            "lisi@corp.com",
+            "李四",
+            "2026-09-01T00:00:00Z",
+            None,
+        );
+        let other = commit(
+            "c",
+            "t",
+            "wangwu@x.com",
+            "王五",
+            "2026-09-01T00:00:00Z",
+            None,
+        );
+        let empty: Vec<String> = Vec::new();
+        assert!(
+            commit_in_report_scope(&own, &user, &empty),
+            "空名单 = 仅本人（现状）"
+        );
+        assert!(!commit_in_report_scope(&listed, &user, &empty));
+        assert!(!commit_in_report_scope(&other, &user, &empty));
+        let authors = vec!["李四".to_string()];
+        assert!(
+            commit_in_report_scope(&own, &user, &authors),
+            "本人始终在范围内"
+        );
+        assert!(
+            commit_in_report_scope(&listed, &user, &authors),
+            "名单作者命中"
+        );
+        assert!(!commit_in_report_scope(&other, &user, &authors));
     }
 
     #[test]

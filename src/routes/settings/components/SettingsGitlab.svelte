@@ -2,11 +2,13 @@
   import { createEventDispatcher } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { locale, t } from '$lib/i18n/index.ts';
+  import { parseWorkAuthorsInput } from '../gitlabWorkAuthors.ts';
 
   interface GitlabSettings {
     url: string | null;
     token: string | null;
     project_filter: string[] | null;
+    work_authors: string[] | null;
     report_enabled: boolean;
   }
 
@@ -21,7 +23,13 @@
 
   function gitlab(): GitlabSettings {
     if (!config.gitlab) {
-      config.gitlab = { url: null, token: null, project_filter: null, report_enabled: true };
+      config.gitlab = {
+        url: null,
+        token: null,
+        project_filter: null,
+        work_authors: null,
+        report_enabled: true,
+      };
     }
     return config.gitlab;
   }
@@ -49,6 +57,12 @@
       .map((line) => line.trim())
       .filter((line) => line !== '');
     gitlab().project_filter = lines;
+    handleChange();
+  }
+
+  function onAuthorsInput(event: Event) {
+    const value = (event.currentTarget as HTMLTextAreaElement).value;
+    gitlab().work_authors = parseWorkAuthorsInput(value);
     handleChange();
   }
 
@@ -153,6 +167,20 @@
           class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
         />
         <span class="settings-muted">{t('settingsGitlab.filterHint')}</span>
+      </label>
+    </div>
+
+    <div class="settings-block">
+      <label class="block">
+        <span class="settings-text">{t('settingsGitlab.authorsLabel')}</span>
+        <textarea
+          rows="3"
+          placeholder={t('settingsGitlab.authorsPlaceholder')}
+          value={(gitlab().work_authors ?? []).join('\n')}
+          on:input={onAuthorsInput}
+          class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
+        />
+        <span class="settings-muted">{t('settingsGitlab.authorsHint')}</span>
       </label>
     </div>
 
