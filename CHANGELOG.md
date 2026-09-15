@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 变更
+- **CI/CD 流水线提速（目标：每次 push 从 1.5-2 小时降到 30 分钟级）**：
+  - **三平台完整安装包改为夜间定时产出**（GitLab Schedules，分支 main）：日常 push 不再产安装包——与自动发版的 Release 资产完全重复，是最大耗时来源；「latest」固定下载链接仍有效（自动指向最近一次夜间成功构建，保留 30 天），正式发版照旧走 tag 发布（资产永久保留）。arm64/macos-x64 可选平台继续由 `PACKAGE_*` 变量控制。
+  - **修复缓存每次发版必然失效的问题**：cache key 此前含 `src-tauri/Cargo.toml`，而 version-bump 每次发版都改写其版本行，导致 key 每条流水线必然漂移、三平台全量冷启动。现 cache 只承担 npm 下载缓存（固定 key `npm-cache-v1`）；Rust 的 registry 与编译产物改由 `GIT_CLEAN_FLAGS` 排除清理、常驻 runner 构建目录，跨流水线增量编译生效（cargo 指纹保证正确性）。注意：runner 构建目录会增长（单机数十 GB），偶发手动清理即可；依赖/工具链大版本调整时手动把 cache key 升版。
+  - **发布（tag）流水线裁剪重复验证**：tag 指向的提交与刚在 main 全量验证过的提交仅差版本号，打包作业不再重跑 fmt/check/clippy/test 全套，只做构建打包；release-preflight（版本一致性 + 前端测试）保留。
+  - **结构性精简**：删除 verify 作业里独立的 `cargo check`（clippy 为其超集，省一遍全量编译 ×3 平台）；compile 三平台改为按平台 `needs` 链式并行（慢平台不再阻塞其他平台）；删除打包作业里与 tauri `beforeBuildCommand` 重复的显式 vite build。
+
 ### 新增
 - **AI 日报 GitLab 提交单列小节并按类型归纳**：配置了 GitLab 且当日有提交时，AI 日报现在被要求单列「GitLab 今日提交」小节（与其他小节同级），从提交信息归纳当日代码工作——实现了什么功能、修复了什么问题、进行了哪些重构或配置调整，逐条概括；不再混入进展正文，也不逐字罗列原始 commit message；防编造约束保留（不得虚构列表之外的提交）。本地（无 AI）回退日报的提交清单小节行为不变。
 

@@ -13,12 +13,15 @@
 
 # stages:
 #   verify   三平台核验（frontend + linux/macos/windows）
-#   compile  三平台 release 编译产物（仅日常推送）
-#   daily-package 每次 push 的三平台完整安装包（artifact 保留 30 天，固定 latest 下载链接）
+#   compile  三平台 release 编译验证（按平台 needs 链式并行，提前暴露 LTO/链接问题）
+#   daily-package 三平台完整安装包——仅夜间 schedule 流水线运行（artifact 保留 30 天，
+#            固定 latest 下载链接指向最近一次夜间成功构建；日常 push 不再重复产包，
+#            正式发版走 tag 的 package/publish，资产永久保留）
 #   audit    安全审计
 #   version  version-bump：verify+compile 全绿后自动版本自增（末位逢 100 进位）、
 #            提交回 main（[skip ci]）并打 vX.Y.Z tag（→ 触发 preflight/package/publish）
-#   preflight/package/publish  版本发布（tag 流水线，artifact 永久保留）
+#   preflight/package/publish  版本发布（tag 流水线，artifact 永久保留；
+#            tag 提交与刚验证过的 main 仅差版本号，打包作业不再重跑验证全套）
 #
 # Tauri 更新签名（createUpdaterArtifacts: true）：GitLab 变量必须单行（masked
 # 规则禁止换行），因此 TAURI_SIGNING_PRIVATE_KEY 存的是 minisign 私钥的
@@ -40,6 +43,12 @@ variables:
   CARGO_TARGET_DIR: "$CI_PROJECT_DIR/target"
   NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.npm"
   RUSTFLAGS: "-D warnings"
+  # shell runner 的构建目录跨流水线持久：git clean 保留 target/.cargo/.npm，
+  # 让 cargo 指纹驱动的增量编译在流水线之间生效（此前每次 checkout 全删 +
+  # cache key 漂移，三平台每条流水线全量冷启动）。注意：runner 构建目录会
+  # 随时间增长（target/ 单机可达数十 GB），偶发手动清理或删除整个构建目录
+  # 即可（首轮会冷构建一次）。
+  GIT_CLEAN_FLAGS: -ffdx --exclude=target --exclude=.cargo --exclude=.npm
   LINUX_X64_RUNNER_TAG: linux-x64
   LINUX_ARM64_RUNNER_TAG: linux-arm64
   MACOS_RUNNER_TAG: macos
@@ -65,13 +74,15 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "web"'
 
+# 缓存只承担 npm 下载缓存（.npm）。Rust 的 registry（.cargo）与编译产物
+# （target）由 GIT_CLEAN_FLAGS 排除后常驻 runner 构建目录，跨流水线增量生效，
+# 不再进出 cache 归档（此前 target 数十 GB 进出归档每 job 分钟级，且 key 含
+# src-tauri/Cargo.toml——version-bump 每次发版都改写它的版本行，key 必然漂移，
+# 导致缓存形同虚设）。key 用固定值：npm 依赖变化由 package-lock.json 锁定，
+# 依赖/工具链大版本调整时手动把 v1 升为 v2 即可。
 cache:
-  key:
-    prefix: "$CI_JOB_NAME-$CI_RUNNER_EXECUTABLE_ARCH"
-    # src-tauri/Cargo.toml 而非 Cargo.lock：version-bump 会改写 Cargo.lock 里的
-    # 自版本号（依赖未变），若纳入 key 会导致每次 bump 后缓存失效、全量重编译。
-    files: [package-lock.json, src-tauri/Cargo.toml]
-  paths: [.npm/, .cargo/registry/, .cargo/git/, target/]
+  key: npm-cache-v1
+  paths: [.npm/]
   policy: pull-push
 
 .rust-node:
@@ -135,7 +146,7 @@ frontend:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
     - npm run build
     - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
+    # 独立的 cargo check 省略：clippy 是类型/借用检查的超集，避免两遍全量编译
     - cargo clippy --workspace --all-targets -- -D warnings
     - cargo test --workspace --all-targets
   rules:
@@ -164,7 +175,7 @@ rust-verify-windows:
     - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
     - npm run build
     - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
+    # 独立的 cargo check 省略：clippy 是类型/借用检查的超集，避免两遍全量编译
     - cargo clippy --workspace --all-targets -- -D warnings
     - cargo test --workspace --all-targets
   rules:
@@ -172,7 +183,7 @@ rust-verify-windows:
       when: never
     - when: on_success
 
-# ---- 三平台 release 编译产物（每次日常推送，不上传安装包） ----
+# ---- 三平台 release 编译验证（按平台 needs 链式并行，慢平台不再阻塞其他平台）----
 .release-compile:
   extends: .rust-node
   stage: compile
@@ -187,6 +198,7 @@ rust-verify-windows:
 
 build-release-linux:
   extends: .release-compile
+  needs: [rust-verify-linux]
   tags: ["$LINUX_X64_RUNNER_TAG"]
   artifacts:
     name: "$CI_JOB_NAME"
@@ -197,6 +209,7 @@ build-release-linux:
 
 build-release-macos:
   extends: .release-compile
+  needs: [rust-verify-macos]
   tags: ["$MACOS_RUNNER_TAG"]
   artifacts:
     name: "$CI_JOB_NAME"
@@ -208,6 +221,7 @@ build-release-macos:
 build-release-windows:
   extends: .powershell-toolchain
   stage: compile
+  needs: [rust-verify-windows]
   tags: ["$WINDOWS_RUNNER_TAG"]
   rules:
     - if: '$CI_COMMIT_TAG'
@@ -241,20 +255,19 @@ build-release-windows:
       & "$env:CI_PROJECT_DIR\scripts\stage-tauri-key.ps1"
       & "$env:CI_PROJECT_DIR\scripts\stage-nsis.ps1"
 
-# ---- 日常安装包：每次 push main 产三平台完整安装包并上传为 CI artifact ----
+# ---- 日常安装包：仅夜间 schedule 流水线产三平台完整安装包 ----
+# 需在 GitLab UI → CI/CD → Schedules 新建定时（每天一次、分支 main）才会运行。
 # 用户可直接下载安装使用；GitLab 提供固定「latest」链接（自动指向最近一次成功构建）：
 #   https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-<os>
-# artifact 保留 30 天；tag 发布版走原 package 阶段（永久保留 + glab release）。
+# artifact 保留 30 天；正式发版走 tag 的 package/publish 阶段（永久保留 + glab release）。
+# 日常 push 不再产安装包：与自动发版的 Release 资产完全重复，是流水线最大耗时来源。
 .package-daily:
   stage: daily-package
-  # 仅 main push 运行（tag 跳过，发布走 package/publish 阶段）：打安装包需要
-  # 受保护变量 TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)，而受保护变量对功能分支 /
-  # MR 流水线不可见，package-daily 在非 main 分支上必然失败（first MR 流水线
-  # 实测三平台同时报 "TAURI_SIGNING_PRIVATE_KEY is not set"）。
+  # 仅 schedule 运行（push/tag/MR 一律跳过）：打安装包需要受保护变量
+  # TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)，schedule 需勾选「受保护变量可见」。
+  # 注意：npm run build 由 tauri 的 beforeBuildCommand 执行，不在此处显式调用。
   rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - when: never
 
 package-daily-windows:
@@ -263,7 +276,6 @@ package-daily-windows:
   script:
     - !reference [.windows-package-pre-steps, steps]
     - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
-    - npm run build
     - npm run tauri build
   after_script:
     - |
@@ -305,7 +317,6 @@ package-daily-linux-x64:
     - bash scripts/stage-tauri-key.sh
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm run build
     - npm run tauri build -- --bundles deb,rpm,appimage
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
@@ -320,9 +331,7 @@ package-daily-linux-arm64:
   extends: [.rust-node, .package-daily]
   tags: ["$LINUX_ARM64_RUNNER_TAG"]
   rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$PACKAGE_LINUX_ARM64 == "true"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PACKAGE_LINUX_ARM64 == "true"'
     - when: never
   before_script:
     - !reference [.rust-node, before_script]
@@ -330,7 +339,6 @@ package-daily-linux-arm64:
     - bash scripts/stage-tauri-key.sh
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm run build
     - npm run tauri build -- --target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
@@ -357,10 +365,8 @@ package-daily-macos-arm64:
     APPLE_SIGNING_IDENTITY: "-"
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm run build
     - npm run tauri build -- $TAURI_BUILD_ARGS
   artifacts:
-    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
     when: always
     expire_in: 30 days
     paths:
@@ -372,9 +378,7 @@ package-daily-macos-x64:
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
   rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$PACKAGE_MACOS_X64 == "true"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PACKAGE_MACOS_X64 == "true"'
     - when: never
   before_script:
     - !reference [.rust-node, before_script]
@@ -388,11 +392,9 @@ package-daily-macos-x64:
     APPLE_SIGNING_IDENTITY: "-"
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm run build
     - npm run tauri build -- $TAURI_BUILD_ARGS
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
-    when: always
     expire_in: 30 days
     paths:
       - target/**/release/bundle/dmg/*.dmg
@@ -541,15 +543,10 @@ release-preflight:
   extends: .rust-node
   stage: package
   needs: [release-preflight]
+  # 不重跑 fmt/check/clippy/test：tag 指向的提交与刚在 main 全量验证过的提交
+  # 仅差版本号字符串（bump 提交），验证已在 main 流水线完成——此处只构建打包。
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm run check
-    - npm run test:frontend
-    - npm run build
-    - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
-    - cargo clippy --workspace --all-targets -- -D warnings
-    - cargo test --workspace --all-targets
     - npm run tauri build -- $TAURI_BUILD_ARGS
   artifacts:
     name: "$CI_COMMIT_TAG-$CI_JOB_NAME"
@@ -632,16 +629,11 @@ tauri-package-windows:
   stage: package
   tags: ["$WINDOWS_RUNNER_TAG"]
   needs: [release-preflight]
+  # 不重跑 fmt/check/clippy/test：tag 指向的提交与刚在 main 全量验证过的提交
+  # 仅差版本号字符串（bump 提交），验证已在 main 流水线完成——此处只构建打包。
   script:
     - !reference [.windows-package-pre-steps, steps]
     - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
-    - npm run check
-    - npm run test:frontend
-    - npm run build
-    - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
-    - cargo clippy --workspace --all-targets -- -D warnings
-    - cargo test --workspace --all-targets
     - npm run tauri build
   after_script:
     - |
