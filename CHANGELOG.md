@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 修复
+- **第二轮全量代码评审修复（CI 编排 / Rust 后端 / 前端，行为保持）**：
+  - **夜间产包流水线永不运行（CI）**：安装包改为仅夜间 schedule 产出时 `workflow.rules` 未放行 `schedule`——定时流水线在创建阶段即被过滤，五个 `package-daily-*` 作业永不执行、「latest」固定下载链接随之失效（存量 artifact 30 天过期后 404）；现补上 schedule 放行规则。同步修复两处 macOS 日常包作业 artifacts 配置成对误删（arm64 缺 `name`、x64 缺 `when: always`，与 Windows/Linux 作业不对称）；`publish-release` 的包上传 curl 补齐与 glab 认证同款的 `CI_JOB_TOKEN` 回退（此前令牌缺失时发空 token，全部资产上传 401）；两个 CI 契约测试（`ciArtifacts`/`ciVersionFlow`）从「每次 push 产包 + `files:` 缓存 key」旧设计对齐到「夜间 schedule + 固定 npm 缓存 key」新设计。
+  - **语义记忆检索 Top-K 逻辑反转（P1，Rust）**：`search_memory_chunks_semantic` 的淘汰阈值判断用 `top.last()`、超限弹出用 `pop()`，而内部数组按分数升序维护——高分命中被跳过或刚插入即被弹出，实际返回"扫描顺序最早的 limit 条"而非最相似 Top-K；且以升序喂给下游 RRF 融合（rank 0 权重最高给了最差命中），双重劣化语义检索质量。现改为 `top[0]`（当前最差）做门槛、`remove(0)` 淘汰、返回前翻转为降序（最优在前），并修正 `binary_search_by` 比较器方向（原写法与标准约定相反，插入点错乱导致数组不保序），新增回归测试。
+  - **桌宠分类缓存对自定义分类不失效（P1，Rust）**：规则缓存签名只哈希 `app_category_rules` 不含 `custom_categories`，用户单独改/删自定义分类后缓存永不刷新、桌宠一直用旧分类（与上一轮已修的"只哈希末条规则"同源残留）；现把自定义分类一并纳入哈希（`CustomCategory` 补 `Hash` 派生）。
+  - **时间线导出任意路径写入（P1，Rust）**：`export_timeline_json` 对前端传入的目标路径直接写文件，注释声称"必须以 .json 结尾"但无任何校验、父目录也不校验（与上一轮已修的日报合并导出属同类旁路）；现抽出 `validate_timeline_export_target` 限定 `.json` 后缀（大小写不敏感），父目录复用 `validate_export_dir` 拒绝隐藏/敏感目录（防写入 `.ssh`/`LaunchAgents` 等）。
+  - **助手恢复出幽灵"生成中"气泡（P1，前端 TS）**：流式期间助手 store 每 500ms 防抖持久化，应用在生成中途退出/崩溃后，恢复出的消息保留 `streaming:true` 且无任何代码复位，助手页出现永远"生成中"的幽灵气泡（思考光标常驻）；`loadState` 恢复路径现强制 `streaming:false`（`sending`/`sendingRequestId` 本就复位），新增带伪造 localStorage 的恢复路径回归测试。
+  - **HTTP 客户端构建失败静默失超时（P2，Rust）**：`GitlabClient` 与云端/本地/AI 三个分析器的 `Client::builder()...build()` 失败时静默回退为无超时客户端（`unwrap_or_default`/`Client::new()`），一旦发生即架空超时保护、把快速失败变成永久挂起；现构建失败直接 `expect` panic 暴露环境问题（TLS 后端不可用时后续请求本就全部失败）。
+  - **小修**：GitLab 仓库列表排序改 `sort_by_cached_key`（原每次比较重复 `to_lowercase` 产生 O(n log n) 次字符串分配）；`integration_instruction` 四语言文案里的小节标题改为从 `gitlab_section_title` 注入（单一来源防漂移，输出字节不变）；删除 `agent/tools.rs` `html_to_text` 的死变量 `close`（上一轮清单误报"已修复"，实际未删，本次实际删除）；修正 `avatar_scale` 字段注释与 clamp 实现不符（下限 0.4 而非 0.7）。
+
 ### 变更
 - **CI/CD 流水线提速（目标：每次 push 从 1.5-2 小时降到 30 分钟级）**：
   - **三平台完整安装包改为夜间定时产出**（GitLab Schedules，分支 main）：日常 push 不再产安装包——与自动发版的 Release 资产完全重复，是最大耗时来源；「latest」固定下载链接仍有效（自动指向最近一次夜间成功构建，保留 30 天），正式发版照旧走 tag 发布（资产永久保留）。arm64/macos-x64 可选平台继续由 `PACKAGE_*` 变量控制。

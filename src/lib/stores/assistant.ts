@@ -246,7 +246,11 @@ function loadState(): AssistantState {
     const persisted = isRecord(parsed) ? parsed : {};
     return {
       messages: Array.isArray(persisted.messages)
-        ? persisted.messages.map((message) => normalizeMessage(message))
+        ? persisted.messages
+            .map((message) => normalizeMessage(message))
+            // 应用可能在流式中途退出/崩溃：恢复出来的消息必然已不在生成，
+            // 保留 streaming:true 会渲染出永远“生成中”的幽灵气泡
+            .map((message) => (message.streaming ? { ...message, streaming: false } : message))
         : [],
       selectedModelId:
         typeof persisted.selectedModelId === 'string' && persisted.selectedModelId.trim()
