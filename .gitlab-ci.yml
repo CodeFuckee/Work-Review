@@ -451,6 +451,20 @@ version-bump:
 cargo-audit:
   stage: audit
   tags: ["$LINUX_X64_RUNNER_TAG"]
+  before_script:
+    # 本作业不继承 .rust-node，但 runner 环境重置后 cargo 可能不在默认 PATH
+    # （v1.1.42 tag 流水线实测 "cargo: 未找到命令"），与 .rust-node 同款兜底：
+    # 先找 rustup（顺带 ~/.cargo/env），仍找不到则给安装指引。
+    - set -euo pipefail
+    - |
+      if ! command -v rustup >/dev/null 2>&1; then
+        source "$HOME/.cargo/env" 2>/dev/null || true
+      fi
+      if ! command -v cargo >/dev/null 2>&1; then
+        echo "cargo not found. Install Rust via https://rustup.rs on this runner (linux-x64) or add ~/.cargo/bin to its PATH." >&2
+        exit 1
+      fi
+      cargo --version
   script:
     # 越秀服务器可预装：cargo install cargo-audit --locked
     # 已装则跳过编译（crates.io 编译每次 ~1-2 分钟，且避免网络波动）。
