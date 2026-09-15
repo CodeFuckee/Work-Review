@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **全量代码评审后的纯逻辑修复（第二批，前端 TS）**：
+  - **Popover 数值选项把显式 0 当缺省**：`popoverPosition` 的 `margin/gap/minHeight/preferredWidth` 用 `Number(x) || DEFAULT` 解析，显式传 0 会被默认值覆盖；新增 `numericOption`（null/undefined/空串/非有限值取默认，0 保留）。
+  - **分类颜色非法值产出无效样式**：`hexToRGBA` 对 `#zzzzzz` 之类输入会解析出 `NaN` 产出 `rgba(NaN,…)` 使样式静默失效；现回退默认灰色。
+  - **重复实现收敛**：i18n `formatLocalizedTime` 与 `formatLocalizedDate` 实现逐字重复，改为互相委托；`formatDurationLocalized` 英文分支 `compact ? x : x` 两个三元分支完全相同，简化为直接返回；`appVisuals` 的 `electronSvg` 与首字母占位图改用已有的 `encodeSvg` 助手。
+  - **windowsToolchain 测试在 Git Bash 会话假失败**：`minimalPathEnv()` 只覆盖 `Path` 拼写，而 Git Bash 环境原变量拼写为 `PATH`，两个键并存导致 PowerShell 仍读到完整旧 PATH、"应该找不到 node"的 2 个用例在本地（Git Bash）恒假失败（CI 的 PowerShell runner 不受影响）；现按不区分大小写统一改写 PATH。
+  - 评审中发现的 i18n `interpolate` 链式替换与分类 store 的 subscribe 取快照模式，经核实均为**测试契约固化的预期行为**（`index.test.ts` 断言参数值占位符继续展开、`categories.test.ts` 按源码文本固定快照模式），按行为保持原则未改动。
 - **全量代码评审后的安全与正确性修复（第一批，Rust 后端）**：
   - **截图读取路径逃逸（P0）**：`get_screenshot_thumbnail`/`get_screenshot_full` 的路径校验未拒绝 Windows 无盘符根路径（如 `\Windows\x.png`），`Path::join` 会用它替换 data_dir 前缀逃逸出数据目录读取任意图片；现于 `validate_relative_path` 中拒绝 `has_root()`，并新增 `validated_join` 在拼接后二次确认结果仍在 data_dir 内。
   - **日报合并导出绕过目录校验（P0）**：`export_reports_range` 此前对目标路径不校验即可写文件（单篇导出有 `validate_export_dir` 防护，属校验旁路），可写入 `.ssh`/`LaunchAgents` 等敏感位置；现对目标父目录应用同一校验（缺失时先创建再校验）。

@@ -129,5 +129,7 @@ export function hexToRGBA(hex: string | null | undefined, alpha: number): string
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
+  // 非法十六进制字符（如 #zzzzzz）解析为 NaN，回退默认灰色避免产出无效样式
+  if ([r, g, b].some(v => Number.isNaN(v))) return `rgba(100, 116, 139, ${alpha})`;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

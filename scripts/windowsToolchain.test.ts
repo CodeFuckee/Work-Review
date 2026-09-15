@@ -83,7 +83,15 @@ function runPowerShell(args: string[], env: NodeJS.ProcessEnv): SpawnResult {
 
 /** PATH 仅保留系统目录：确保待探测的 node 不在 PATH 中。 */
 function minimalPathEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, Path: `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32` };
+  const systemPath = `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32`;
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  // Windows 环境变量名不区分大小写，但在 Git Bash 会话里原变量拼写为 "PATH"，
+  // 只改写 "Path" 会留下两个并存键，spawnSync 后 PowerShell 仍读到完整旧 PATH，
+  // 探测"应该找不到 node"的用例就会假失败——按不区分大小写统一改写。
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === 'PATH') env[key] = systemPath;
+  }
+  return env;
 }
 
 function makeFixture(t: test.TestContext): string {

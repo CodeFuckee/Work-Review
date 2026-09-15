@@ -1,4 +1,8 @@
-const electronSvg = `data:image/svg+xml;utf8,${encodeURIComponent(
+function encodeSvg(svg: string): string {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const electronSvg = encodeSvg(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
     <rect x="6" y="6" width="36" height="36" rx="12" fill="#EEF4FF" />
     <path d="M16 24c0-6 3.6-10 8-10s8 4 8 10-3.6 10-8 10-8-4-8-10Z" stroke="#4F46E5" stroke-width="2.4" />
@@ -6,11 +10,7 @@ const electronSvg = `data:image/svg+xml;utf8,${encodeURIComponent(
     <path d="M12 30c5.2-2.8 18.8-2.8 24 0" stroke="#4F46E5" stroke-width="2.4" stroke-linecap="round" />
     <circle cx="24" cy="24" r="3.4" fill="#4F46E5" />
   </svg>`
-)}`;
-
-function encodeSvg(svg: string): string {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
+);
 
 const discoverSvg = encodeSvg(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
@@ -87,12 +87,12 @@ function buildMonogramIcon(appName: unknown): string | null {
   const fg = `hsl(${hue} 55% 32%)`;
   const fontSize = label.length > 1 ? 19 : 22;
 
-  return `data:image/svg+xml;utf8,${encodeURIComponent(
+  return encodeSvg(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
       <rect x="4" y="4" width="40" height="40" rx="12" fill="${bg}" />
       <text x="24" y="29" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="${fg}">${label}</text>
     </svg>`
-  )}`;
+  );
 }
 
 export function getFallbackAppIcon(appName: unknown): string | null {
