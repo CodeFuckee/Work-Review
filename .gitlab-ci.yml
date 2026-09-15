@@ -73,6 +73,9 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "web"'
+    # 夜间定时产包流水线：.package-daily 系列作业仅接受 schedule 触发，
+    # workflow 不放行 schedule 则定时流水线在创建阶段即被过滤，安装包永不产出。
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
 
 # 缓存只承担 npm 下载缓存（.npm）。Rust 的 registry（.cargo）与编译产物
 # （target）由 GIT_CLEAN_FLAGS 排除后常驻 runner 构建目录，跨流水线增量生效，
@@ -367,6 +370,7 @@ package-daily-macos-arm64:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
     - npm run tauri build -- $TAURI_BUILD_ARGS
   artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
     when: always
     expire_in: 30 days
     paths:
@@ -395,6 +399,7 @@ package-daily-macos-x64:
     - npm run tauri build -- $TAURI_BUILD_ARGS
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
     expire_in: 30 days
     paths:
       - target/**/release/bundle/dmg/*.dmg
@@ -784,7 +789,9 @@ publish-release:
       for f in target/**/release/bundle/dmg/*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*.exe target/**/release/bundle/nsis/*.sig                target/**/Yue_Review_portable_*.zip target/**/release/bundle/appimage/*.AppImage                target/**/release/bundle/deb/*.deb target/**/release/bundle/rpm/*.rpm updater.json; do
         [ -f "$f" ] || continue
         name="$(basename "$f")"
-        code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           -H "PRIVATE-TOKEN: $GIT_PUSH_TOKEN" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
+        # 与上方 glab 认证同款回退：GIT_PUSH_TOKEN 缺失（标准 GitLab 实例）时
+        # 用 CI_JOB_TOKEN，否则空 token 上传一律 401。
+        code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           -H "PRIVATE-TOKEN: ${GIT_PUSH_TOKEN:-$CI_JOB_TOKEN}" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
         case "$code" in 200|201) ;; *) echo "package upload failed ($code): $f" >&2; exit 1;; esac
         if glab api "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links" | grep -q "\\\"name\\\":\\\"$name\\\""; then
           echo ">>> link exists, skip: $name"

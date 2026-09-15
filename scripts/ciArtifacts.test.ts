@@ -15,7 +15,7 @@ test('stages 应包含 daily-package（在 compile 与 audit 之间）', () => {
   );
 });
 
-test('应存在五个日常安装包 job（Windows/macOS×2/Linux×2），rules 收在 .package-daily 模板，均保留 30 天', () => {
+test('应存在五个夜间安装包 job（Windows/macOS×2/Linux×2），rules 收在 .package-daily 模板且仅 schedule 触发，均保留 30 天', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
   for (const job of [
     'package-daily-windows',
@@ -26,14 +26,15 @@ test('应存在五个日常安装包 job（Windows/macOS×2/Linux×2），rules 
   ]) {
     assert.match(yaml, new RegExp(`^${job}:`, 'm'), `缺少 job ${job}`);
   }
-  // 模板：非 tag、仅 main push（打安装包依赖受保护签名变量，对功能分支/MR 流水线不可见）
+  // 模板：仅夜间 schedule 流水线运行（push/tag/MR 一律跳过；打安装包依赖
+  // 受保护签名变量，schedule 需勾选「受保护变量可见」）。
   const template = yaml.match(/\.package-daily:[\s\S]*?rules:[\s\S]*?\n\n/)?.[0] ?? '';
   assert.match(template, /stage: daily-package/);
-  assert.match(template, /if: '\$CI_COMMIT_TAG'\s+when: never/);
-  assert.match(
-    template,
-    /if: '\$CI_PIPELINE_SOURCE == "push" && \$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH'/,
-  );
+  assert.match(template, /if: '\$CI_PIPELINE_SOURCE == "schedule"'/);
+  assert.match(template, /when: never/);
+  // workflow 必须放行 schedule，否则定时流水线在创建阶段即被过滤、作业永不运行。
+  const workflow = yaml.match(/workflow:[\s\S]*?\n\S/)?.[0] ?? '';
+  assert.match(workflow, /if: '\$CI_PIPELINE_SOURCE == "schedule"'/);
   // 无设备的架构默认掠过（变量开关）
   assert.match(yaml, /PACKAGE_LINUX_ARM64: "false"/);
   assert.match(yaml, /PACKAGE_MACOS_X64: "false"/);

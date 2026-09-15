@@ -50,10 +50,12 @@ test('version-bump 使用 GIT_PUSH_TOKEN；bump 提交由 workflow 规则排除�
   assert.match(yaml, /scripts\/bump-version\.mjs/);
 });
 
-test('缓存 key 不应包含 Cargo.lock（避免 bump 后缓存失效）', () => {
+test('缓存 key 固定为 npm-cache-v1（bump 改写 Cargo.toml/Cargo.lock 不失效）', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
-  assert.match(yaml, /files: \[package-lock\.json, src-tauri\/Cargo\.toml\]/);
-  assert.doesNotMatch(yaml, /files: \[package-lock\.json, Cargo\.lock\]/);
+  const cache = yaml.match(/^cache:\n(?:[ \t]+[^\n]*\n)+/m)?.[0] ?? '';
+  assert.match(cache, /key: npm-cache-v1/, '缓存 key 应固定为 npm-cache-v1');
+  assert.match(cache, /paths: \[\.npm\/\]/, '缓存只承担 npm 下载缓存');
+  assert.doesNotMatch(cache, /Cargo/, '缓存 key/路径不得包含 Cargo 相关文件（bump 后失效）');
 });
 
 test('bump-version.mjs 应存在且本身不含破坏性 git 操作', () => {
