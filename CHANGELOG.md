@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增
+- **AI 日报 GitLab 提交单列小节并按类型归纳**：配置了 GitLab 且当日有提交时，AI 日报现在被要求单列「GitLab 今日提交」小节（与其他小节同级），从提交信息归纳当日代码工作——实现了什么功能、修复了什么问题、进行了哪些重构或配置调整，逐条概括；不再混入进展正文，也不逐字罗列原始 commit message；防编造约束保留（不得虚构列表之外的提交）。本地（无 AI）回退日报的提交清单小节行为不变。
+
 ### 修复
+- **自动更新流程不再暴露自建 GitLab 域名**：检查/下载/安装全流程的用户可见文案（状态事件、错误消息、来源标签、结果字段）统一经域名脱敏，自建域名一律替换为中性「更新服务器」；此前连接失败、清单获取失败等错误会原样带出 `https://…` 完整地址。点击「打开下载页」跳转浏览器的功能链接不受影响。
 - **全量代码评审后的纯逻辑修复（第二批，前端 TS）**：
   - **Popover 数值选项把显式 0 当缺省**：`popoverPosition` 的 `margin/gap/minHeight/preferredWidth` 用 `Number(x) || DEFAULT` 解析，显式传 0 会被默认值覆盖；新增 `numericOption`（null/undefined/空串/非有限值取默认，0 保留）。
   - **分类颜色非法值产出无效样式**：`hexToRGBA` 对 `#zzzzzz` 之类输入会解析出 `NaN` 产出 `rgba(NaN,…)` 使样式静默失效；现回退默认灰色。

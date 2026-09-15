@@ -262,16 +262,16 @@ fn truncated_hint(skipped: usize, locale: AppLocale) -> String {
 fn integration_instruction(locale: AppLocale) -> String {
     match locale {
         AppLocale::ZhCn => {
-            "请将上述 GitLab 提交作为当日代码工作，整合进日报的进展/代码提交等小节；不得编造列表之外的提交。".to_string()
+            "若提供了上述 GitLab 提交，请在日报中单列一个「GitLab 今日提交」小节（与其他小节同级），从提交信息归纳当日代码工作：实现了什么功能、修复了什么问题、进行了哪些重构或配置调整，逐条概括说明；不得编造列表之外的提交，也不要逐字罗列原始提交信息。".to_string()
         }
         AppLocale::ZhTw => {
-            "請將上述 GitLab 提交視為當日程式碼工作，整合進日報的進展/程式碼提交等小節；不得虛構清單之外的提交。".to_string()
+            "若提供了上述 GitLab 提交，請在日報中單列一個「GitLab 今日提交」小節（與其他小節同級），從提交資訊歸納當日程式碼工作：實現了什麼功能、修復了什麼問題、進行了哪些重構或配置調整，逐條概括說明；不得虛構清單之外的提交，也不要逐字羅列原始提交資訊。".to_string()
         }
         AppLocale::En => {
-            "Incorporate the GitLab commits above as today's coding work in the relevant report sections (e.g. progress / code commits); do not invent commits not listed.".to_string()
+            "If the GitLab commits above are provided, add a dedicated \"GitLab Commits Today\" section (at the same level as other sections) to the report. Summarize the day's coding work from the commit messages: what features were implemented, what bugs were fixed, what refactors or configuration changes were made — one concise item each. Do not invent commits not listed, and do not quote raw commit messages verbatim.".to_string()
         }
         AppLocale::Ar => {
-            "ادمج تسليمات GitLab أعلاه كعمل برمجة اليوم في الأقسام ذات الصلة بالتقرير؛ ولا تخترع تسليمات غير مذكورة.".to_string()
+            "إذا قُدمت تسليمات GitLab أعلاه، فأضف قسمًا مستقلًا بعنوان \"تسليمات GitLab اليوم\" إلى التقرير (بنفس مستوى الأقسام الأخرى)، ولخِّص عمل اليوم البرمجي من رسائل التسليم: ما الميزات التي نُفذت، وما الأخطاء التي أُصلحت، وما إعادة الهيكلة أو تعديلات الإعداد — بند موجز لكل واحدة. ولا تخترع تسليمات غير مذكورة، ولا تنقل رسائل التسليم حرفيًا.".to_string()
         }
     }
 }
@@ -1013,7 +1013,28 @@ mod tests {
         assert!(ctx.contains("(+12/-3)"));
         assert!(ctx.contains("(+30/-0)"));
         assert!(ctx.contains("10:30"), "应展示本地时间 HH:mm（+8）");
-        assert!(ctx.contains("整合"), "应含 AI 整合指令");
+        assert!(ctx.contains("单列"), "应含单列小节的整合指令");
+    }
+
+    #[test]
+    fn 整合指令应要求单列代码提交小节并保留防编造约束() {
+        let fabrication_guards = [
+            (AppLocale::ZhCn, "不得编造"),
+            (AppLocale::ZhTw, "不得虛構"),
+            (AppLocale::En, "not invent"),
+            (AppLocale::Ar, "ولا تخترع"),
+        ];
+        for (locale, guard) in fabrication_guards {
+            let instruction = integration_instruction(locale);
+            assert!(
+                instruction.contains(gitlab_section_title(locale)),
+                "指令应固定小节标题（{locale:?}）"
+            );
+            assert!(
+                instruction.contains(guard),
+                "指令应保留防编造约束（{locale:?}）"
+            );
+        }
     }
 
     #[test]

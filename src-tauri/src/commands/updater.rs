@@ -25,6 +25,21 @@ const GITLAB_RELEASE_PAGE: &str =
 
 const GITLAB_UPDATE_SOURCE_LABEL: &str = "home.chenkaidi.top:509";
 
+/// 用户可见的更新文案不得暴露自建 GitLab 域名：所有形式（带/不带协议）
+/// 统一替换为中性「更新服务器」。事件消息、错误消息、来源标签都经此处理。
+fn sanitize_update_text(text: impl std::fmt::Display) -> String {
+    let host = GITLAB_UPDATE_SOURCE_LABEL;
+    text.to_string()
+        .replace(&format!("https://{host}"), "更新服务器")
+        .replace(&format!("http://{host}"), "更新服务器")
+        .replace(host, "更新服务器")
+}
+
+/// 构造用户可见的更新错误：统一经域名脱敏。
+fn update_error(message: impl std::fmt::Display) -> AppError {
+    AppError::Unknown(sanitize_update_text(message))
+}
+
 /// 更新清单所属的 GitLab 项目 ID 与包名（与 publish-release 上传路径一致）。
 const GITLAB_PACKAGE_SEGMENT: &str = "packages/generic/yue-review";
 
@@ -116,20 +131,24 @@ async fn fetch_latest_gitlab_release(
     client: &reqwest::Client,
     token: &str,
 ) -> Result<GitlabReleaseResponse, AppError> {
+    // 错误字符串（reqwest 错误含完整 URL）统一脱敏后再透出
     let releases = client
         .get(GITLAB_LATEST_RELEASE_API)
         .header(reqwest::header::USER_AGENT, "WorkReview-Updater")
         .header("PRIVATE-TOKEN", token)
         .send()
-        .await?
-        .error_for_status()?
+        .await
+        .map_err(update_error)?
+        .error_for_status()
+        .map_err(update_error)?
         .json::<Vec<GitlabReleaseResponse>>()
-        .await?;
+        .await
+        .map_err(update_error)?;
 
     releases
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Unknown("自建 GitLab 尚无任何发布".to_string()))
+        .ok_or_else(|| update_error("更新服务器尚无任何发布".to_string()))
 }
 
 /// 用编译期 token 对指定版本的更新清单做可安装性检查（含签名与版本校验）。
@@ -177,7 +196,7 @@ async fn check_installable_update(
             auto_update_ready: true,
             release_url: GITLAB_RELEASE_PAGE.to_string(),
             body: update.body,
-            source: Some(GITLAB_UPDATE_SOURCE_LABEL.to_string()),
+            source: Some(sanitize_update_text(GITLAB_UPDATE_SOURCE_LABEL)),
         }),
         Ok(None) => None,
         Err(error) => {
@@ -202,8 +221,8 @@ fn emit_update_status(
         UPDATE_STATUS_EVENT,
         GithubUpdateStatusPayload {
             stage: stage.to_string(),
-            message: message.into(),
-            source,
+            message: sanitize_update_text(message.into()),
+            source: source.map(sanitize_update_text),
             version,
             downloaded_bytes,
             total_bytes,
@@ -269,18 +288,18 @@ fn load_update_settings_from_dir(data_dir: &Path) -> Result<UpdateSettings, AppE
     }
 
     let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| AppError::Unknown(format!("读取更新设置失败: {e}")))?;
+        .map_err(|e| update_error(format!("读取更新设置失败: {e}")))?;
 
-    serde_json::from_str(&content).map_err(|e| AppError::Unknown(format!("解析更新设置失败: {e}")))
+    serde_json::from_str(&content).map_err(|e| update_error(format!("解析更新设置失败: {e}")))
 }
 
 fn save_update_settings_to_dir(data_dir: &Path, settings: &UpdateSettings) -> Result<(), AppError> {
     let settings_path = update_settings_path(data_dir);
     let content = serde_json::to_string_pretty(settings)
-        .map_err(|e| AppError::Unknown(format!("序列化更新设置失败: {e}")))?;
+        .map_err(|e| update_error(format!("序列化更新设置失败: {e}")))?;
 
     std::fs::write(&settings_path, content)
-        .map_err(|e| AppError::Unknown(format!("保存更新设置失败: {e}")))?;
+        .map_err(|e| update_error(format!("保存更新设置失败: {e}")))?;
 
     Ok(())
 }
@@ -310,7 +329,7 @@ pub async fn get_update_settings(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<UpdateSettings, AppError> {
     let data_dir = {
-        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let state = state.lock().map_err(|e| update_error(e.to_string()))?;
         state.data_dir.clone()
     };
 
@@ -324,7 +343,7 @@ pub async fn save_update_settings(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), AppError> {
     let data_dir = {
-        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let state = state.lock().map_err(|e| update_error(e.to_string()))?;
         state.data_dir.clone()
     };
 
@@ -337,7 +356,7 @@ pub async fn should_check_updates(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<bool, AppError> {
     let data_dir = {
-        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let state = state.lock().map_err(|e| update_error(e.to_string()))?;
         state.data_dir.clone()
     };
     let settings = load_update_settings_from_dir(&data_dir)?;
@@ -351,7 +370,7 @@ pub async fn update_last_check_time(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), AppError> {
     let data_dir = {
-        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let state = state.lock().map_err(|e| update_error(e.to_string()))?;
         state.data_dir.clone()
     };
     let mut settings = load_update_settings_from_dir(&data_dir)?;
@@ -392,7 +411,7 @@ pub async fn check_github_update(app: AppHandle) -> Result<GithubUpdateInfo, App
         .timeout(Duration::from_secs(UPDATE_REQUEST_TIMEOUT_SECS))
         .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
         .build()
-        .map_err(|e| AppError::Unknown(format!("创建更新检查客户端失败: {e}")))?;
+        .map_err(|e| update_error(format!("创建更新检查客户端失败: {e}")))?;
 
     let release = fetch_latest_gitlab_release(&client, token).await?;
     let latest_version = normalize_version(&release.tag_name).to_string();
@@ -406,7 +425,7 @@ pub async fn check_github_update(app: AppHandle) -> Result<GithubUpdateInfo, App
             auto_update_ready: true,
             release_url: GITLAB_RELEASE_PAGE.to_string(),
             body: release.description,
-            source: Some(GITLAB_UPDATE_SOURCE_LABEL.to_string()),
+            source: Some(sanitize_update_text(GITLAB_UPDATE_SOURCE_LABEL)),
         });
     }
 
@@ -421,7 +440,7 @@ pub async fn check_github_update(app: AppHandle) -> Result<GithubUpdateInfo, App
         auto_update_ready,
         release_url: GITLAB_RELEASE_PAGE.to_string(),
         body: release.description,
-        source: Some(GITLAB_UPDATE_SOURCE_LABEL.to_string()),
+        source: Some(sanitize_update_text(GITLAB_UPDATE_SOURCE_LABEL)),
     })
 }
 
@@ -433,7 +452,7 @@ pub async fn download_and_install_github_update(
     expected_version: Option<String>,
 ) -> Result<GithubUpdateInstallResult, AppError> {
     let Some(token) = updater_gitlab_token() else {
-        return Err(AppError::Unknown(
+        return Err(update_error(
             "未配置更新令牌（WORK_REVIEW_UPDATER_GITLAB_TOKEN），无法在线更新".to_string(),
         ));
     };
@@ -450,14 +469,14 @@ pub async fn download_and_install_github_update(
                 .timeout(Duration::from_secs(UPDATE_REQUEST_TIMEOUT_SECS))
                 .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
                 .build()
-                .map_err(|e| AppError::Unknown(format!("创建更新客户端失败: {e}")))?;
+                .map_err(|e| update_error(format!("创建更新客户端失败: {e}")))?;
             normalize_version(&fetch_latest_gitlab_release(&client, token).await?.tag_name)
                 .to_string()
         }
     };
 
     let Some(manifest_url) = build_gitlab_manifest_url(Some(&target_version)) else {
-        return Err(AppError::Unknown(format!(
+        return Err(update_error(format!(
             "无法为版本 {target_version} 构造更新清单地址"
         )));
     };
@@ -477,7 +496,7 @@ pub async fn download_and_install_github_update(
     );
 
     let endpoint_url = Url::parse(&manifest_url)
-        .map_err(|e| AppError::Unknown(format!("解析更新源失败 ({manifest_url}): {e}")))?;
+        .map_err(|e| update_error(format!("解析更新源失败 ({manifest_url}): {e}")))?;
 
     let updater = match app
         .updater_builder()
@@ -496,7 +515,7 @@ pub async fn download_and_install_github_update(
     {
         Ok(updater) => updater,
         Err(error) => {
-            return Err(AppError::Unknown(format!(
+            return Err(update_error(format!(
                 "{source_label}: 构建更新器失败: {error}"
             )));
         }
@@ -517,7 +536,7 @@ pub async fn download_and_install_github_update(
                 None,
                 None,
             );
-            return Err(AppError::Unknown(message));
+            return Err(update_error(message));
         }
         Err(error) => {
             let message =
@@ -532,7 +551,7 @@ pub async fn download_and_install_github_update(
                 None,
                 None,
             );
-            return Err(AppError::Unknown(message));
+            return Err(update_error(message));
         }
     };
 
@@ -551,7 +570,7 @@ pub async fn download_and_install_github_update(
             None,
             None,
         );
-        return Err(AppError::Unknown(message));
+        return Err(update_error(message));
     }
 
     emit_update_status(
@@ -637,9 +656,12 @@ pub async fn download_and_install_github_update(
                 updated: true,
                 available: true,
                 version: Some(update.version),
-                source: Some(source_label),
+                source: Some(sanitize_update_text(&source_label)),
                 message: "在线更新已完成".to_string(),
-                attempted_sources,
+                attempted_sources: attempted_sources
+                    .iter()
+                    .map(sanitize_update_text)
+                    .collect(),
             });
         }
         Err(error) => {
@@ -674,12 +696,38 @@ pub async fn download_and_install_github_update(
         None,
     );
 
-    Err(AppError::Unknown(message))
+    Err(update_error(message))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 更新文案脱敏应替换所有形式的自建域名() {
+        let sanitized = sanitize_update_text(
+            "检查 https://home.chenkaidi.top:509/api/v4/x 失败（home.chenkaidi.top:509）",
+        );
+        assert_eq!(
+            sanitized, "检查 更新服务器/api/v4/x 失败（更新服务器）",
+            "带协议与裸域名都应替换"
+        );
+        assert_eq!(
+            sanitize_update_text("http://home.chenkaidi.top:509/y"),
+            "更新服务器/y",
+            "http 协议同样替换"
+        );
+        assert_eq!(
+            sanitize_update_text(GITLAB_UPDATE_SOURCE_LABEL),
+            "更新服务器",
+            "更新源标签本身即域名，应被替换"
+        );
+        assert_eq!(
+            sanitize_update_text("无需脱敏的普通文案"),
+            "无需脱敏的普通文案",
+            "不含域名的文案应原样保留"
+        );
+    }
 
     #[test]
     fn 更新清单地址应由目标版本构造且去除v前缀() {
