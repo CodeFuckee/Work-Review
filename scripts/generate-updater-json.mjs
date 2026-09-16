@@ -145,15 +145,9 @@ if (isCliEntry) {
     process.exit(1);
   }
 
-  // 一致性检查当前为「观察模式」：只告警不阻断（runner 构建目录累积旧版安装包的
-  // 根因尚未修复，阻断会让发布链持续失败）。根因修复后升级为 throw 阻断发布。
-  try {
-    assertPlatformVersionConsistency(manifest, manifest.version);
-  } catch (error) {
-    console.error(
-      `⚠️ 更新清单版本一致性检查未通过（观察模式，不阻断发布）: ${error.message}`,
-    );
-  }
+  // 版本一致性不变式：阻断发布（2026-09-16 更新失效事故的最终防线，
+  // 配套打包前 bundle 清理与按版本选择安装包的根治修复）。
+  assertPlatformVersionConsistency(manifest, manifest.version);
 
   writeFileSync(args.out, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`>>> updater.json 已生成: ${resolve(args.out)}（平台 ${Object.keys(manifest.platforms).join(', ')}）`);
