@@ -14,13 +14,14 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // darwin-x86_64 是可选平台：macOS x64 打包 job 由 PACKAGE_MACOS_X64 显式开启，
 // 平时只有 arm64 产物，清单中则不含 darwin-x86_64 条目。
 const REQUIRED_PLATFORMS = ['darwin-aarch64', 'windows-x86_64'];
 const OPTIONAL_PLATFORMS = ['darwin-x86_64'];
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = { platform: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
@@ -46,61 +47,114 @@ function parseArgs(argv) {
   return args;
 }
 
+// 由解析后的参数构建更新清单。
+// options: { version, urlBase, platforms: Array<[平台名, 产物本地路径]>, notes }
+// 平台产物存在性/签名检查沿用 CLI 原行为：必备平台缺失即抛错，可选平台缺失跳过。
+export function buildUpdaterManifest(options) {
+  const platforms = {};
+  for (const [platform, artifact] of options.platforms) {
+    const isRequired = REQUIRED_PLATFORMS.includes(platform);
+    if (!isRequired && !OPTIONAL_PLATFORMS.includes(platform)) {
+      throw new Error(
+        `未知平台: ${platform}（已知: ${[...REQUIRED_PLATFORMS, ...OPTIONAL_PLATFORMS].join(', ')}）`,
+      );
+    }
+
+    const file = artifact ? resolve(artifact) : '';
+    if (!artifact || !existsSync(file)) {
+      if (isRequired) {
+        throw new Error(`缺少 ${platform} 更新产物: ${artifact || '(空)'}`);
+      }
+      console.warn(`>>> 可选平台 ${platform} 无产物，清单中跳过`);
+      continue;
+    }
+
+    const signatureFile = `${file}.sig`;
+    if (!existsSync(signatureFile)) {
+      throw new Error(`缺少 ${platform} 更新签名: ${signatureFile}`);
+    }
+    const signature = readFileSync(signatureFile, 'utf8').replace(/\r?\n/g, '');
+    if (!signature) {
+      throw new Error(`${platform} 更新签名为空: ${signatureFile}`);
+    }
+
+    platforms[platform] = {
+      url: `${options.urlBase.replace(/\/+$/, '')}/${basename(file)}`,
+      signature,
+    };
+  }
+
+  const missing = REQUIRED_PLATFORMS.filter((platform) => !platforms[platform]);
+  if (missing.length > 0) {
+    throw new Error(`更新清单缺少必备平台: ${missing.join(', ')}`);
+  }
+
+  return {
+    version: options.version.replace(/^v/i, ''),
+    notes: options.notes ?? '',
+    pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    platforms,
+  };
+}
+
+// 版本一致性不变式（2026-09-16 更新失效事故的直接教训）：runner 构建目录会
+// 累积多个版本的安装包，文件选择若未按发布版本过滤，清单 URL 会指向旧版
+// 安装包——客户端"更新"后版本号不变（v1.1.47 起全部中招）。
+// 断言：平台下载 URL 的文件名若含版本号，必须与发布版本一致；
+// 不含版本号的通用文件名（如覆盖式更新的 Yue-Review.app.tar.gz）无法比对，放行。
+export function assertPlatformVersionConsistency(manifest, expectedVersion) {
+  if (manifest.version !== expectedVersion) {
+    throw new Error(
+      `清单 version=${manifest.version} 与发布版本 ${expectedVersion} 不一致`,
+    );
+  }
+  for (const [platform, entry] of Object.entries(manifest.platforms ?? {})) {
+    const file = entry.url.split('/').pop() ?? '';
+    const embedded = file.match(/(\d+\.\d+\.\d+)/);
+    if (embedded && embedded[1] !== expectedVersion) {
+      throw new Error(
+        `平台 ${platform} 的下载文件 "${file}"（版本 ${embedded[1]}）与发布版本 ${expectedVersion} 不一致——极可能选中了旧版累积产物`,
+      );
+    }
+  }
+}
+
 const args = parseArgs(process.argv.slice(2));
 
-if (!args.version || !args.urlBase || !args.out) {
+// 仅在作为 CLI 直接运行时执行主流程；被测试文件 import 时不触发
+// （否则顶层 process.exit 会连带终止整个测试进程）。
+const argvUrl = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
+const isCliEntry = argvUrl.toLowerCase() === import.meta.url.toLowerCase();
+
+if (isCliEntry && (!args.version || !args.urlBase || !args.out)) {
   console.error('缺少 --version / --url-base / --out 参数');
   process.exit(1);
 }
 
-const platforms = {};
-for (const [platform, artifact] of args.platform) {
-  const isRequired = REQUIRED_PLATFORMS.includes(platform);
-  if (!isRequired && !OPTIONAL_PLATFORMS.includes(platform)) {
-    console.error(`未知平台: ${platform}（已知: ${[...REQUIRED_PLATFORMS, ...OPTIONAL_PLATFORMS].join(', ')}）`);
+let manifest;
+if (isCliEntry) {
+  try {
+    manifest = buildUpdaterManifest({
+      version: args.version,
+      urlBase: args.urlBase,
+      platforms: args.platform,
+      notes: args.notesFile ? readFileSync(args.notesFile, 'utf8') : '',
+    });
+  } catch (error) {
+    console.error(error.message);
     process.exit(1);
   }
 
-  const file = artifact ? resolve(artifact) : '';
-  if (!artifact || !existsSync(file)) {
-    if (isRequired) {
-      console.error(`缺少 ${platform} 更新产物: ${artifact || '(空)'}`);
-      process.exit(1);
-    }
-    console.warn(`>>> 可选平台 ${platform} 无产物，清单中跳过`);
-    continue;
+  // 一致性检查当前为「观察模式」：只告警不阻断（runner 构建目录累积旧版安装包的
+  // 根因尚未修复，阻断会让发布链持续失败）。根因修复后升级为 throw 阻断发布。
+  try {
+    assertPlatformVersionConsistency(manifest, manifest.version);
+  } catch (error) {
+    console.error(
+      `⚠️ 更新清单版本一致性检查未通过（观察模式，不阻断发布）: ${error.message}`,
+    );
   }
 
-  const signatureFile = `${file}.sig`;
-  if (!existsSync(signatureFile)) {
-    console.error(`缺少 ${platform} 更新签名: ${signatureFile}`);
-    process.exit(1);
-  }
-  const signature = readFileSync(signatureFile, 'utf8').replace(/\r?\n/g, '');
-  if (!signature) {
-    console.error(`${platform} 更新签名为空: ${signatureFile}`);
-    process.exit(1);
-  }
-
-  platforms[platform] = {
-    url: `${args.urlBase.replace(/\/+$/, '')}/${basename(file)}`,
-    signature,
-  };
+  writeFileSync(args.out, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`>>> updater.json 已生成: ${resolve(args.out)}（平台 ${Object.keys(manifest.platforms).join(', ')}）`);
 }
-
-const missing = REQUIRED_PLATFORMS.filter((platform) => !platforms[platform]);
-if (missing.length > 0) {
-  console.error(`更新清单缺少必备平台: ${missing.join(', ')}`);
-  process.exit(1);
-}
-
-const notes = args.notesFile ? readFileSync(args.notesFile, 'utf8') : '';
-const manifest = {
-  version: args.version.replace(/^v/i, ''),
-  notes,
-  pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-  platforms,
-};
-
-writeFileSync(args.out, `${JSON.stringify(manifest, null, 2)}\n`);
-console.log(`>>> updater.json 已生成: ${resolve(args.out)}（平台 ${Object.keys(platforms).join(', ')}）`);

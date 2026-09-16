@@ -823,5 +823,12 @@ publish-release:
         glab api -X POST           "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links"           -f "name=$name"           -f "url=$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name"           -f "direct_asset_path=/$name" >/dev/null
         echo ">>> asset linked: $name"
       done
+    # 发布产物端到端自检（更新链路测试·层次3）：以上传的 updater.json 为准，
+    # 校验清单版本、各平台下载 URL 与本地文件一致、安装包上传完整性（SHA256）、
+    # 签名字段。当前为「观察模式」：自检失败只打印 ⚠️ 不阻断发布（runner 构建
+    # 目录累积旧版安装包、安装包选择未按版本过滤的根因尚未修复，阻断会让发布
+    # 链持续失败）；根因修复落地后去掉 || echo 升级为阻断。
+    - |
+      node scripts/verify-update-artifacts.mjs         --version "$VERSION"         --url-base "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION"         --token-env GIT_PUSH_TOKEN         --platform "windows-x86_64=$WIN_EXE"         --platform "darwin-aarch64=$MAC_A64"         || echo "⚠️ 发布产物自检未通过（观察模式，不阻断发布）——详见上方 ❌ 条目"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
