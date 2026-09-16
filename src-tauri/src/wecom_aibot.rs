@@ -470,9 +470,15 @@ async fn connect_and_serve(
     secret: &str,
     shared: &Arc<std::sync::Mutex<SharedBotStatus>>,
 ) -> Result<SessionEnd, String> {
-    let (ws, _) = tokio_tungstenite::connect_async(WECOM_WS_URL)
-        .await
-        .map_err(|e| redact_secret(&format!("连接企业微信长连接失败: {e}"), secret))?;
+    // connect_async 无内置超时：防火墙对 443 做 DROP 时 TCP 重试可挂 20~120 秒，
+    // 期间 run 循环停在"启动中"且无错误反馈；与本文件其余网络调用一致给 10 秒上限
+    let (ws, _) = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio_tungstenite::connect_async(WECOM_WS_URL),
+    )
+    .await
+    .map_err(|_| "连接企业微信长连接超时(10s)".to_string())?
+    .map_err(|e| redact_secret(&format!("连接企业微信长连接失败: {e}"), secret))?;
     let (mut write, mut read) = ws.split();
 
     let subscribe_id = new_req_id();

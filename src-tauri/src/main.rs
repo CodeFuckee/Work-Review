@@ -3291,7 +3291,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             };
             let ow_category = classification.base_category.clone();
             let current_ts = chrono::Local::now().timestamp();
-            let ow_duration = poll_interval_ms.div_ceil(1000) as i64;
+            // 本块只在截图发生的轮次执行到（未截图的轮次早已 continue），
+            // 与主活动同口径按"距上次采集的实际间隔"记账；用轮询间隔会把
+            // 挂满整个截图周期的浮动窗口时长低估约一个数量级
+            let ow_duration = elapsed_secs.max(1) as i64;
 
             // 查找该应用的最近活动记录，尝试合并
             let latest = {

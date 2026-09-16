@@ -1435,6 +1435,15 @@ fn is_non_public_v4(v4: &std::net::Ipv4Addr) -> bool {
         || v4.is_link_local()
         || v4.is_unspecified()
         || v4.is_broadcast()
+        // 0.0.0.0/8：除全零外仍是非公开段，Linux/BSD 内核把该段目的地按本机处理
+        || v4.octets()[0] == 0
+        // 100.64.0.0/10（CGNAT/Tailscale 等 tailnet）、198.18.0.0/15（基准测试）
+        || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        || (v4.octets()[0] == 198 && (v4.octets()[1] & 0xfe) == 18)
+        || v4.is_multicast()
+        // 240.0.0.0/4 保留段（255.255.255.255 广播已单独判定）；std 的
+        // Ipv4Addr::is_reserved 尚未稳定，手写等价位运算
+        || (v4.octets()[0] & 0xf0) == 240
 }
 
 /// 极简 HTML → 正文：剥 script/style/注释与标签，解码常见实体，压缩空白。
@@ -3400,6 +3409,19 @@ mod tests {
         assert!(ensure_public_http_url("http://[::ffff:a00:1]/").is_err());
         assert!(ensure_public_http_url("http://0x7f.1/").is_err());
         assert!(ensure_public_http_url("http://0177.0.0.1/").is_err());
+
+        // 0.0.0.0/8 非全零地址：Linux/BSD 内核把该段目的地按本机处理（0.16.32.48 直连回环）
+        assert!(ensure_public_http_url("http://0.16.32.48:47831/").is_err());
+        assert!(ensure_public_http_url("http://0.0.0.1/").is_err());
+        // CGNAT/Tailscale tailnet（100.64.0.0/10）与基准测试段（198.18.0.0/15）
+        assert!(ensure_public_http_url("http://100.100.1.1/").is_err());
+        assert!(ensure_public_http_url("http://198.18.0.1/").is_err());
+        // 组播/保留段
+        assert!(ensure_public_http_url("http://224.0.0.1/").is_err());
+        assert!(ensure_public_http_url("http://240.0.0.1/").is_err());
+        // IPv4-mapped IPv6 形式的同段地址同样要拦
+        assert!(ensure_public_http_url("http://[::ffff:0.16.32.48]/").is_err());
+        assert!(ensure_public_http_url("http://[::ffff:100.100.1.1]/").is_err());
     }
 
     /// HTML 提取：剥 script/style/注释/标签，解实体，压空白，可截断。

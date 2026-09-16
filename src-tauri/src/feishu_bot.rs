@@ -126,7 +126,9 @@ async fn reply_message(client: &Client, token: &str, message_id: &str, text: &st
     let resp = client
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
-        .json(&serde_json::json!({"content_type": "text", "content": content}))
+        // 飞书「回复消息」API 的 body 必填字段是 msg_type（不是 content_type），
+        // 字段名写错会被服务端校验拒绝，整条回复通道发不出任何消息
+        .json(&serde_json::json!({"msg_type": "text", "content": content}))
         .timeout(Duration::from_secs(10))
         .send()
         .await

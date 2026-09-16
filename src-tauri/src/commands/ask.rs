@@ -2431,18 +2431,27 @@ pub async fn chat_work_assistant(
         .await
     });
 
-    let system_prompt = build_assistant_request_system_prompt(
-        assistant_locale,
-        request_mode,
-        assistant_memory_enabled,
-        user_memory_prompt.as_deref(),
-        || build_realtime_context_text(&state_arc),
-    );
     // 文本模型兜底：前端未传或传出厂默认配置时，使用编译期内置模型（若已注入）
     let model_config = match model_config {
         Some(config) => Some(work_review_core::config::effective_text_model(&config)),
         None => work_review_core::config::builtin_text_model(),
     };
+    // system prompt 里的实时上下文含系统调用+全局锁+时间线聚合；编排器的
+    // Direct/Fast 路径（无模型）不使用它，按编排器同款 has_model 判定惰性
+    // 构造，避免无模型问答每次都白付一次采集
+    let has_model = model_config
+        .as_ref()
+        .map(|config| !config.endpoint.trim().is_empty() && !config.model.trim().is_empty())
+        .unwrap_or(false);
+    let system_prompt = has_model.then(|| {
+        build_assistant_request_system_prompt(
+            assistant_locale,
+            request_mode,
+            assistant_memory_enabled,
+            user_memory_prompt.as_deref(),
+            || build_realtime_context_text(&state_arc),
+        )
+    });
     let result = crate::agent::tools::with_user_memory_tool_capabilities(
         user_memory_capabilities,
         crate::agent::Orchestrator::handle(
@@ -2451,7 +2460,7 @@ pub async fn chat_work_assistant(
             model_config.as_ref(),
             &database,
             &agent_history,
-            Some(&system_prompt),
+            system_prompt.as_deref(),
             &ignored_apps,
             &excluded_domains,
             web_tools,

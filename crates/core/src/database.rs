@@ -2714,17 +2714,36 @@ impl Database {
         let limit = limit.clamp(1, 10_000) as i64;
         let (start_ts, end_ts) = parse_date_bounds(date_from, date_to);
 
-        let mut stmt = conn.prepare(
+        // WHERE (?1 IS NULL OR timestamp >= ?1) 让 SQLite 无法把参数下推为
+        // 索引范围约束，每次调用退化为全表扫描+排序；按实参拼出确定性条件
+        // 保持同结果的同时让 timestamp 索引可走范围扫描
+        let mut conditions: Vec<&'static str> = Vec::with_capacity(2);
+        let mut args: Vec<i64> = Vec::with_capacity(3);
+        if let Some(start) = start_ts {
+            conditions.push("timestamp >= ?");
+            args.push(start);
+        }
+        if let Some(end) = end_ts {
+            conditions.push("timestamp < ?");
+            args.push(end);
+        }
+        args.push(limit);
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
             "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url
              FROM activities
-             WHERE (?1 IS NULL OR timestamp >= ?1)
-               AND (?2 IS NULL OR timestamp < ?2)
+             {where_clause}
              ORDER BY timestamp ASC, id ASC
-             LIMIT ?3",
-        )?;
+             LIMIT ?"
+        );
+        let mut stmt = conn.prepare(&sql)?;
 
         let activities = stmt
-            .query_map(params![start_ts, end_ts, limit], |row| {
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok(Activity {
                     id: Some(row.get(0)?),
                     timestamp: row.get(1)?,
@@ -3629,26 +3648,30 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
         let now = chrono::Utc::now().timestamp();
-        conn.execute(
+        // 新建+超额清理包在同一事务：两条 DELETE 之间崩溃会留下无会话归属的
+        // 孤儿 assistant_messages，且此后无任何入口清理
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO assistant_conversations (title, created_at, updated_at) VALUES (?1, ?2, ?2)",
             params![title, now],
         )?;
-        let id = conn.last_insert_rowid();
+        let id = tx.last_insert_rowid();
         // 超额清理：删除最旧的会话及其消息
-        conn.execute(
+        tx.execute(
             "DELETE FROM assistant_messages WHERE conversation_id IN (
                 SELECT id FROM assistant_conversations
                 ORDER BY updated_at DESC LIMIT -1 OFFSET 100
             )",
             [],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM assistant_conversations WHERE id IN (
                 SELECT id FROM assistant_conversations
                 ORDER BY updated_at DESC LIMIT -1 OFFSET 100
             )",
             [],
         )?;
+        tx.commit()?;
         Ok(id)
     }
 

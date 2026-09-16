@@ -4108,7 +4108,11 @@ fn parse_xdotool_geometry_shell_output(output: &str) -> Option<WindowBounds> {
     let mut height = None;
 
     for line in output.lines() {
-        let (key, value) = line.split_once('=')?;
+        // xdotool --shell 输出可能混入无 '=' 的行（空行、告警），跳过而不是
+        // 让整条几何信息解析失败退化为整屏截图
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         match key.trim() {
             "X" => x = value.trim().parse::<i32>().ok(),
             "Y" => y = value.trim().parse::<i32>().ok(),

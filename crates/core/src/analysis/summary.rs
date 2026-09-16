@@ -449,7 +449,10 @@ impl SummaryAnalyzer {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();
                 last_error = Some(format!("{url} API 错误 ({status}): {error_text}"));
-                if status.is_client_error() {
+                // 404/405/410 是路径级不匹配（端点漏带 /v1 的典型形态），换下一个
+                // 候选地址；其余 4xx（401 鉴权、400 请求体、429 限流等）与路径无关，
+                // 换路径也不会好，快速失败
+                if status.is_client_error() && !matches!(status.as_u16(), 404 | 405 | 410) {
                     break;
                 }
                 continue;

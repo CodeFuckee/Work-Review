@@ -853,6 +853,10 @@ fn get_running_apps_impl() -> Result<Vec<String>, AppError> {
 
     let mut apps = HashSet::new();
 
+    // SAFETY: PROCESSENTRY32W 按 Win32 约定先置零并写入 dwSize 后才传入
+    // Process32FirstW/NextW；szExeFile 是固定长度 [u16; 260] 的 UTF-16 缓冲，
+    // 手动找 NUL 终止符再切片不会越界。snapshot 句柄在块尾 CloseHandle 释放，
+    // 所有提前 return 都发生在快照创建失败（句柄为空）之后，不会泄漏。
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot.is_null() {
@@ -1227,7 +1231,15 @@ fn remove_screenshot_files(data_dir: &std::path::Path, paths: Vec<String>) -> us
         if p.is_empty() {
             continue;
         }
-        let path = data_dir.join(&p);
+        // 与截图读取路径同款校验：DB 内路径被污染（../、绝对路径）时不得越出
+        // data_dir 删除文件
+        let path = match super::shared::validated_join(data_dir, &p) {
+            Ok(path) => path,
+            Err(e) => {
+                log::warn!("跳过非法截图路径 {p:?}: {e}");
+                continue;
+            }
+        };
         if path.exists() {
             match std::fs::remove_file(&path) {
                 Ok(_) => removed += 1,

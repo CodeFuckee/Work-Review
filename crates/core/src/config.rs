@@ -1595,6 +1595,10 @@ impl AppConfig {
         );
         self.screenshot_interval = normalize_screenshot_interval(self.screenshot_interval);
         self.idle_threshold_minutes = normalize_idle_threshold_minutes(self.idle_threshold_minutes);
+        // storage_limit_mb=0 会让周期清理把上限算成 0 字节，"删到低于上限"的循环
+        // 永不满足而逐个删光全部截图目录；与设置页下限(256)对齐做后端钳制，
+        // 挡住配置同步/手改配置文件直通入库的 0 值
+        self.storage.storage_limit_mb = self.storage.storage_limit_mb.max(256);
         self.ui_visual_style = normalize_ui_visual_style(&self.ui_visual_style);
         self.avatar_scale = normalize_avatar_scale(self.avatar_scale);
         self.avatar_opacity = normalize_avatar_opacity(self.avatar_opacity);
@@ -2316,6 +2320,25 @@ mod tests {
         ];
         config.normalize();
         assert_eq!(config.gitlab.work_authors, vec!["a@x.com".to_string()]);
+    }
+
+    #[test]
+    fn 配置规范化应把存储上限钳到安全下限() {
+        // 0 会让周期清理把上限算成 0 字节而删光全部截图目录（配置同步/手改
+        // 配置可绕过 UI 下限直通入库），normalize 必须兜底钳到 256
+        let mut config = AppConfig::default();
+        config.storage.storage_limit_mb = 0;
+        config.normalize();
+        assert_eq!(config.storage.storage_limit_mb, 256);
+
+        config.storage.storage_limit_mb = 1;
+        config.normalize();
+        assert_eq!(config.storage.storage_limit_mb, 256);
+
+        // 合法值不动
+        config.storage.storage_limit_mb = 2048;
+        config.normalize();
+        assert_eq!(config.storage.storage_limit_mb, 2048);
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {

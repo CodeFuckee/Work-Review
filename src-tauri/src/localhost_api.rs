@@ -275,7 +275,12 @@ fn mask_localhost_api_token(token: &str) -> String {
         return "已生成".to_string();
     }
 
-    format!("{}…{}", &token[..8], &token[token.len() - 4..])
+    // token 文件可被手改成多字节内容，字节切片在非字符边界会 panic，按字符取：
+    // head 不足 8 字符时取全部，tail 取末 4 个字符（len > 12 字节时至少 4 个字符）
+    let chars: Vec<char> = token.chars().collect();
+    let head: String = chars.iter().take(8).collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{head}…{tail}")
 }
 
 pub fn ensure_localhost_api_token(state: &Arc<Mutex<AppState>>) -> Result<String> {
@@ -1364,6 +1369,17 @@ mod tests {
         assert!(masked.starts_with("wr-local"));
         assert!(masked.contains('…'));
         assert!(!masked.contains("1234567890abcdef"));
+    }
+
+    #[test]
+    fn token预览对多字节内容不应panic() {
+        // 手改成多字节内容时字节切片会落在非字符边界，按字符取应正常掩码：
+        // 8 个 head 字符 + … + 4 个 tail 字符
+        let input = "令牌内容".repeat(4);
+        let masked = mask_localhost_api_token(&input);
+        assert_eq!(masked.chars().count(), 8 + 1 + 4);
+        assert!(masked.contains('…'));
+        assert_ne!(masked, input);
     }
 
     #[test]

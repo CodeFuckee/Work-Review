@@ -313,6 +313,9 @@ fn refresh_dock_icon(activate: bool) {
     use cocoa::foundation::NSString;
     use objc::runtime::Object;
 
+    // SAFETY: 运行在 macOS 主线程的 Tauri setup/命令上下文，NSApp() 返回有效的
+    // 应用实例；msg_send 调用全部走 Cocoa 声明过的方法签名，返回的 Object 指针
+    // 只与 nil 比较或交回 Cocoa 持有，不在 Rust 侧解引用/释放。
     unsafe {
         let app: *mut Object = NSApp();
 
@@ -349,6 +352,8 @@ pub(crate) fn apply_dock_visibility(visible: bool, activate: bool) {
     use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
     use objc::runtime::Object;
 
+    // SAFETY: setActivationPolicy_ 是 cocoa crate 对 NSApplication 声明的方法，
+    // NSApp() 在主线程返回有效实例；对象仅通过方法调用交互，不在 Rust 侧解引用。
     unsafe {
         let app: *mut Object = NSApp();
 
@@ -637,7 +642,10 @@ async fn get_app_icon_impl(
     use std::process::Command;
 
     // v4 从高分辨率 ICNS 裁切并输出 256px 图标，不复用 v3 的低分辨率缓存。
-    let cache_dir = PathBuf::from(format!("/tmp/work_review_icons_{MACOS_ICON_CACHE_VERSION}"));
+    // 用用户级临时目录（env::temp_dir）而非共享的 /tmp：/tmp 路径完全可预测
+    // 且多用户共享，其他本地用户可预置/污染同名 .b64 缓存替换图标内容
+    let cache_dir =
+        std::env::temp_dir().join(format!("work_review_icons_{MACOS_ICON_CACHE_VERSION}"));
     if !cache_dir.exists() {
         let _ = std::fs::create_dir_all(&cache_dir);
     }
@@ -942,6 +950,10 @@ fn encode_windows_icon_path(value: &str) -> Vec<u16> {
         .collect()
 }
 
+/// SAFETY: 调用方须在 Windows 上执行。路径经 encode_windows_icon_path 转为
+/// NUL 结尾的 UTF-16 宽字符后传给 SHGetFileInfoW，长度用 size_of 明确声明；
+/// image_list 通过 SHGetImageList 取得后立即 Release，GetIcon 产出的 HICON
+/// 由调用方负责 DestroyIcon（见 render_windows_icon_pixels 的调用点）。
 #[cfg(target_os = "windows")]
 unsafe fn get_windows_icon_from_shell_image_list(
     path: &str,
@@ -988,6 +1000,8 @@ unsafe fn get_windows_icon_from_shell_image_list(
     }
 }
 
+/// SAFETY: 调用方须在 Windows 上执行。wide_path 补齐到 MAX_PATH 长度并以 NUL
+/// 结尾传给 ExtractAssociatedIconW；返回的 HICON 由调用方 DestroyIcon 释放。
 #[cfg(target_os = "windows")]
 unsafe fn get_windows_associated_icon(path: &str) -> Option<winapi::shared::windef::HICON> {
     use std::ptr::null_mut;
@@ -1008,6 +1022,11 @@ unsafe fn get_windows_associated_icon(path: &str) -> Option<winapi::shared::wind
     }
 }
 
+/// SAFETY: 调用方须在 Windows 上执行，icon 必须是前述两个查找函数返回的有效
+/// HICON。GDI 生命周期：GetIconInfo 产出的 hbmColor/hbmMask 与
+/// CreateCompatibleDC/CreateDIBSection 产出的 DC、位图在渲染后逐一 DeleteDC/
+/// DeleteObject/DestroyIcon 配对释放（含提前返回路径），copy_nonoverlapping
+/// 仅在 GetObjectW 确认 BITMAP 元信息成立后按 bmWidthBytes×高度拷贝像素。
 #[cfg(target_os = "windows")]
 unsafe fn render_windows_icon_pixels(
     icon: winapi::shared::windef::HICON,

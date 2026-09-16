@@ -109,7 +109,7 @@ fn export_daily_report_markdown(
     let output_path = build_daily_report_export_path(export_dir, date);
     // Retry up to 3 times to handle transient issues (disk busy, antivirus lock, etc.)
     let mut last_err = None;
-    for attempt in 0..3 {
+    for attempt in 0..3u32 {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
             log::warn!(
@@ -399,10 +399,14 @@ pub(crate) async fn generate_report_inner(
 
     if config.daily_report_auto_export {
         if let Some(export_dir) = config.daily_report_export_dir.as_deref() {
-            if let Err(e) = export_daily_report_markdown(Path::new(export_dir), &date, &report) {
+            // 与手动/合并导出同款敏感位置校验（拒绝 .ssh、LaunchAgents 等目录，
+            // 防止配置同步载荷把导出指向敏感位置）。自动导出目录允许尚不存在
+            // （导出函数会 create_dir_all），故只做组件检查、不走要求已存在的
+            // validate_export_dir；失败不传播——日报已落库，仅导出文件失败
+            let export_result = ensure_export_dir_components_safe(Path::new(export_dir))
+                .and_then(|()| export_daily_report_markdown(Path::new(export_dir), &date, &report));
+            if let Err(e) = export_result {
                 log::error!("日报自动导出失败（日报已保存到数据库，仅导出文件失败）: {e:?}");
-                // Do NOT propagate the error — report is already saved in the database.
-                // Export failure should not make the entire generation appear to have failed.
             }
         }
     }
