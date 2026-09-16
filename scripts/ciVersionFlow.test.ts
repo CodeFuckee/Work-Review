@@ -58,6 +58,26 @@ test('缓存 key 固定为 npm-cache-v1（bump 改写 Cargo.toml/Cargo.lock 不�
   assert.doesNotMatch(cache, /Cargo/, '缓存 key/路径不得包含 Cargo 相关文件（bump 后失效）');
 });
 
+test('夜间流水线应有提交门禁：无新提交时取消流水线，package-daily 依赖门禁', () => {
+  const yaml = readFileSync(CI_YAML, 'utf8');
+  assert.match(yaml, /^nightly-gate:/m, '缺少 nightly-gate 门禁作业');
+  assert.match(yaml, /git describe --tags/, '门禁应比较最新 tag 与 HEAD');
+  assert.match(
+    yaml, /pipelines\/\$CI_PIPELINE_ID\/cancel/,
+    '无新提交时应通过 API 取消整条夜间流水线（避免重复打包相同产物）',
+  );
+  // 三个默认启用的 daily 作业都必须依赖门禁与各自平台的验证
+  assert.match(yaml, /package-daily-windows:\n[\s\S]*?needs: \[nightly-gate, rust-verify-windows\]/);
+  assert.match(yaml, /package-daily-linux-x64:\n[\s\S]*?needs: \[nightly-gate, rust-verify-linux\]/);
+  assert.match(yaml, /package-daily-macos-arm64:\n[\s\S]*?needs: \[nightly-gate, rust-verify-macos\]/);
+  // workflow 顶层必须放行 schedule，否则定时流水线在创建阶段即被过滤
+  assert.match(
+    yaml,
+    /CI_PIPELINE_SOURCE == "schedule"/,
+    'workflow/job rules 应放行 schedule 触发',
+  );
+});
+
 test('bump-version.mjs 应存在且本身不含破坏性 git 操作', () => {
   const script = readFileSync(BUMP_SCRIPT, 'utf8');
   assert.match(script, /computeNextVersion/);

@@ -142,6 +142,24 @@ frontend:
       when: never
     - when: on_success
 
+# 夜间流水线门禁：自最新发布 tag 以来没有新提交时，通过 API 取消整条夜间流水线
+# （不重复打包完全相同的产物）；有新提交时放行，各 package-daily 依赖本作业。
+nightly-gate:
+  stage: verify
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: never
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - set -euo pipefail
+    - git fetch origin --tags --quiet
+    - LATEST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo none)"
+    - if [ "$LATEST_TAG" = "none" ]; then echo "仓库尚无任何 tag，直接打包"; exit 0; fi
+    - 'if git diff --quiet "$LATEST_TAG" HEAD; then echo "自 $LATEST_TAG 以来没有新提交，取消夜间打包"; curl -sf --request POST --header "PRIVATE-TOKEN: $GIT_PUSH_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines/$CI_PIPELINE_ID/cancel" > /dev/null || true; sleep 15; exit 0; fi'
+    - echo "自 $LATEST_TAG 以来有新提交，继续夜间打包"
+
 .rust-verify:
   extends: .rust-node
   stage: verify
@@ -275,6 +293,7 @@ build-release-windows:
 
 package-daily-windows:
   extends: [.powershell-toolchain, .package-daily]
+  needs: [nightly-gate, rust-verify-windows]
   tags: ["$WINDOWS_RUNNER_TAG"]
   script:
     - !reference [.windows-package-pre-steps, steps]
@@ -313,6 +332,7 @@ package-daily-windows:
 
 package-daily-linux-x64:
   extends: [.rust-node, .package-daily]
+  needs: [nightly-gate, rust-verify-linux]
   tags: ["$LINUX_X64_RUNNER_TAG"]
   before_script:
     - !reference [.rust-node, before_script]
@@ -332,6 +352,7 @@ package-daily-linux-x64:
 
 package-daily-linux-arm64:
   extends: [.rust-node, .package-daily]
+  needs: [nightly-gate]
   tags: ["$LINUX_ARM64_RUNNER_TAG"]
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $PACKAGE_LINUX_ARM64 == "true"'
@@ -354,6 +375,7 @@ package-daily-linux-arm64:
 
 package-daily-macos-arm64:
   extends: [.rust-node, .package-daily]
+  needs: [nightly-gate, rust-verify-macos]
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
   before_script:
@@ -379,6 +401,7 @@ package-daily-macos-arm64:
 
 package-daily-macos-x64:
   extends: [.rust-node, .package-daily]
+  needs: [nightly-gate, rust-verify-macos]
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
   rules:
