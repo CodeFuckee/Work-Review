@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 变更
+- **CI/CD 流水线提速（每次 push 从 1.5-2 小时降到 30 分钟级）**：
+  - **三平台完整安装包改为夜间定时产出**（GitLab Schedules，分支 main，每天 02:00）：日常 push 不再产安装包——与自动发版的 Release 资产完全重复，是最大耗时来源；「latest」固定下载链接仍有效（自动指向最近一次夜间成功构建，保留 30 天），正式发版照旧走 tag 发布（资产永久保留）。**夜间流水线带提交门禁**（`nightly-gate`）：自最新发布以来没有新提交时自动取消整条流水线（不重复打包相同产物），有新提交才产出安装包；三个默认启用的打包作业均依赖门禁与各自平台的验证。arm64/macos-x64 可选平台继续由 `PACKAGE_*` 变量控制。
+
 ### 修复
 - **第二轮全量代码评审修复（CI 编排 / Rust 后端 / 前端，行为保持）**：
   - **夜间产包流水线永不运行（CI）**：安装包改为仅夜间 schedule 产出时 `workflow.rules` 未放行 `schedule`——定时流水线在创建阶段即被过滤，五个 `package-daily-*` 作业永不执行、「latest」固定下载链接随之失效（存量 artifact 30 天过期后 404）；现补上 schedule 放行规则。同步修复两处 macOS 日常包作业 artifacts 配置成对误删（arm64 缺 `name`、x64 缺 `when: always`，与 Windows/Linux 作业不对称）；`publish-release` 的包上传 curl 补齐与 glab 认证同款的 `CI_JOB_TOKEN` 回退（此前令牌缺失时发空 token，全部资产上传 401）；两个 CI 契约测试（`ciArtifacts`/`ciVersionFlow`）从「每次 push 产包 + `files:` 缓存 key」旧设计对齐到「夜间 schedule + 固定 npm 缓存 key」新设计。
