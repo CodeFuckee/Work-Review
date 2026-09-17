@@ -88,10 +88,16 @@ try {
   const response = await fetchWithAuth(manifestUrl, token);
   check(`更新清单可下载 (${manifestUrl})`, response.ok, `HTTP ${response.status}`);
   if (response.ok) {
-    manifest = await response.json();
+    try {
+      manifest = await response.json();
+    } catch (error) {
+      // 包仓库异常时可能返回 HTTP 200 + HTML 错误页：单独断言"是合法 JSON"，
+      // 避免"可下载"先记 ✅、解析失败又在另一处报 ❌，掩盖真实失败原因
+      check(`更新清单为合法 JSON (${manifestUrl})`, false, String(error));
+    }
   }
 } catch (error) {
-  check('更新清单可下载', false, String(error));
+  check(`更新清单可下载 (${manifestUrl})`, false, String(error));
 }
 if (!manifest) {
   console.error('❌ 无法获取更新清单，后续断言全部跳过');

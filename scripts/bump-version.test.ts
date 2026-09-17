@@ -123,3 +123,42 @@ test('永续性：每次 bump 后版本递增且可再次 bump（连续两次同
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
   assert.equal(pkg.version, '1.3.1');
 });
+test('依赖恰好 pin 成当前版本号时不得被连坐升版', (t) => {
+  const dir = fixtureRepo(t);
+  const pkgPath = join(dir, 'package.json');
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  pkg.dependencies = { 'some-lib': '1.2.99' };
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), 'utf8');
+
+  const result = spawnSync(process.execPath, [SCRIPT, '--root', dir], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+
+  const after = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  assert.equal(after.version, '1.3.0', '根级 version 应升版');
+  assert.equal(
+    after.dependencies['some-lib'],
+    '1.2.99',
+    '依赖恰好 pin 成旧版本号时必须原样保留（升它会造成与 lock 漂移）',
+  );
+});
+
+test('任一版本源变换失败时零写入，不留半升版工作区', (t) => {
+  const dir = fixtureRepo(t);
+  rmSync(join(dir, 'Cargo.lock'));
+
+  const result = spawnSync(process.execPath, [SCRIPT, '--root', dir], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+
+  // 旧实现在写 package.json 之后才轮到 Cargo.lock 抛错，会留下"1 新 4 旧"的
+  // 半损坏态（本地没有 CI 的 reset --hard 兜底）；现在必须五个版本源全部保持旧版
+  assert.equal(
+    JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version,
+    '1.2.99',
+    'package.json 不得被写入新版本',
+  );
+  assert.equal(
+    JSON.parse(readFileSync(join(dir, 'src-tauri', 'tauri.conf.json'), 'utf8')).version,
+    '1.2.99',
+    'tauri.conf.json 不得被写入新版本',
+  );
+});

@@ -35,16 +35,19 @@ export function computeNextVersion(current) {
 }
 
 /**
- * 把 JSON 里锚定的 `"version": "<oldVersion>"` 键值对替换为新版本。
- * 不用全量 `"old"` 替换：任一依赖恰好 pin 为当前应用版本号时会被连坐升版，
- * 导致 package.json 与 lock 漂移（npm ci 失败）或依赖被静默改版本。
+ * 把 JSON 根级 `"version": "<oldVersion>"` 键值对替换为新版本。
+ * 只替换第一处：根级 version 恒位于文件头部（package.json 的 name/private
+ * 之后、dependencies 之前；tauri.conf.json 同样在顶层），后续再出现的同
+ * needle 只可能是恰好 pin 成当前版本号的依赖条目——升它会造成 package.json
+ * 与 lock 漂移（npm ci 失败）或依赖被静默改版本。
  */
 function replaceVersionField(text, oldVersion, newVersion) {
   const needle = `"version": "${oldVersion}"`;
-  if (!text.includes(needle)) {
+  const at = text.indexOf(needle);
+  if (at < 0) {
     throw new Error(`未找到版本字段 ${oldVersion}`);
   }
-  return text.split(needle).join(`"version": "${newVersion}"`);
+  return text.slice(0, at) + `"version": "${newVersion}"` + text.slice(at + needle.length);
 }
 
 /** package-lock.json 需要精确替换两处：顶层与 packages[""]（依赖恰好同版本时不得误伤）。 */
@@ -101,8 +104,7 @@ function readWithCheck(root, relative) {
 
 /** 原地同步五个版本源；返回新版本。 */
 export function bumpVersion(root) {
-  const pkgPath = join(root, 'package.json');
-  let packageJson = readWithCheck(root, 'package.json');
+  const packageJson = readWithCheck(root, 'package.json');
   let pkg;
   try {
     pkg = JSON.parse(packageJson);
@@ -116,38 +118,36 @@ export function bumpVersion(root) {
   const newVersion = computeNextVersion(oldVersion);
   if (!newVersion) throw new Error(`非法版本号：${oldVersion}`);
 
-  // package.json：替换根级第一个 "version" 字段
-  packageJson = replaceVersionField(packageJson, oldVersion, newVersion);
-  writeFileSync(pkgPath, packageJson, 'utf8');
-
-  // package-lock.json：顶层 + packages[""]
+  // 先完成全部字符串变换、最后统一写盘：任何一步变换抛错时五个版本源
+  // 保持全旧，不会留下"package.json 已升版、其余四个还停旧版"的半损坏态
+  // （CI 靠 reset --hard 自愈，本地没有兜底）。
+  const nextPackageJson = replaceVersionField(packageJson, oldVersion, newVersion);
   const lockPath = join(root, 'package-lock.json');
-  const lockText = readWithCheck(root, 'package-lock.json');
-  writeFileSync(lockPath, replacePackageLockSimple(lockText, oldVersion, newVersion), 'utf8');
-
-  // src-tauri/tauri.conf.json
+  const nextLock = replacePackageLockSimple(
+    readWithCheck(root, 'package-lock.json'),
+    oldVersion,
+    newVersion,
+  );
   const tauriPath = join(root, 'src-tauri', 'tauri.conf.json');
-  writeFileSync(
-    tauriPath,
-    replaceVersionField(readWithCheck(root, 'src-tauri/tauri.conf.json'), oldVersion, newVersion),
-    'utf8',
+  const nextTauri = replaceVersionField(
+    readWithCheck(root, 'src-tauri/tauri.conf.json'),
+    oldVersion,
+    newVersion,
   );
-
-  // src-tauri/Cargo.toml
   const cargoPath = join(root, 'src-tauri', 'Cargo.toml');
-  writeFileSync(
-    cargoPath,
-    replaceCargoToml(readWithCheck(root, 'src-tauri/Cargo.toml'), oldVersion, newVersion),
-    'utf8',
+  const nextCargoToml = replaceCargoToml(
+    readWithCheck(root, 'src-tauri/Cargo.toml'),
+    oldVersion,
+    newVersion,
   );
-
-  // Cargo.lock（work-review 包块）
   const cargoLockPath = join(root, 'Cargo.lock');
-  writeFileSync(
-    cargoLockPath,
-    replaceCargoLock(readWithCheck(root, 'Cargo.lock'), oldVersion, newVersion),
-    'utf8',
-  );
+  const nextCargoLock = replaceCargoLock(readWithCheck(root, 'Cargo.lock'), oldVersion, newVersion);
+
+  writeFileSync(join(root, 'package.json'), nextPackageJson, 'utf8');
+  writeFileSync(lockPath, nextLock, 'utf8');
+  writeFileSync(tauriPath, nextTauri, 'utf8');
+  writeFileSync(cargoPath, nextCargoToml, 'utf8');
+  writeFileSync(cargoLockPath, nextCargoLock, 'utf8');
 
   return newVersion;
 }
