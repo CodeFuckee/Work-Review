@@ -24,7 +24,8 @@
     "tauri:dev": "node scripts/tauri-dev-with-key.mjs",
     "tauri:dev:raw": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:local-mac": "tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.local.conf.json"
+    "tauri:build:local-mac": "tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.local.conf.json",
+    "test:frontend:coverage": "node --import tsx --test --experimental-test-coverage \"**/*.test.ts\""
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
