@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **第四轮全量代码评审修复（行为保持，Rust 批次 + CI 脚本批次）**：
+  - **Tauri 能力授权裁剪（P1，安全）**：`capabilities/migrated.json` 授予了前端从未使用的能力——fs 插件的读/写/删/改名/建目录（scope 还含 `$RESOURCE/**`，Windows 上即安装目录）与 `shell:allow-execute`（命令 `open`，参数验证器仅要求非空白）。前端既无 `@tauri-apps/plugin-fs` 依赖也从无 `Command.execute` 调用，这些授权只构成"renderer 被攻陷后"的提权面：可写/删安装目录内文件、可借 PATH 解析执行同名 `open` 程序。裁剪为仅保留实际使用的 `shell:allow-open` 与 `fs:default` 基线。
+  - **GitLab 提交文本控制字符剥离（P2，安全加固）**：提交标题/项目路径/分支名来自 GitLab API（自托管实例被劫持时即不可信），此前未剥控制字符直接拼进日报 markdown——标题携带 `\n## …` 即可注入伪造小节/列表行。现于拉取构造条目处统一剥离（控制字符折叠为空格），真实 git 提交标题不含控制字符、对正常输入输出不变；配回归测试。
+  - **本地 API 请求头扫描 O(n²)（P2，性能）**：`read_request` 每收到一个 chunk 都对整个已积累缓冲从头重扫 `\r\n\r\n`，慢速滴流客户端可低成本放大单连接 CPU 消耗；改为记录已扫偏移增量续扫（保留末 3 字节处理跨 chunk 边界），行为不变。
+  - **锁屏探测与本地 API 吞错补日志（P2，可诊断性）**：Linux 锁屏检测的 loginctl/pgrep/dbus-send 三探测全部 `if let Ok` 静默吞错，工具缺失时锁屏检测实际失效且与"未锁屏"不可区分（改为全部无法启动时记一次性告警）；localhost API 运行时异常退出的 `record_runtime_error` 无任何日志，锁中毒时错误彻底无踪迹（开头补 `log::error`）。
+  - **版本自增脚本两处（P2，CI 脚本）**：`replaceVersionField` 此前虽已锚定 `"version": "x.y.z"` 键值对，但仍为文件内全量替换——任一依赖恰好 pin 成当前应用版本号仍会被连坐升版（npm ci 失败或依赖被静默改版本），改为只替换根级第一处；`bumpVersion` 逐文件"读→变换→写"无回滚，中途抛错（如 Cargo.lock 缺失）会留下"package.json 已升版、其余四个还停旧版"的半损坏工作区，改为先完成全部变换、最后统一写盘。两条均配回归测试。
+  - **发布自检清单断言名统一（P2，CI 脚本）**：更新清单 HTTP 200 但 body 非 JSON（包仓库返回 HTML 错误页）时，"可下载"断言先记 ✅、解析异常又在另一个断言名下记 ❌，真实失败原因被掩盖；拆分出"更新清单为合法 JSON"独立断言，catch 分支断言名统一带上 URL。
 - **时间线页 GitLab 提交合并排序方向错误（P2，前端 TS）**：v1.1.58 把提交并入时间线时用了升序合并，而时间线页既有约定是「最新在最上」（`prepareTimelineActivities` 降序）——合并后整页被翻转成最旧在最上，视觉上变成"提交完才轮到截图时间线"。合并排序改为延续页面降序约定（最新在最上），同刻提交行仍在活动行之前；日报末尾的活动时间线表格保持从早到晚升序不受影响。合并排序测试同步改为降序断言。
 - **publish-release 误删本版产物导致 v1.1.55 发布失败（P1，CI）**：为防"上一版本产物在共享持久 workspace 残留"加的 `rm -rf target/release/bundle target/*/release/bundle` 放在了 publish-release 脚本里——而该作业的产物由 runner 在**脚本执行前**解压到同一路径，整目录删除把刚解压的本版产物全部删光，`generate-updater-json.mjs` 找不到 darwin-aarch64 产物直接失败（v1.1.55 为该改动到达远端后首个 tag 流水线，v1.1.54 发版时改动尚未推送故幸免）。改为：①按版本定向清残留——`find` 只删文件名不含当前版本号的 bundle 文件（兼容 rpm 连字符命名），保留通用名的 macOS updater 产物（*.app.tar.gz/.sig，本次解压刚覆盖）；②真正堵住原意图防的"新包配旧签名"——macOS `.app.tar.gz.sig` 早于对应 tar.gz 的（mac runner 丢新 sig 时残留的上一版本旧 sig）删除，交给既有补签循环重签。新增契约测试锁定：publish-release 段内禁止整目录盲删、定向清理与旧签名删除必须在位。
 - **第三轮全量代码评审修复（行为保持，Rust 批次 + TS/CI 批次）**：

@@ -1,4 +1,4 @@
-# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮）
+# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮 / 2026-09-18 第四轮）
 
 评审范围：全部 71k 行 Rust（crates/core、crates/mcp-server、crates/skills-engine、src-tauri）
 + 15k 行 TS + 22k 行 Svelte（40 组件）+ CI 配置。按 code-review-skill 的 rust.md 与
@@ -11,6 +11,109 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 - ⏸ 待确认：修复必须改变对外行为/测试契约，按约定未经确认不动
 - 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
 - ⚠️ 仓库级：需人工处置的事项
+
+# 第四轮（2026-09-18）
+
+范围：第三轮评审之后未评审的增量变更（c3add00..0e06af1：GitLab 作者选择器、日报 GitLab
+独立小节、时间线 GitLab 提交错排、CI 覆盖率与发布清理）逐行评审 + 全库五维复扫
+（安全/XSS 面、Rust panic/吞错/并发面、前端 stores/utils/scripts、i18n 完整性）+ 前三轮
+修复完好性抽检。新发现 16 条：9 条行为保持本轮修复，3 条涉 .svelte/用户可见文案归过目
+批次，4 条修复会改对外行为列入待确认。
+
+## 第四轮已修复
+
+### 批次 1（Rust）
+
+- ✅ [P1] src-tauri/capabilities/migrated.json:11-24,59-69 — 前端零使用的过宽能力：
+  fs 写/删/改名/复制/建目录（scope 含 $RESOURCE/**，Windows 上即安装目录）+
+  shell:allow-execute（cmd=open，validator \S+）。前端无 @tauri-apps/plugin-fs 依赖、
+  无 Command.execute 调用（shell 仅用 open），授权只构成 renderer 失陷后的提权链
+  （写安装目录 + PATH 解析执行同名 open 程序）— 裁剪为仅保留 shell:allow-open 与
+  fs:default 基线
+- ✅ [P2] crates/core/src/gitlab.rs — 提交标题/项目路径/分支名未剥控制字符即拼进日报
+  markdown 与入库行，被劫持的自托管服务端可用 
+## 注入伪造小节/列表行 — 拉取构造
+  条目处统一 strip_control_chars（控制字符折叠空格；真实 git 标题不含控制字符，
+  正常输入恒等）+ 回归测试
+- ✅ [P2] src-tauri/src/localhost_api.rs:557 — read_request 每 chunk 从头重扫
+  
+
+，慢速滴流 O(n²) CPU 放大 — 记录已扫偏移增量续扫（留末 3 字节跨边界）
+- ✅ [P2] src-tauri/src/localhost_api.rs:387 — record_runtime_error 吞错无日志
+  （锁中毒时 last_error 也写不进，错误彻底无踪迹）— 开头补 log::error
+- ✅ [P2] src-tauri/src/screen_lock.rs:118-160 — Linux 三锁屏探测全部 if let Ok
+  静默吞错，工具缺失时锁屏检测失效与"未锁屏"不可区分 — 全部无法启动时一次性
+  warn（AtomicBool 防高频轮询刷屏；探测执行过但报未锁属正常不告警）
+- ✅ [P2] crates/core/src/database.rs:2813 — upsert_gitlab_commits 注释与实现矛盾
+  （"单条失败不阻塞整批" vs 事务全成全败）— 修正注释为"整批原子提交"
+
+### 批次 2（CI 脚本）
+
+- ✅ [P2] scripts/bump-version.mjs:45-52 — replaceVersionField 注释称"锚定"实为
+  文件内全量替换（split/join），依赖恰好 pin 成当前应用版本号仍被连坐升版
+  （第三轮修复只做到键值对锚定、未做到根级唯一）— 改 indexOf 只替换第一处
+  （根级 version 恒在文件头部，正常场景字节等价）+ 回归测试
+- ✅ [P2] scripts/bump-version.mjs:103-146 — bumpVersion 逐文件"读→变换→写"无回滚，
+  中途抛错（Cargo.lock 缺失等）留下"1 新 4 旧"半损坏工作区（CI 有 reset --hard
+  兜底、本地没有）— 先完成全部变换、最后统一写盘（变换失败零写入）+ 回归测试
+- ✅ [P2] scripts/verify-update-artifacts.mjs:86-95 — 清单 HTTP 200 但 body 非 JSON
+  （包仓库返回 HTML 错误页）时"可下载"先记 ✅、解析异常在另一断言名下记 ❌，
+  掩盖真实原因 — 拆出"更新清单为合法 JSON"独立断言，catch 断言名统一带 URL
+
+## 第四轮暂缓（涉 .svelte/用户可见文案，按约定待过目批次）
+
+- 💤 [P2] src/routes/settings/components/GitlabAuthorPicker.svelte:66 —
+  selectAllFiltered 对 filtered 全量 append 不去重：全选两次/全选后单勾会让弹窗
+  "已选 N"计数虚增（selectedKeys 是 Set 勾选态正确；保存侧
+  mergeWorkAuthorsWithPicked 已去重兜底，落库名单无碍）— selectAllFiltered 改
+  merge 去重
+- 💤 [P2] src/routes/timeline/Timeline.svelte:1605 — 提交行时间用
+  toLocaleTimeString([])（无 locale、不与页面其余时间格式化约定一致）；
+  +x/-y 统计后缀模板内联，未复用 timelineGitlab.ts 的 formatCommitStatsSuffix
+- 💤 [P2] locales/*.ts（四语言）settingsGitlab.enabledHint — 仍写"AI 模式整合进
+  正文、无法调用 AI 时追加独立小节"，与新行为（配置即固定独立小节、AI 可引用
+  不单列）不符，文案过时
+
+## 第四轮待确认（修复会改对外行为/语义，按约定不动）
+
+- ⏸ [P2] crates/mcp-server/src/main.rs:517 — AllowSanitized 档对"非 JSON 纯文本"
+  整段跳过脱敏（serde_json 解析失败即 continue），get_report/generate_report 返回
+  的纯 markdown 报告全文（内嵌窗口标题/OCR 派生内容/GitLab 标题）在"允许但脱敏"
+  档原样外交 — 修需改 MCP 工具输出（非 JSON 文本专项脱敏或 JSON 包装）
+- ⏸ [P2] crates/core/src/database.rs:1031 — gitlab_commits 表只增不删（全仓库无
+  DELETE，activities 有 storage_limit 清理而该表无任何清理路径），按天无限累积
+  （每行约 200B，量级小）— 建议在存储清理路径同期按 date 做保留窗口删除
+  （如 90 天）；删用户数据需确认
+- ⏸ [P2] crates/core/src/gitlab.rs:417 — 提交标题/项目名的 markdown 元字符
+  （[]()#` 等）全量转义：控制字符剥离后残余"行内链接/图片伪造"钓鱼面
+  （DOMPurify+CSP 已挡 XSS 与远程图，外链经 shell open 限 https?/mailto/tel）；
+  全量转义会改含元字符标题的报告输出（commit message 括号方括号极常见）
+- ⏸ [P2] crates/core/src/analysis/mod.rs:615 vs timelineGitlab.ts:31 — 日报时间线
+  （Rust）同刻活动行在提交行前（活动先 push + 稳定排序），时间线页同刻提交行在
+  活动行前（显式 tie-break），两表面同刻顺序约定不一致 — 需产品确认统一方向
+
+## 第四轮 ✅ 复核结论
+
+- 前三轮 9 处代表性修复抽检全部在位：SSRF 护栏段（tools.rs:1432 含 0.0.0.0/8、
+  CGNAT、198.18.0.0/15 等）、validated_join/has_root（shared.rs）、飞书 msg_type、
+  storage_limit_mb 钳制、search_memory_chunks_semantic Top-K（top[0] 门槛 +
+  remove(0)）、save_report/save_hourly ON CONFLICT DO UPDATE、PiP 时长
+  elapsed_secs.max(1) 记账、assistant.ts 恢复路径 streaming:false、publish-release
+  按版本定向清理。
+- 第四轮安全复扫确认无问题的面：Svelte {@html} 仅 3 处且全部 marked+DOMPurify
+  默认配置消毒；Rust 无 sh -c 拼接（全部 argv 数组）；shell open 默认验证正则限
+  https?/mailto/tal；localhost_api 无路径遍历静态文件面；webhook 免 token 路由
+  均有验签；四语言 i18n key 完整一致（1374 个）；CI 契约测试与 9f1ce54 后的
+  .gitlab-ci.yml 无漂移（22/22 通过）；coverage 正则与 Node/llvm-cov 真实输出吻合。
+
+## 第四轮测试与流水线
+
+- 本地：cargo fmt --check ✓、clippy --workspace --all-targets -D warnings ✓、
+  cargo test --workspace --all-targets 513+222+21+30 全过（含控制字符剥离新回归）；
+  svelte-check 0 错误、node:test 821/821 全过（含 bump-version 2 个新回归）、
+  vite build ✓。
+- 流水线：见各批次推送后的监控记录（待补）。
+
 
 ---
 
