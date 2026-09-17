@@ -1336,6 +1336,31 @@ mod tests {
     }
 
     #[test]
+    fn 删除截图路径越出数据目录时应被拒绝不删除() {
+        // DB 内 screenshot_path 被污染（../ 或绝对路径）时不得越出 data_dir
+        // 删除任意文件（与截图读取路径的 validated_join 同款护栏）
+        let data_dir = clear_old_activities_test_dir("validated-delete");
+        std::fs::create_dir_all(&data_dir).expect("创建 data_dir 失败");
+        let victim =
+            std::env::temp_dir().join(format!("work-review-victim-{}.txt", uuid::Uuid::new_v4()));
+        std::fs::write(&victim, b"do not delete").expect("写入受害者文件失败");
+
+        let removed = remove_screenshot_files(
+            &data_dir,
+            vec![
+                format!("..\\{}", victim.file_name().unwrap().to_string_lossy()),
+                victim.to_string_lossy().to_string(),
+                String::new(),
+            ],
+        );
+
+        assert_eq!(removed, 0, "非法路径一个都不应删除");
+        assert!(victim.exists(), "data_dir 之外的文件必须原样保留");
+        let _ = std::fs::remove_file(&victim);
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn 数据库清理失败时不应预先删除旧截图() {
         let data_dir = clear_old_activities_test_dir("database-failure");
         let old_dir = data_dir.join("screenshots/2026-08-01");

@@ -2341,6 +2341,22 @@ Path=Profiles/wkm9x2lf.Default (release)
     }
 
     #[test]
+    fn xdotool几何输出混入无等号行不应整体解析失败() {
+        // 真实输出可能带空行/告警文本：旧实现 split_once('=')? 会让整条
+        // 几何信息返回 None，按窗口裁剪静默退化为整屏截图
+        let output = "warning: something odd\n\nX=80\nY=64\nWIDTH=1728\nHEIGHT=1117\n";
+        assert_eq!(
+            parse_xdotool_geometry_shell_output(output),
+            Some(WindowBounds {
+                x: 80,
+                y: 64,
+                width: 1728,
+                height: 1117,
+            })
+        );
+    }
+
+    #[test]
     fn kdotool几何输出应解析为窗口边界() {
         let output = "Position: 40,88 (screen: 0)\nGeometry: 1600x900\n";
         assert_eq!(
