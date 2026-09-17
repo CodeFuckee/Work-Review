@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 pub const PER_PROJECT_COMMIT_LIMIT: usize = 20;
 /// 全局（全部项目合计）最多展示的提交数
 pub const TOTAL_COMMIT_LIMIT: usize = 200;
+/// 作者选择器最多扫描的仓库数（未配允许列表时防止全量遍历失控）
+pub const MAX_CONTRIBUTOR_PROJECTS: usize = 200;
+/// 每仓库最多拉取的贡献者条数（按提交数倒序取前 N）
+pub const PER_PROJECT_CONTRIBUTOR_LIMIT: usize = 100;
 
 /// GitLab 当前用户（GET /user）
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -162,6 +166,102 @@ pub fn cap_total_entries(entries: Vec<GitlabCommitEntry>) -> (Vec<GitlabCommitEn
     }
     let kept: Vec<GitlabCommitEntry> = entries.into_iter().take(TOTAL_COMMIT_LIMIT).collect();
     (kept, true)
+}
+
+/// contributors API 返回的单仓库贡献者条目
+/// （字段名与 GitLab v4 REST 保持一致；大仓库可能缺 additions/deletions，不取）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GitlabContributor {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub commits: i64,
+}
+
+/// 作者选择器候选（每个邮箱一行）
+#[derive(Debug, Clone, PartialEq)]
+pub struct GitlabAuthorCandidate {
+    pub name: String,
+    pub email: String,
+    pub commits: i64,
+    pub is_current_user: bool,
+}
+
+/// 贡献者是否 token 账号本人：邮箱精确（忽略大小写）匹配优先，
+/// token 账号不暴露邮箱时退回姓名/用户名匹配（与提交归属判定同思路）。
+pub fn contributor_is_current_user(contributor: &GitlabContributor, user: &GitlabUser) -> bool {
+    let contributor_email = contributor.email.trim().to_lowercase();
+    let user_email = user.email.trim().to_lowercase();
+    if !contributor_email.is_empty() && !user_email.is_empty() {
+        return contributor_email == user_email;
+    }
+    let contributor_name = contributor.name.trim().to_lowercase();
+    if contributor_name.is_empty() {
+        return false;
+    }
+    contributor_name == user.name.trim().to_lowercase()
+        || contributor_name == user.username.trim().to_lowercase()
+}
+
+/// 聚合多仓库贡献者为作者候选：每个邮箱一行（同名多邮箱保留多行，见
+/// 作者选择器交互约定），提交数累加、姓名取提交数最多的写法；
+/// 空/空白邮箱丢弃（名单只存邮箱，无邮箱条目无法命中提交）。
+/// 排序：提交数倒序、其次姓名/邮箱升序，保证展示稳定。
+pub fn aggregate_author_candidates(
+    per_project: &[Vec<GitlabContributor>],
+    current_user: &GitlabUser,
+) -> Vec<GitlabAuthorCandidate> {
+    struct Accumulator {
+        best_name: String,
+        best_name_commits: i64,
+        total_commits: i64,
+    }
+    let mut by_email: std::collections::HashMap<String, Accumulator> =
+        std::collections::HashMap::new();
+    for contributors in per_project {
+        for contributor in contributors {
+            let email = contributor.email.trim().to_lowercase();
+            if email.is_empty() {
+                continue;
+            }
+            let commits = contributor.commits.max(0);
+            let entry = by_email.entry(email).or_insert(Accumulator {
+                best_name: contributor.name.trim().to_string(),
+                best_name_commits: commits,
+                total_commits: 0,
+            });
+            entry.total_commits += commits;
+            if commits > entry.best_name_commits {
+                entry.best_name = contributor.name.trim().to_string();
+                entry.best_name_commits = commits;
+            }
+        }
+    }
+    let mut candidates: Vec<GitlabAuthorCandidate> = by_email
+        .into_iter()
+        .map(|(email, acc)| {
+            let contributor = GitlabContributor {
+                name: acc.best_name.clone(),
+                email: email.clone(),
+                commits: acc.total_commits,
+            };
+            GitlabAuthorCandidate {
+                name: acc.best_name,
+                email,
+                commits: acc.total_commits,
+                is_current_user: contributor_is_current_user(&contributor, current_user),
+            }
+        })
+        .collect();
+    candidates.sort_by(|a, b| {
+        b.commits
+            .cmp(&a.commits)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.email.cmp(&b.email))
+    });
+    candidates
 }
 
 /// 构建供 LLM 整合日报的 GitLab 上下文；无提交时返回 None。
@@ -344,6 +444,8 @@ impl GitlabFetchResult {
 ///
 /// 设计为可注入 HTTP client（默认 `reqwest::Client`），保持薄封装：
 /// 只负责 URL 拼接、分页与 JSON 反序列化，业务判断全部在纯函数中。
+/// Clone 供并发拉取多仓库贡献者时分发到 tokio 任务。
+#[derive(Clone)]
 pub struct GitlabClient {
     base_url: String,
     token: String,
@@ -482,6 +584,91 @@ impl GitlabClient {
             ));
         }
         serde_json::from_slice(&bytes).map_err(GitlabError::Json)
+    }
+
+    /// GET /projects/:id/repository/contributors — 默认分支贡献者
+    /// （与日报统计口径一致：日报 commits 接口同样只看默认分支）。
+    /// 按提交数倒序取前 `PER_PROJECT_CONTRIBUTOR_LIMIT` 条。
+    pub async fn fetch_project_contributors(
+        &self,
+        project_id: i64,
+    ) -> Result<Vec<GitlabContributor>, GitlabError> {
+        let resp = self
+            .http
+            .get(self.api_url(&format!("/projects/{project_id}/repository/contributors")))
+            .query(&[
+                ("order_by", "commits"),
+                ("sort", "desc"),
+                ("per_page", &PER_PROJECT_CONTRIBUTOR_LIMIT.to_string()),
+            ])
+            .header(self.auth_header(), &self.token)
+            .send()
+            .await
+            .map_err(GitlabError::Http)?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(GitlabError::Http)?;
+        if !status.is_success() {
+            return Err(GitlabError::Api(
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ));
+        }
+        serde_json::from_slice(&bytes).map_err(GitlabError::Json)
+    }
+
+    /// 拉取（允许列表过滤后的）仓库贡献者并聚合为作者候选，供设置页作者选择器。
+    /// - 允许列表为空 = 全部有权限项目；项目数超过 `MAX_CONTRIBUTOR_PROJECTS`
+    ///   时按路径排序取前 N 个并返回 truncated 标记。
+    /// - 逐仓库失败仅跳过（log::warn），与 fetch_today_commits 的部分失败策略一致。
+    /// - 并发拉取（信号量限 8），避免多仓库时串行过慢。
+    pub async fn fetch_author_candidates(
+        &self,
+        allowlist: &[String],
+    ) -> Result<(Vec<GitlabAuthorCandidate>, bool), GitlabError> {
+        let user = self.fetch_current_user().await?;
+        let projects = self.fetch_all_projects().await?;
+        let mut selected: Vec<GitlabProject> = filter_projects_by_allowlist(&projects, allowlist)
+            .into_iter()
+            .cloned()
+            .collect();
+        // 截断前按路径排序，保证“前 N 个”结果稳定可复现
+        selected.sort_by_cached_key(|p| p.path_with_namespace.to_lowercase());
+        let truncated = selected.len() > MAX_CONTRIBUTOR_PROJECTS;
+        if truncated {
+            selected.truncate(MAX_CONTRIBUTOR_PROJECTS);
+        }
+
+        let client = std::sync::Arc::new(self.clone());
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+        let mut handles = Vec::with_capacity(selected.len());
+        for project in selected {
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| GitlabError::Api(0, format!("信号量获取失败: {e}")))?;
+            let client = client.clone();
+            handles.push(tokio::spawn(async move {
+                // permit 活到请求结束：限制同时在飞的贡献者请求数
+                let _permit = permit;
+                let contributors = client.fetch_project_contributors(project.id).await;
+                (project.path_with_namespace, contributors)
+            }));
+        }
+        let mut per_project: Vec<Vec<GitlabContributor>> = Vec::with_capacity(handles.len());
+        for handle in handles {
+            match handle.await {
+                Ok((_path, Ok(contributors))) => per_project.push(contributors),
+                Ok((path, Err(e))) => {
+                    // 部分失败不能静默：否则该仓库作者无声丢失、无从排查
+                    log::warn!("拉取仓库 {path} 贡献者失败，已跳过: {e}");
+                }
+                Err(e) => {
+                    log::warn!("拉取仓库贡献者任务异常，已跳过: {e}");
+                }
+            }
+        }
+        Ok((aggregate_author_candidates(&per_project, &user), truncated))
     }
 
     /// 拉取当前用户与纳入作者名单在本地 offset 时区 `date` 当天的提交。
@@ -1220,5 +1407,130 @@ mod tests {
             plain.api_url("/projects"),
             "https://git.example.com/api/v4/projects"
         );
+    }
+
+    #[test]
+    fn 贡献者json应按gitlab字段名解析() {
+        let payload = r#"[
+            {"name":"张三","email":"zhangsan@corp.com","commits":12,"additions":100,"deletions":50},
+            {"name":"lisi","email":"lisi@corp.com","commits":3}
+        ]"#;
+        let contributors: Vec<GitlabContributor> = serde_json::from_str(payload).unwrap();
+        assert_eq!(contributors.len(), 2);
+        assert_eq!(contributors[0].name, "张三");
+        assert_eq!(contributors[0].commits, 12);
+        assert_eq!(contributors[1].email, "lisi@corp.com");
+    }
+
+    #[test]
+    fn 作者聚合应按邮箱去重累加并按提交数倒序() {
+        let user = GitlabUser {
+            id: 1,
+            username: "chenkaidi".to_string(),
+            name: "chenkaidi".to_string(),
+            email: "me@corp.com".to_string(),
+        };
+        let per_project = vec![
+            vec![
+                GitlabContributor {
+                    name: "李四".into(),
+                    email: "Lisi@Corp.com".into(),
+                    commits: 5,
+                },
+                GitlabContributor {
+                    name: "李四".into(),
+                    email: "lisi@corp.com".into(),
+                    commits: 2,
+                },
+            ],
+            vec![
+                // 同一邮箱换项目再出现：提交数累加，姓名保持提交数最多的写法
+                GitlabContributor {
+                    name: "lisi".into(),
+                    email: "lisi@corp.com".into(),
+                    commits: 9,
+                },
+                // 同名不同邮箱：保留为两行
+                GitlabContributor {
+                    name: "李四".into(),
+                    email: "lisi-other@corp.com".into(),
+                    commits: 4,
+                },
+                // 空/空白邮箱：丢弃
+                GitlabContributor {
+                    name: "无邮箱".into(),
+                    email: "  ".into(),
+                    commits: 7,
+                },
+            ],
+        ];
+        let candidates = aggregate_author_candidates(&per_project, &user);
+        assert_eq!(candidates.len(), 2, "大小写去重后剩 2 个邮箱");
+        assert_eq!(candidates[0].email, "lisi@corp.com");
+        assert_eq!(candidates[0].commits, 16, "同邮箱跨仓库提交数累加");
+        assert_eq!(candidates[0].name, "lisi", "姓名取提交数最多的写法");
+        assert!(!candidates[0].is_current_user);
+        assert_eq!(candidates[1].email, "lisi-other@corp.com");
+        assert_eq!(candidates[1].commits, 4);
+    }
+
+    #[test]
+    fn 作者聚合应标记当前账号且提交数倒序并列时按姓名升序() {
+        let user = GitlabUser {
+            id: 1,
+            username: "chenkaidi".to_string(),
+            name: "chenkaidi".to_string(),
+            email: "Me@Corp.com".to_string(),
+        };
+        let per_project = vec![vec![
+            GitlabContributor {
+                name: "cjy66668888".into(),
+                email: "ME@corp.com".into(),
+                commits: 30,
+            },
+            GitlabContributor {
+                name: "王五".into(),
+                email: "wangwu@corp.com".into(),
+                commits: 30,
+            },
+            GitlabContributor {
+                name: "赵六".into(),
+                email: "zhaoliu@corp.com".into(),
+                commits: 1,
+            },
+        ]];
+        let candidates = aggregate_author_candidates(&per_project, &user);
+        assert_eq!(candidates.len(), 3);
+        assert!(candidates[0].is_current_user, "邮箱忽略大小写命中当前账号");
+        assert_eq!(candidates[0].name, "cjy66668888");
+        // 并列提交数时按姓名小写升序：wangwu < 赵六(cjy 的 is_current_user 不参与排序权重)
+        assert_eq!(candidates[1].email, "wangwu@corp.com");
+        assert!(!candidates[1].is_current_user);
+        assert_eq!(candidates[2].email, "zhaoliu@corp.com");
+    }
+
+    #[test]
+    fn 当前账号判定在无账号邮箱时退回姓名匹配() {
+        let user = GitlabUser {
+            id: 1,
+            username: "chenkaidi".to_string(),
+            name: "chenkaidi".to_string(),
+            email: String::new(),
+        };
+        let by_name = GitlabContributor {
+            name: "ChenKaidi".into(),
+            email: "x@corp.com".into(),
+            commits: 1,
+        };
+        let by_username = GitlabContributor {
+            name: "someone".into(),
+            email: "y@corp.com".into(),
+            commits: 1,
+        };
+        assert!(
+            contributor_is_current_user(&by_name, &user),
+            "姓名忽略大小写命中"
+        );
+        assert!(!contributor_is_current_user(&by_username, &user));
     }
 }

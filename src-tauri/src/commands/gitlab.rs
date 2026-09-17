@@ -118,6 +118,73 @@ pub async fn gitlab_test_connection(
     }
 }
 
+/// 作者选择器条目（设置页「从仓库选择作者」；每个邮箱一行）
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabAuthorOption {
+    pub name: String,
+    pub email: String,
+    pub commits: i64,
+    pub is_current_user: bool,
+}
+
+/// 作者列表拉取结果
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabAuthorListResult {
+    pub ok: bool,
+    pub authors: Vec<GitlabAuthorOption>,
+    /// 允许列表为空且仓库超过扫描上限时提示（只统计了前 N 个仓库）
+    pub truncated: bool,
+    pub message: Option<String>,
+}
+
+/// 拉取允许列表（为空 = 全部有权限项目）内仓库的贡献者，按邮箱聚合为
+/// 作者候选（提交数倒序），供作者选择器勾选。
+/// 不读取已保存配置：设置页可在未保存前先选。
+#[tauri::command]
+pub async fn gitlab_list_authors(
+    url: String,
+    token: String,
+    project_filter: Option<Vec<String>>,
+) -> Result<GitlabAuthorListResult, String> {
+    let client = GitlabClient::new(&url, &token);
+    let filter = project_filter.unwrap_or_default();
+    // 贡献者按仓库逐个拉取，比仓库列表慢；并发 8 + 仓库数上限下 25 秒足够宽裕
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(25),
+        client.fetch_author_candidates(&filter),
+    )
+    .await;
+
+    match outcome {
+        Ok(Ok((candidates, truncated))) => Ok(GitlabAuthorListResult {
+            ok: true,
+            authors: candidates
+                .into_iter()
+                .map(|c| GitlabAuthorOption {
+                    name: c.name,
+                    email: c.email,
+                    commits: c.commits,
+                    is_current_user: c.is_current_user,
+                })
+                .collect(),
+            truncated,
+            message: None,
+        }),
+        Ok(Err(error)) => Ok(GitlabAuthorListResult {
+            ok: false,
+            authors: Vec::new(),
+            truncated: false,
+            message: Some(error.to_string()),
+        }),
+        Err(_) => Ok(GitlabAuthorListResult {
+            ok: false,
+            authors: Vec::new(),
+            truncated: false,
+            message: Some(String::from("获取作者列表超时（25 秒）")),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +212,22 @@ mod tests {
                 .expect("命令不应直接失败");
         assert!(!result.ok, "不可达地址应判定为失败");
         assert!(result.projects.is_empty(), "失败时不应携带项目数据");
+        let message = result.message.unwrap_or_default();
+        assert!(!message.is_empty(), "失败时应给出可展示的原因");
+    }
+
+    #[tokio::test]
+    async fn 作者列表指向不可达地址应返回结构化失败而不是panic() {
+        let result = gitlab_list_authors(
+            "http://127.0.0.1:1".to_string(),
+            "stub-token".to_string(),
+            None,
+        )
+        .await
+        .expect("命令不应直接失败");
+        assert!(!result.ok, "不可达地址应判定为失败");
+        assert!(result.authors.is_empty(), "失败时不应携带作者数据");
+        assert!(!result.truncated, "失败时不应标记截断");
         let message = result.message.unwrap_or_default();
         assert!(!message.is_empty(), "失败时应给出可展示的原因");
     }

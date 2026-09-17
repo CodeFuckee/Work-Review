@@ -4590,6 +4590,7 @@ async fn main() {
             commands::get_wecom_bot_status,
             commands::gitlab_test_connection,
             commands::gitlab_list_projects,
+            commands::gitlab_list_authors,
             commands::generate_telegram_bot_bind_code,
             commands::generate_text_with_model,
             commands::reveal_localhost_api_token,

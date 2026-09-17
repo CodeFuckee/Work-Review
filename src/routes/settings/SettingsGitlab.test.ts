@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const SETTINGS = fileURLToPath(new URL('./Settings.svelte', import.meta.url));
 const GITLAB_COMPONENT = fileURLToPath(new URL('./components/SettingsGitlab.svelte', import.meta.url));
 const PICKER_COMPONENT = fileURLToPath(new URL('./components/GitlabProjectPicker.svelte', import.meta.url));
+const AUTHOR_PICKER_COMPONENT = fileURLToPath(new URL('./components/GitlabAuthorPicker.svelte', import.meta.url));
 const LOCALES = fileURLToPath(new URL('../../lib/i18n/locales', import.meta.url));
 
 function read(path: string): string {
@@ -102,4 +103,50 @@ test('项目不得残留对旧 GitLab 配置键的错误引用', () => {
   const source = read(GITLAB_COMPONENT);
   assert.doesNotMatch(source, /gitlab_url/);
   assert.doesNotMatch(source, /gitlab_token/);
+});
+
+test('GitLab 组件应提供作者选择器按钮并按追加语义写回名单', () => {
+  const source = read(GITLAB_COMPONENT);
+  assert.match(source, /import GitlabAuthorPicker from '\.\/GitlabAuthorPicker\.svelte'/);
+  assert.match(source, /gitlab_list_authors/);
+  assert.match(source, /t\('settingsGitlab\.authorsPickButton'\)/);
+  assert.match(source, /onAuthorPickerSave/);
+  assert.match(
+    source,
+    /mergeWorkAuthorsWithPicked\(gitlab\(\)\.work_authors \?\? \[\], event\.detail\)/,
+  );
+  assert.match(
+    source,
+    /projectFilter: current\.project_filter \?\? \[\]/,
+    '作者候选应来自项目过滤（允许列表）仓库，为空时后端回退全部有权限仓库',
+  );
+  const picker = read(AUTHOR_PICKER_COMPONENT);
+  assert.match(picker, /use:trapFocus/);
+  assert.match(picker, /role="dialog"/);
+  assert.match(picker, /filterAuthorOptions/);
+  assert.match(picker, /t\('settingsGitlab\.pickAuthorCount'/);
+  assert.match(picker, /t\('settingsGitlab\.pickAuthorCurrentUser'\)/);
+});
+
+test('四个语言的 i18n 都应包含作者选择器文案', () => {
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ar']) {
+    const file = read(`${LOCALES}/${locale}.ts`);
+    for (const key of [
+      'authorsPickButton',
+      'pickAuthorTitle',
+      'pickAuthorSearchPlaceholder',
+      'pickAuthorSelectAll',
+      'pickAuthorClear',
+      'pickAuthorSave',
+      'pickAuthorCancel',
+      'pickAuthorCount',
+      'pickAuthorLoadFailed',
+      'pickAuthorCommitCount',
+      'pickAuthorCurrentUser',
+      'pickAuthorHint',
+      'pickAuthorTruncated',
+    ]) {
+      assert.match(file, new RegExp(`${key}: `), `locale ${locale} missing settingsGitlab.${key}`);
+    }
+  }
 });
