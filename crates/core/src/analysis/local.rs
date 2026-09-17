@@ -1,5 +1,6 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_local_order, format_section_heading,
+    place_gitlab_before_hourly,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -387,11 +388,15 @@ impl Analyzer for LocalAnalyzer {
         let mut fallback_reason = None;
 
         let (stats_sections, mut section_count) = assemble_with_section_count(
-            &apply_preferences(default_local_order(), &self.pinned_blocks),
+            &place_gitlab_before_hourly(
+                apply_preferences(default_local_order(), &self.pinned_blocks),
+                &self.pinned_blocks,
+            ),
             stats,
             locale,
             &category_name_overrides,
             &semantic_name_overrides,
+            &gitlab.local_section,
         );
         report.push_str(&stats_sections);
 
@@ -569,12 +574,6 @@ impl Analyzer for LocalAnalyzer {
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);
-        }
-
-        // 本地模板：GitLab 今日提交作为独立小节追加（不在模板正文内）
-        if !gitlab.local_section.is_empty() {
-            report.push_str("\n\n");
-            report.push_str(&gitlab.local_section);
         }
 
         Ok(GeneratedReport {

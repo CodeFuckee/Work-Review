@@ -10,14 +10,14 @@ use work_review_core::analysis::AppLocale;
 use work_review_core::config::AppConfig;
 use work_review_core::database::DailyReport;
 use work_review_core::error::AppError;
-use work_review_core::gitlab::{gitlab_failure_note, GitlabReportSupplement};
+use work_review_core::gitlab::{gitlab_unavailable_section, GitlabReportSupplement};
 
 use super::shared::{collect_privacy_filters, filter_activities_by_privacy, persist_app_config};
 
 /// 拉取 GitLab 今日（或指定日报日期）提交并转成日报补充内容。
-/// - 未配置 URL/Token 或开关关闭：返回空补充（不提示）。
-/// - 拉取失败/超时（10 秒）：降级为带失败备注行的空补充。
-/// - 成功：按该日期/本机时区聚合（每项目 20 条、全局 200 条，超出截断并提示）。
+/// - 未配置 URL/Token 或开关关闭：返回空补充（不生成小节）。
+/// - 已配置即生成「GitLab 今日提交」小节：拉取失败/超时（10 秒）降级为
+///   失败说明占位小节；无提交为占位说明；成功为提交列表（超限截断并提示）。
 async fn fetch_gitlab_supplement(
     config: &AppConfig,
     date: &str,
@@ -49,9 +49,8 @@ async fn fetch_gitlab_supplement(
     {
         Ok(Ok(result)) => result.to_supplement(offset, locale),
         _ => GitlabReportSupplement {
-            failure_note: Some(gitlab_failure_note(locale)),
             ai_context: None,
-            local_section: String::new(),
+            local_section: gitlab_unavailable_section(locale),
         },
     }
 }
@@ -260,9 +259,9 @@ pub(crate) async fn generate_report_inner(
         .collect();
 
     // 拉取该日报日期（默认今日）的私有化 GitLab 提交，作为日报补充内容。
-    // 静默降级：未配置/拉取失败/无提交都不阻塞日报生成；失败时仅追加备注行。
+    // 已配置即生成「GitLab 今日提交」独立小节（失败/无提交为占位说明），
+    // 未配置为空补充；失败不阻塞日报生成。
     let gitlab_supplement = fetch_gitlab_supplement(&config, &date, report_locale).await;
-    let gitlab_failure_note = gitlab_supplement.failure_note.clone();
 
     let spawn_result = tokio::spawn(async move {
         analyzer
@@ -356,11 +355,7 @@ pub(crate) async fn generate_report_inner(
     }
 
     let generated_report = report_result?;
-    let mut report = generated_report.content.clone();
-    // GitLab 拉取失败时在末尾追加一行备注（未配置/无提交时 failure_note 为 None，不提示）
-    if let Some(note) = gitlab_failure_note.as_deref() {
-        report.push_str(&format!("\n\n{note}"));
-    }
+    let report = generated_report.content.clone();
     let (saved_ai_mode, saved_model_name) =
         resolve_saved_report_metadata(&config.ai_mode, &text_model.model, generated_report.used_ai);
 

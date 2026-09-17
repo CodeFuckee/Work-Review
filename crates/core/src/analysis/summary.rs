@@ -1,6 +1,6 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_summary_order, format_section_heading,
-    merge_ai_order, wrap_block, BLOCK_AI_ANALYSIS,
+    merge_ai_order, place_gitlab_before_hourly, wrap_block, BLOCK_AI_ANALYSIS,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -1110,13 +1110,17 @@ impl Analyzer for SummaryAnalyzer {
             Some(order) => merge_ai_order(order, &default_order),
             None => default_order,
         };
-        let blocks = apply_preferences(ordered, &self.pinned_blocks);
+        let blocks = place_gitlab_before_hourly(
+            apply_preferences(ordered, &self.pinned_blocks),
+            &self.pinned_blocks,
+        );
         let (stats_sections, section_count) = assemble_with_section_count(
             &blocks,
             stats,
             locale,
             &category_name_overrides,
             &semantic_name_overrides,
+            &gitlab.local_section,
         );
         report.push_str(&stats_sections);
 
@@ -1182,11 +1186,6 @@ impl Analyzer for SummaryAnalyzer {
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);
-        }
-
-        // AI 失败回退基础模板时，把 GitLab 提交作为独立小节补上（AI 成功时已整合进正文）
-        if !ai_content.1 && !gitlab.local_section.is_empty() {
-            report.push_str(&format!("\n\n{}", gitlab.local_section));
         }
 
         Ok(GeneratedReport {

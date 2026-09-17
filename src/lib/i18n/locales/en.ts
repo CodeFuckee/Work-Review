@@ -949,6 +949,7 @@ export default {
         LOCAL_CATEGORY: 'Time Allocation',
         LOCAL_APP_USAGE: 'App Usage',
         LOCAL_DOMAIN_USAGE: 'Website Visits',
+        GITLAB_TODAY: 'GitLab Commits Today',
       },
       modeNames: {
         local: 'Template',

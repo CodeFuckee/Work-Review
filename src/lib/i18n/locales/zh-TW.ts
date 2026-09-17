@@ -934,6 +934,7 @@ export default {
         LOCAL_CATEGORY: '時間分配',
         LOCAL_APP_USAGE: '應用使用情況',
         LOCAL_DOMAIN_USAGE: '網站造訪',
+        GITLAB_TODAY: 'GitLab 今日提交',
       },
       modeNames: {
         local: '基礎模板',
