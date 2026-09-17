@@ -385,12 +385,16 @@ fn stop_runtime_locked(runtime: &mut LocalhostApiRuntime) -> Option<oneshot::Sen
 }
 
 fn record_runtime_error(state: &Arc<Mutex<AppState>>, message: impl Into<String>) {
+    let message = message.into();
+    // 运行时异常退出必须留日志：last_error 只存在内存里，锁中毒时连它都写不进，
+    // 无日志则该错误彻底无踪迹
+    log::error!("本地 API 运行时异常退出: {message}");
     if let Ok(mut state) = state.lock() {
         state.localhost_api_runtime.running = false;
         state.localhost_api_runtime.bound_host = None;
         state.localhost_api_runtime.bound_port = None;
         state.localhost_api_runtime.shutdown_tx = None;
-        state.localhost_api_runtime.last_error = Some(message.into());
+        state.localhost_api_runtime.last_error = Some(message);
     }
 }
 
@@ -540,6 +544,10 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<ParsedRequest>> {
     let mut buffer = [0u8; 4096];
     let header_end;
 
+    // 已扫描过的前缀不会再出现新的 "\r\n\r\n"（分隔符窗口长 4），增量续扫即可，
+    // 避免慢速滴流客户端把每 chunk 的整段重扫放大成 O(n²)
+    let mut scanned_up_to = 0usize;
+
     loop {
         let read = stream.read(&mut buffer).await?;
         if read == 0 {
@@ -554,10 +562,15 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<ParsedRequest>> {
             return Err(AppError::Config("本地 API 请求体过大".to_string()));
         }
 
-        if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            header_end = position + 4;
+        if let Some(position) = bytes[scanned_up_to..]
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+        {
+            header_end = scanned_up_to + position + 4;
             break;
         }
+        // 保留末尾 3 字节不标记已扫：分隔符可能横跨本次与下次读取的边界
+        scanned_up_to = bytes.len().saturating_sub(3);
     }
 
     let header_text = String::from_utf8(bytes[..header_end].to_vec())

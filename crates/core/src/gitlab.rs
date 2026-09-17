@@ -354,6 +354,24 @@ pub fn local_offset_now() -> FixedOffset {
     *chrono::Local::now().offset()
 }
 
+/// 剥离 API 返回文本中的 C0 控制字符（换行/制表等，替换为空格）。
+/// 提交标题/项目路径/分支进入日报 markdown 与 AI 上下文时必须保持单行，
+/// 否则被劫持的服务端可用 `\n## …` 注入伪造小节；真实 git 提交标题不含
+/// 控制字符，本清洗对正常输入是恒等变换。
+fn strip_control_chars(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_control() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// 无提交时的占位说明（按 locale）
 fn gitlab_empty_hint(locale: AppLocale) -> String {
     match locale {
@@ -770,12 +788,20 @@ impl GitlabClient {
                     continue;
                 }
                 entries.push(GitlabCommitEntry {
-                    branch: project
-                        .default_branch
-                        .clone()
-                        .unwrap_or_else(|| "HEAD".to_string()),
-                    project: project.path_with_namespace.clone(),
-                    commit,
+                    branch: strip_control_chars(
+                        &project
+                            .default_branch
+                            .clone()
+                            .unwrap_or_else(|| "HEAD".to_string()),
+                    ),
+                    project: strip_control_chars(&project.path_with_namespace),
+                    // 标题/作者字段会拼进日报 markdown 与入库行，进入前剥掉
+                    // 控制字符保证单行（防 markdown 结构注入，见 strip_control_chars）
+                    commit: GitlabCommit {
+                        title: strip_control_chars(&commit.title),
+                        author_name: strip_control_chars(&commit.author_name),
+                        ..commit
+                    },
                 });
             }
         }
@@ -1366,6 +1392,45 @@ mod tests {
         );
         let en = build_gitlab_local_section(&[], false, 0, UTC_PLUS_8, AppLocale::En);
         assert!(en.contains("No GitLab commits today."), "en: {en}");
+    }
+
+    #[test]
+    fn 控制字符剥离应保证提交文本单行且对正常输入恒等() {
+        // 正常输入是恒等变换
+        assert_eq!(
+            strip_control_chars("fix: 修复登录页崩溃"),
+            "fix: 修复登录页崩溃"
+        );
+        assert_eq!(
+            strip_control_chars("[core] handle x (closes #12)"),
+            "[core] handle x (closes #12)"
+        );
+        // 换行/回车/制表注入 markdown 结构 → 折叠为单行
+        assert_eq!(
+            strip_control_chars("正常标题\n## 伪造小节"),
+            "正常标题 ## 伪造小节"
+        );
+        assert_eq!(strip_control_chars("a\r\nb\tc"), "a b c");
+        assert_eq!(strip_control_chars("\u{0}\u{1f}x"), " x");
+        // 连续控制字符不产生连续空格
+        assert_eq!(strip_control_chars("a\n\n\nb"), "a b");
+        // 提交行拼装后不再含任何换行（防小节/列表注入）：fetch 侧（fetch_today_commits）
+        // 构造条目前已按 strip_control_chars 清洗标题/项目/分支，此处复现同款清洗再拼行
+        let raw = commit(
+            "abc123",
+            "恶意标题\n## 伪造小节\n- 项",
+            "evil@example.com",
+            " attacker ",
+            "2026-09-17T02:30:00Z",
+            None,
+        );
+        let cleaned = GitlabCommit {
+            title: strip_control_chars(&raw.title),
+            author_name: strip_control_chars(&raw.author_name),
+            ..raw
+        };
+        let line = format_commit_line(&entry(cleaned), UTC_PLUS_8, AppLocale::ZhCn, false);
+        assert!(!line.contains('\n'), "提交行必须单行: {line:?}");
     }
 
     #[test]

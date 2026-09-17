@@ -2810,7 +2810,7 @@ impl Database {
     }
 
     /// 批量写入 GitLab 提交（按 sha 幂等覆盖；供日报生成与时间线页补采调用）。
-    /// 单条失败不阻塞整批：事务内逐条 upsert，全部成功才提交。
+    /// 整批包在一个事务里原子提交：任一条失败即整体回滚，调用方收到错误。
     pub fn upsert_gitlab_commits(&self, commits: &[GitlabCommitRow]) -> Result<usize> {
         if commits.is_empty() {
             return Ok(0);
