@@ -32,6 +32,9 @@ if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
 fi
 
 key_file="$(mktemp "${TMPDIR:-/tmp}/tauri-signing-key.XXXXXX")"
+# runner 的 /tmp 与构建目录跨流水线持久，用完不删会让私钥文件长期散落磁盘；
+# 本脚本以子进程方式调用（export 不回传父 shell），退出即清理不影响后续步骤
+trap 'rm -f "$key_file"' EXIT
 
 # Write the base64 value verbatim (strip any trailing CR/LF that GitLab may
 # append; base64 has no newlines). tauri-cli decodes it when signing the

@@ -66,9 +66,17 @@ if (!args.version || !args.urlBase || !args.platform.length) {
   console.error('缺少 --version / --url-base / --platform 参数');
   process.exit(1);
 }
-const token = process.env[args.tokenEnv ?? 'GIT_PUSH_TOKEN'] ?? '';
-if (!token) {
-  console.error(`缺少认证令牌：环境变量 ${args.tokenEnv ?? 'GIT_PUSH_TOKEN'} 为空`);
+// 令牌与同作业的 glab/curl 同款回退：GIT_PUSH_TOKEN（项目访问令牌）缺失的
+// 标准 GitLab 实例用 CI_JOB_TOKEN，避免"资产已上传、自检却因无令牌必死"
+const tokenEnvName = args.tokenEnv ?? 'GIT_PUSH_TOKEN';
+let token = process.env[tokenEnvName] ?? '';
+if (token) {
+  console.log(`>>> auth via ${tokenEnvName}`);
+} else if (process.env.CI_JOB_TOKEN) {
+  token = process.env.CI_JOB_TOKEN;
+  console.log(`>>> auth via CI_JOB_TOKEN (${tokenEnvName} 为空，回退)`);
+} else {
+  console.error(`缺少认证令牌：环境变量 ${tokenEnvName} 与 CI_JOB_TOKEN 均为空`);
   process.exit(1);
 }
 
@@ -127,6 +135,22 @@ for (const [platform, localPath] of args.platform) {
     remoteName === localName ? '' : `应为 ${localName}`,
   );
   check(`清单签名字段非空 (${platform})`, Boolean(entry.signature));
+
+  // 3.5) 签名与本地 .sig 文件一致（头部注释声明的断言）：通用名产物
+  // （Yue-Review.app.tar.gz）在持久 workspace 上可能配上历史残留的旧 sig，
+  // 仅查非空抓不到"新包旧签"，这里以本地文件为准逐字比对
+  const localSignature = (() => {
+    try {
+      return readFileSync(`${localPath}.sig`, 'utf8').replace(/\r?\n/g, '');
+    } catch {
+      return '';
+    }
+  })();
+  check(
+    `清单签名与本地上传 .sig 一致 (${platform})`,
+    Boolean(localSignature) && entry.signature === localSignature,
+    localSignature ? '' : `本地 ${localPath}.sig 缺失或为空`,
+  );
 
   // 4) 远端安装包可下载且 SHA256 与本地一致（上传完整性）
   const remoteSha = await (async () => {

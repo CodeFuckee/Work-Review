@@ -34,12 +34,17 @@ export function computeNextVersion(current) {
   return `${nextMajor}.${nextMinor}.${nextPatch}`;
 }
 
-/** 把文本里所有 `"<oldVersion>"` 替换为 `"<newVersion>"`（用于 JSON 版本段）。 */
-function replaceAllVersion(text, oldVersion, newVersion) {
-  if (!text.includes(`"${oldVersion}"`)) {
+/**
+ * 把 JSON 里锚定的 `"version": "<oldVersion>"` 键值对替换为新版本。
+ * 不用全量 `"old"` 替换：任一依赖恰好 pin 为当前应用版本号时会被连坐升版，
+ * 导致 package.json 与 lock 漂移（npm ci 失败）或依赖被静默改版本。
+ */
+function replaceVersionField(text, oldVersion, newVersion) {
+  const needle = `"version": "${oldVersion}"`;
+  if (!text.includes(needle)) {
     throw new Error(`未找到版本字段 ${oldVersion}`);
   }
-  return text.split(`"${oldVersion}"`).join(`"${newVersion}"`);
+  return text.split(needle).join(`"version": "${newVersion}"`);
 }
 
 /** package-lock.json 需要精确替换两处：顶层与 packages[""]（依赖恰好同版本时不得误伤）。 */
@@ -112,7 +117,7 @@ export function bumpVersion(root) {
   if (!newVersion) throw new Error(`非法版本号：${oldVersion}`);
 
   // package.json：替换根级第一个 "version" 字段
-  packageJson = replaceAllVersion(packageJson, oldVersion, newVersion);
+  packageJson = replaceVersionField(packageJson, oldVersion, newVersion);
   writeFileSync(pkgPath, packageJson, 'utf8');
 
   // package-lock.json：顶层 + packages[""]
@@ -124,7 +129,7 @@ export function bumpVersion(root) {
   const tauriPath = join(root, 'src-tauri', 'tauri.conf.json');
   writeFileSync(
     tauriPath,
-    replaceAllVersion(readWithCheck(root, 'src-tauri/tauri.conf.json'), oldVersion, newVersion),
+    replaceVersionField(readWithCheck(root, 'src-tauri/tauri.conf.json'), oldVersion, newVersion),
     'utf8',
   );
 

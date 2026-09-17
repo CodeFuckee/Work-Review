@@ -273,8 +273,15 @@ function persistState(state: AssistantState): void {
     return;
   }
 
+  // 持久化只存最近 40 条兜底 localStorage 容量；内存态不截断——
+  // 会话模式（SQLite 为完整数据源）下 appendMessage 截断会让长会话
+  // 一发消息就“眼前消失”旧消息
+  const persisted =
+    state.messages.length > 40
+      ? { ...state, messages: state.messages.slice(-40) }
+      : state;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.warn('保存助手会话缓存失败:', error);
   }
@@ -297,7 +304,10 @@ function createAssistantStore(): AssistantStore {
     appendMessage: (message) =>
       update((state) => ({
         ...state,
-        messages: [...state.messages, normalizeMessage(message)].slice(-40),
+        // 不在内存里截断：切到长会话（setConversation 全量装入）后再发消息，
+        // slice(-40) 会把用户眼前的旧消息静默裁掉；localStorage 容量兜底
+        // 统一在 persistState 做
+        messages: [...state.messages, normalizeMessage(message)],
       })),
     clearMessages: () =>
       update((state) => ({

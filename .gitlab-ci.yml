@@ -475,7 +475,10 @@ version-bump:
       # frontend 版本一致性测试假通过）。reset --hard + clean 保证基准绝对干净。
       git checkout -B bump-base "origin/$CI_DEFAULT_BRANCH"
       git reset --hard "origin/$CI_DEFAULT_BRANCH"
-      git clean -ffdx
+      # 排除 target/.cargo/.npm：本作业与 verify/package 共享 linux-x64 runner
+      # 构建目录，全量 clean（-x 含 ignored）会把 GIT_CLEAN_FLAGS 特意保留的
+      # 增量编译缓存抹掉，随后每条流水线三平台全量冷启动
+      git clean -ffdx -e target -e .cargo -e .npm
       echo "bump-base state: $(git rev-parse --short HEAD) $(git log -1 --oneline) $(node -p "require('./package.json').version")"
       node scripts/bump-version.mjs
       NEW_VERSION="$(node -p "require('./package.json').version")"
@@ -767,6 +770,12 @@ publish-release:
     # glab -R 显式指定仓库，双保险绕开 remote/host 匹配检查。
     - git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"
     - VERSION="${CI_COMMIT_TAG#v}"
+    # 本作业跑在 linux-x64 runner 的共享持久 workspace（GIT_CLEAN_FLAGS 排除
+    # target），产物经 artifact 解压获得——解压只覆盖同名文件、不删旧文件。
+    # 不先清理 bundle，上一版本的通用名产物（Yue-Review.app.tar.gz 及 .sig）
+    # 会残留：本次恰好缺 .sig 时补签循环看到旧 sig 非空即跳过，updater.json
+    # 变成"新包配旧签名"，arm64 用户更新验签永久失败。与打包作业同款清理。
+    - rm -rf target/release/bundle target/*/release/bundle
     - awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > release_notes.md
     - test -s release_notes.md || printf '版本 %s 更新\n' "$VERSION" > release_notes.md
     # bash 默认不开 globstar，`**` 只匹配「恰好一层」目录；而 Windows 的 NSIS

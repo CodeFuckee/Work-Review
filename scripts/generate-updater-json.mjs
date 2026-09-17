@@ -12,7 +12,7 @@
 //     --platform "darwin-x86_64=$MAC_X64" \
 //     --platform "windows-x86_64=$WIN_EXE"
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -122,8 +122,13 @@ export function assertPlatformVersionConsistency(manifest, expectedVersion) {
 const args = parseArgs(process.argv.slice(2));
 
 // 仅在作为 CLI 直接运行时执行主流程；被测试文件 import 时不触发
-// （否则顶层 process.exit 会连带终止整个测试进程）。
-const argvUrl = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
+// （否则顶层 process.exit 会连带终止整个测试进程）。realpathSync 归一
+// symlink/大小写差异（macOS /tmp→/private/tmp、CI workspace 软链），
+// 失配时 isCliEntry 为 false 会静默跳过主流程、退出码 0、产物不落盘
+// （与 bump-version.mjs 的 isDirectInvocation 同款写法）。
+const argvUrl = process.argv[1]
+  ? pathToFileURL(realpathSync(process.argv[1])).href
+  : '';
 const isCliEntry = argvUrl.toLowerCase() === import.meta.url.toLowerCase();
 
 if (isCliEntry && (!args.version || !args.urlBase || !args.out)) {
