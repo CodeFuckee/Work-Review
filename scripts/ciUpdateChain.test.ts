@@ -71,3 +71,34 @@ test('安装包选择必须按发布版本过滤（根因已修复，防回退�
     '发布编排不得引用硬编码的旧版本文件名',
   );
 });
+
+test('publish-release 不得在 artifact 解压后整目录删除 bundle（v1.1.55 发布失败回归）', () => {
+  const yaml = read(CI_YAML);
+  // 只检查 publish-release 作业段：打包作业里的同款 rm -rf 是构建前清理，
+  // 在 tauri build 之前执行，合法且受上一条测试锁定
+  const sectionStart = yaml.indexOf('publish-release:');
+  assert.notEqual(sectionStart, -1, 'publish-release 作业必须存在');
+  const sectionEnd = yaml.indexOf('\n  rules:', sectionStart);
+  const section = yaml.slice(sectionStart, sectionEnd);
+  // publish-release 的产物由 runner 在脚本执行前解压到 target/*/release/bundle，
+  // 整目录 rm -rf 会把刚解压的本版产物一并删光，清单生成缺产物直接失败
+  assert.doesNotMatch(
+    section,
+    /rm -rf target\/release\/bundle target\/\*\/release\/bundle/,
+    'artifact 解压发生在脚本之前，盲删 bundle 目录 = 删光本版产物（v1.1.55 事故）',
+  );
+  // 残留清理必须按当前版本过滤（rpm 等文件名用连字符，不能锚定下划线），
+  // 且保留通用名的 macOS updater 产物（*.app.tar.gz，本次解压刚覆盖）
+  assert.match(
+    section,
+    /find target\/release\/bundle target\/\*\/release\/bundle -type f ! -name "\*\$\{VERSION\}\*" ! -name '\*\.app\.tar\.gz' ! -name '\*\.app\.tar\.gz\.sig' -delete/,
+    '应按版本定向清理上一版本残留，保留本版与通用名 updater 产物',
+  );
+  // mac runner 丢 .sig 时旧 sig 残留会造成"新包配旧签名"：签名早于对应
+  // 产物的必须删除，交给补签循环重签
+  assert.match(
+    section,
+    /\[ "\$gz" -nt "\$sig" \]/,
+    '应删除早于对应产物的残留 macOS 签名（强制重签）',
+  );
+});

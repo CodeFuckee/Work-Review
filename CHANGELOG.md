@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **publish-release 误删本版产物导致 v1.1.55 发布失败（P1，CI）**：为防"上一版本产物在共享持久 workspace 残留"加的 `rm -rf target/release/bundle target/*/release/bundle` 放在了 publish-release 脚本里——而该作业的产物由 runner 在**脚本执行前**解压到同一路径，整目录删除把刚解压的本版产物全部删光，`generate-updater-json.mjs` 找不到 darwin-aarch64 产物直接失败（v1.1.55 为该改动到达远端后首个 tag 流水线，v1.1.54 发版时改动尚未推送故幸免）。改为：①按版本定向清残留——`find` 只删文件名不含当前版本号的 bundle 文件（兼容 rpm 连字符命名），保留通用名的 macOS updater 产物（*.app.tar.gz/.sig，本次解压刚覆盖）；②真正堵住原意图防的"新包配旧签名"——macOS `.app.tar.gz.sig` 早于对应 tar.gz 的（mac runner 丢新 sig 时残留的上一版本旧 sig）删除，交给既有补签循环重签。新增契约测试锁定：publish-release 段内禁止整目录盲删、定向清理与旧签名删除必须在位。
 - **第三轮全量代码评审修复（行为保持，Rust 批次 + TS/CI 批次）**：
   - **SSRF 护栏漏段（P1，Rust）**：Agent 联网工具的内网护栏 `is_non_public_v4` 不拦 0.0.0.0/8 非全零地址（Linux/BSD 内核把该段目的地按本机处理，`http://0.16.32.48:47831/` 可直达持有工作数据的本机 localhost API），也漏 100.64.0.0/10（CGNAT/Tailscale tailnet）、198.18.0.0/15、组播与 240/4 保留段；补齐判定并新增 9 组回归（含 IPv4-mapped IPv6 形式）。
   - **存储上限 0 值删光全部截图（P1，Rust）**：`storage_limit_mb=0`（配置同步/手改配置可绕过设置页下限直通入库）会让周期清理把上限算成 0 字节、"删到低于上限"的循环永不满足，从最旧到最新逐个删光全部截图目录；`normalize` 阶段钳到 ≥256（与设置页下限对齐），新增回归测试。
