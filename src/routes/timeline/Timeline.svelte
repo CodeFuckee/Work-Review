@@ -36,6 +36,10 @@
   } from '$lib/utils/appDisplay.ts';
   import { resolveAppIconSrc } from '../../lib/utils/appVisuals.ts';
   import { formatBrowserUrlForDisplay } from '../../lib/utils/browserUrl.ts';
+  import {
+    mergeTimelineRows,
+    type GitlabCommitRow,
+  } from './timelineGitlab.ts';
   import { getViewportPopoverPlacement } from '../../lib/utils/popoverPosition.ts';
   import {
     isTimelineActivity,
@@ -87,6 +91,13 @@
     privacy?: {
       app_rules?: PrivacyRule[];
     };
+    gitlab?: {
+      url?: string | null;
+      token?: string | null;
+      project_filter?: string[] | null;
+      work_authors?: string[] | null;
+      report_enabled?: boolean;
+    };
   }
 
   interface CleanupResult {
@@ -109,6 +120,9 @@
   }
 
   let activities: TimelineActivity[] = [];
+  let gitlabCommits: GitlabCommitRow[] = [];
+  let gitlabSyncStartedDates = new Set<string>();
+  $: timelineRows = mergeTimelineRows(activities, gitlabCommits);
   let hourlySummaries: HourlySummaryRecord[] = [];
   let loading = true;
   let error: string | null = null;
@@ -806,13 +820,14 @@
     clearImageCaches();
 
     try {
-      const [activitiesData, summariesData] = await Promise.all([
+      const [activitiesData, summariesData, commitsData] = await Promise.all([
         timelineGateway.getPage({
           date: requestDate,
           limit: PAGE_SIZE,
           offset: 0,
         }),
         timelineGateway.getHourlySummaries(requestDate),
+        invoke<GitlabCommitRow[]>('get_gitlab_commits_for_date', { date: requestDate }),
       ]);
 
       if (requestId !== loadTimelineRequestId || requestDate !== selectedDate) return;
@@ -822,6 +837,7 @@
       if (requestId !== loadTimelineRequestId || requestDate !== selectedDate) return;
 
       activities = preparedActivities;
+      gitlabCommits = commitsData;
 
       hourlySummaries = summariesData;
       offset = activities.length;
@@ -854,6 +870,41 @@
       if (requestId === loadTimelineRequestId && requestDate === selectedDate) {
         loading = false;
       }
+    }
+
+    // 后台补采：拉取该日 GitLab 提交入库后刷新（不阻塞首屏；失败静默）
+    void syncGitlabCommits(requestDate);
+  }
+
+  // 拉取指定日期的 GitLab 提交入库（口径与日报一致），成功后刷新展示。
+  // 每个日期每次会话只补采一次，避免反复切日期时反复打 GitLab API。
+  async function syncGitlabCommits(date: string) {
+    if (gitlabSyncStartedDates.has(date)) return;
+    gitlabSyncStartedDates.add(date);
+    try {
+      const config = await invoke<TimelineConfig>('get_config');
+      const gitlab = config.gitlab;
+      if (!gitlab?.report_enabled || !gitlab.url?.trim() || !gitlab.token?.trim()) return;
+      const result = await invoke<{ ok: boolean; message: string | null }>(
+        'gitlab_sync_commits_for_date',
+        {
+          url: gitlab.url,
+          token: gitlab.token,
+          date,
+          projectFilter: gitlab.project_filter ?? [],
+          workAuthors: gitlab.work_authors ?? [],
+        },
+      );
+      if (!result.ok) {
+        console.warn('GitLab 提交补采失败:', result.message);
+        return;
+      }
+      const commits = await invoke<GitlabCommitRow[]>('get_gitlab_commits_for_date', { date });
+      if (date === selectedDate) {
+        gitlabCommits = commits;
+      }
+    } catch (e) {
+      console.warn('GitLab 提交补采失败:', e);
     }
   }
 
@@ -1550,7 +1601,28 @@
       <!-- 时间线列表 -->
       <div class="timeline-editorial-shell">
         <div class="timeline-rail" aria-hidden="true"></div>
-        {#each activities as activity, i}
+        {#each timelineRows as row, i}
+          {#if row.kind === 'commit'}
+            <div class="timeline-entry timeline-entry-commit">
+              <div class="timeline-entry-anchor">
+                <div class="timeline-entry-time">{new Date(row.commit.committed_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
+              </div>
+              <div class="timeline-entry-card timeline-entry-card-commit">
+                <div class="timeline-entry-app timeline-entry-app-compact">
+                  <span class="timeline-commit-badge" title="GitLab">⎇</span>
+                  <div class="timeline-entry-heading">
+                    <span class="timeline-entry-app-name timeline-entry-app-name-commit">{row.commit.project}</span>
+                  </div>
+                </div>
+                <p class="timeline-entry-title timeline-entry-title-compact">{row.commit.title}</p>
+                <div class="timeline-entry-tail timeline-entry-tail-compact">
+                  <span class="timeline-commit-stats">{row.commit.additions !== null && row.commit.deletions !== null ? `+${row.commit.additions}/-${row.commit.deletions}` : ''}</span>
+                </div>
+              </div>
+            </div>
+          {:else}
+          {@const activity = row.activity}
           {@const info = getCategoryMeta(activity.category)}
           {@const featured = activity.id !== null && featuredActivityIds.has(activity.id)}
           {@const timelineTitle = getTimelineTitle(activity)}
@@ -1640,6 +1712,7 @@
               </div>
             {/if}
           </button>
+          {/if}
         {/each}
       </div>
 
@@ -2645,6 +2718,49 @@
     grid-area: meta;
     justify-self: end;
     align-self: end;
+  }
+
+  /* GitLab 提交行：项目名作应用列的轻量卡片（与活动行同布局栅格） */
+  .timeline-entry-card-commit {
+    display: grid;
+    grid-template-columns: minmax(0, 16rem) minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    align-items: center;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgb(226 232 240 / 0.8);
+    border-radius: var(--radius-md);
+    background: rgb(248 250 252 / 0.6);
+  }
+  :global(.dark) .timeline-entry-card-commit {
+    border-color: rgb(45 56 67 / 0.8);
+    background: rgb(22 27 34 / 0.5);
+  }
+  .timeline-entry-marker-commit {
+    background: rgb(251 146 60);
+  }
+  .timeline-commit-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    color: rgb(251 146 60);
+    background: rgb(251 146 60 / 0.12);
+  }
+  .timeline-entry-app-name-commit {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+  }
+  .timeline-commit-stats {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    color: rgb(100 116 139);
+  }
+  :global(.dark) .timeline-commit-stats {
+    color: rgb(125 133 144);
   }
 
   .timeline-entry-duration {

@@ -82,6 +82,8 @@ pub struct GitlabReportSupplement {
     /// 已配置即非空：有提交 = 提交列表；无提交 = 占位说明；拉取失败 = 失败说明。
     /// 空串 = 未配置（不生成小节）。位置由分析器的块系统锚定在按小时活跃度之前。
     pub local_section: String,
+    /// 原始提交条目（时间线交错渲染与入库用）；无提交/失败时为空
+    pub entries: Vec<GitlabCommitEntry>,
 }
 
 /// 判定 committed_date（UTC ISO8601）是否落在本地 offset 时区的指定日期。
@@ -455,8 +457,36 @@ impl GitlabFetchResult {
                 offset,
                 locale,
             ),
+            entries: self.entries.clone(),
         }
     }
+}
+
+/// 把提交条目转成时间线入库行。`date` 为本机时区日期（YYYY-MM-DD）；
+/// committed_date 解析失败的条目跳过（时间线需要有效时间戳排序）。
+pub fn entries_to_rows(
+    entries: &[GitlabCommitEntry],
+    date: &str,
+) -> Vec<crate::database::GitlabCommitRow> {
+    entries
+        .iter()
+        .filter_map(|e| {
+            let dt = DateTime::parse_from_rfc3339(&e.commit.committed_date).ok()?;
+            Some(crate::database::GitlabCommitRow {
+                sha: e.commit.id.clone(),
+                date: date.to_string(),
+                committed_at: dt.timestamp(),
+                project: e.project.clone(),
+                branch: e.branch.clone(),
+                short_id: e.commit.short_id.clone(),
+                title: e.commit.title.clone(),
+                additions: e.commit.stats.as_ref().map(|s| s.additions),
+                deletions: e.commit.stats.as_ref().map(|s| s.deletions),
+                author_name: e.commit.author_name.clone(),
+                author_email: e.commit.author_email.clone(),
+            })
+        })
+        .collect()
 }
 
 /// GitLab REST 客户端。

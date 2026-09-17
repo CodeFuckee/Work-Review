@@ -1,7 +1,11 @@
-//! GitLab 集成命令（设置页「测试连接」与「仓库选择器」）。
+//! GitLab 集成命令（设置页「测试连接」/「仓库选择器」/「作者选择器」与时间线页提交同步）。
 
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
+use tauri::State;
 use work_review_core::gitlab::GitlabClient;
+
+use crate::AppState;
 
 /// GitLab 连接测试结果（设置页展示）
 #[derive(Debug, Clone, Serialize)]
@@ -183,6 +187,89 @@ pub async fn gitlab_list_authors(
             message: Some(String::from("获取作者列表超时（25 秒）")),
         }),
     }
+}
+
+/// 时间线页 GitLab 提交补采结果
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabCommitSyncResult {
+    pub ok: bool,
+    /// 本次新写入/更新的提交条数（0 也可能是"远端本来就没有提交"）
+    pub synced: usize,
+    pub message: Option<String>,
+}
+
+/// 拉取指定日期（本机时区）的 GitLab 提交并入库，供时间线页打开/切日期时补采。
+/// 作者与项目过滤口径由前端透传（与设置页保存的日报口径一致）；15 秒超时。
+#[tauri::command]
+pub async fn gitlab_sync_commits_for_date(
+    url: String,
+    token: String,
+    date: String,
+    project_filter: Option<Vec<String>>,
+    work_authors: Option<Vec<String>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<GitlabCommitSyncResult, String> {
+    let Ok(date_local) = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d") else {
+        return Ok(GitlabCommitSyncResult {
+            ok: false,
+            synced: 0,
+            message: Some(String::from("日期格式无效")),
+        });
+    };
+    let client = GitlabClient::new(&url, &token);
+    let offset = work_review_core::gitlab::local_offset_now();
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        client.fetch_today_commits(
+            offset,
+            date_local,
+            &project_filter.unwrap_or_default(),
+            &work_authors.unwrap_or_default(),
+        ),
+    )
+    .await;
+
+    match outcome {
+        Ok(Ok(result)) => {
+            let rows = work_review_core::gitlab::entries_to_rows(&result.entries, &date);
+            let synced = rows.len();
+            let db = state.lock().map_err(|e| e.to_string())?;
+            match db.database.upsert_gitlab_commits(&rows) {
+                Ok(_) => Ok(GitlabCommitSyncResult {
+                    ok: true,
+                    synced,
+                    message: None,
+                }),
+                Err(error) => Ok(GitlabCommitSyncResult {
+                    ok: false,
+                    synced: 0,
+                    message: Some(error.to_string()),
+                }),
+            }
+        }
+        Ok(Err(error)) => Ok(GitlabCommitSyncResult {
+            ok: false,
+            synced: 0,
+            message: Some(error.to_string()),
+        }),
+        Err(_) => Ok(GitlabCommitSyncResult {
+            ok: false,
+            synced: 0,
+            message: Some(String::from("获取 GitLab 提交超时（15 秒）")),
+        }),
+    }
+}
+
+/// 读取已入库的指定日期 GitLab 提交（按提交时间升序），时间线页合并展示用。
+#[tauri::command]
+pub fn get_gitlab_commits_for_date(
+    date: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<work_review_core::database::GitlabCommitRow>, String> {
+    let db = state.lock().map_err(|e| e.to_string())?;
+    db.database
+        .get_gitlab_commits_by_date(&date)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -137,7 +137,7 @@ impl LocalAnalyzer {
             .take(20)
             .collect::<Vec<_>>();
 
-        let timeline = generate_activity_timeline(activities, self.locale);
+        let timeline = generate_activity_timeline(activities, &[], self.locale);
 
         let base_prompt = match self.locale {
             AppLocale::ZhCn => format!(
@@ -570,7 +570,7 @@ impl Analyzer for LocalAnalyzer {
         }
 
         // 活动时间线放在最底部
-        let timeline = generate_activity_timeline(activities, locale);
+        let timeline = generate_activity_timeline(activities, &gitlab.entries, locale);
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);

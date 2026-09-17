@@ -551,13 +551,14 @@ pub fn generate_stats_summary_for_locale(
     summary
 }
 
-/// 生成活动时间线文本（用于日报正文，默认折叠）
-/// 显示按时间排序的应用使用路径
+/// 生成活动时间线文本（用于日报正文，默认折叠）。
+/// 应用使用记录与 GitLab 提交（项目名作应用列、时长列为 —）按时间交错排序。
 pub fn generate_activity_timeline(
     activities: &[crate::database::Activity],
+    commits: &[crate::gitlab::GitlabCommitEntry],
     locale: AppLocale,
 ) -> String {
-    if activities.is_empty() {
+    if activities.is_empty() && commits.is_empty() {
         return String::new();
     }
 
@@ -568,9 +569,7 @@ pub fn generate_activity_timeline(
         AppLocale::Ar => "سجل الأنشطة الزمني",
     };
 
-    let count = activities.len();
-
-    let mut lines = Vec::new();
+    let mut lines: Vec<(i64, String)> = Vec::new();
 
     for act in activities {
         let dt = chrono::DateTime::from_timestamp(act.timestamp, 0)
@@ -594,10 +593,40 @@ pub fn generate_activity_timeline(
             act.window_title.clone()
         };
 
-        lines.push(format!(
-            "| {start_dt}-{dt} | {duration_str} | {app_name} | {title} |"
+        lines.push((
+            end_ts,
+            format!("| {start_dt}-{dt} | {duration_str} | {app_name} | {title} |"),
         ));
     }
+
+    for commit in commits {
+        let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&commit.commit.committed_date) else {
+            continue;
+        };
+        let key = parsed.timestamp();
+        let local = parsed.with_timezone(&chrono::Local);
+        let time = local.format("%H:%M").to_string();
+
+        let stats = commit
+            .commit
+            .stats
+            .map(|s| format!(" (+{}/{})", s.additions, s.deletions))
+            .unwrap_or_default();
+        let title = format!("{}{stats}", commit.commit.title);
+        let title = if title.chars().count() > 60 {
+            let truncated: String = title.chars().take(57).collect();
+            format!("{truncated}…")
+        } else {
+            title
+        };
+
+        lines.push((
+            key,
+            format!("| {time} | — | {} | {title} |", commit.project),
+        ));
+    }
+
+    lines.sort_by_key(|(key, _)| *key);
 
     let col_header = match locale {
         AppLocale::ZhCn => "| 时间段 | 时长 | 应用 | 窗口 |\n|--------|------|------|------|\n",
@@ -610,6 +639,7 @@ pub fn generate_activity_timeline(
         }
     };
 
+    let count = lines.len();
     let count_label = match locale {
         AppLocale::ZhCn => format!("（{count}条记录）"),
         AppLocale::ZhTw => format!("（{count}條記錄）"),
@@ -622,7 +652,11 @@ pub fn generate_activity_timeline(
         summary_label,
         count_label,
         col_header,
-        lines.join("\n")
+        lines
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n")
     )
 }
 

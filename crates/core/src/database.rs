@@ -172,6 +172,25 @@ pub struct DailyReport {
     pub created_at: i64,
 }
 
+/// 一条 GitLab 提交的时间线记录（gitlab_commits 表）。
+/// `date` 为本机时区日期（YYYY-MM-DD），`committed_at` 为 UTC unix 秒。
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabCommitRow {
+    pub sha: String,
+    pub date: String,
+    pub committed_at: i64,
+    pub project: String,
+    pub branch: String,
+    pub short_id: String,
+    pub title: String,
+    pub additions: Option<i64>,
+    pub deletions: Option<i64>,
+    #[serde(default)]
+    pub author_name: String,
+    #[serde(default)]
+    pub author_email: String,
+}
+
 fn default_report_locale() -> String {
     "zh-CN".to_string()
 }
@@ -1004,6 +1023,30 @@ impl Database {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_assistant_user_memories_policy_updated
              ON assistant_user_memories (recall_policy, updated_at DESC)",
+            [],
+        )?;
+
+        // GitLab 提交（供时间线页面/日报时间线展示；sha 唯一，重复拉取幂等覆盖）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gitlab_commits (
+                sha TEXT PRIMARY KEY,
+                date TEXT NOT NULL,
+                committed_at INTEGER NOT NULL,
+                project TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                short_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                additions INTEGER,
+                deletions INTEGER,
+                author_name TEXT NOT NULL DEFAULT '',
+                author_email TEXT NOT NULL DEFAULT '',
+                fetched_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gitlab_commits_date_time
+             ON gitlab_commits (date, committed_at)",
             [],
         )?;
 
@@ -2764,6 +2807,86 @@ impl Database {
             .collect();
 
         Ok(activities)
+    }
+
+    /// 批量写入 GitLab 提交（按 sha 幂等覆盖；供日报生成与时间线页补采调用）。
+    /// 单条失败不阻塞整批：事务内逐条 upsert，全部成功才提交。
+    pub fn upsert_gitlab_commits(&self, commits: &[GitlabCommitRow]) -> Result<usize> {
+        if commits.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let tx = conn.unchecked_transaction()?;
+        let now = chrono::Utc::now().timestamp();
+        for commit in commits {
+            tx.execute(
+                "INSERT INTO gitlab_commits (sha, date, committed_at, project, branch, short_id, title, additions, deletions, author_name, author_email, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 ON CONFLICT(sha) DO UPDATE SET
+                    date = excluded.date,
+                    committed_at = excluded.committed_at,
+                    project = excluded.project,
+                    branch = excluded.branch,
+                    short_id = excluded.short_id,
+                    title = excluded.title,
+                    additions = excluded.additions,
+                    deletions = excluded.deletions,
+                    author_name = excluded.author_name,
+                    author_email = excluded.author_email,
+                    fetched_at = excluded.fetched_at",
+                params![
+                    commit.sha,
+                    commit.date,
+                    commit.committed_at,
+                    commit.project,
+                    commit.branch,
+                    commit.short_id,
+                    commit.title,
+                    commit.additions,
+                    commit.deletions,
+                    commit.author_name,
+                    commit.author_email,
+                    now,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(commits.len())
+    }
+
+    /// 按本地日期（YYYY-MM-DD）取 GitLab 提交，按提交时间升序。
+    pub fn get_gitlab_commits_by_date(&self, date: &str) -> Result<Vec<GitlabCommitRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT sha, date, committed_at, project, branch, short_id, title, additions, deletions, author_name, author_email
+             FROM gitlab_commits
+             WHERE date = ?1
+             ORDER BY committed_at ASC, sha ASC",
+        )?;
+        let rows = stmt.query_map(params![date], |row| {
+            Ok(GitlabCommitRow {
+                sha: row.get(0)?,
+                date: row.get(1)?,
+                committed_at: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                short_id: row.get(5)?,
+                title: row.get(6)?,
+                additions: row.get(7)?,
+                deletions: row.get(8)?,
+                author_name: row.get(9)?,
+                author_email: row.get(10)?,
+            })
+        })?;
+        let mut commits = Vec::new();
+        for row in rows {
+            commits.push(row?);
+        }
+        Ok(commits)
     }
 
     /// 保存每日报告

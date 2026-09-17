@@ -51,6 +51,7 @@ async fn fetch_gitlab_supplement(
         _ => GitlabReportSupplement {
             ai_context: None,
             local_section: gitlab_unavailable_section(locale),
+            entries: Vec::new(),
         },
     }
 }
@@ -262,6 +263,15 @@ pub(crate) async fn generate_report_inner(
     // 已配置即生成「GitLab 今日提交」独立小节（失败/无提交为占位说明），
     // 未配置为空补充；失败不阻塞日报生成。
     let gitlab_supplement = fetch_gitlab_supplement(&config, &date, report_locale).await;
+
+    // 提交入库（时间线页与日报时间线共用数据源）；入库失败仅记日志不阻塞日报
+    if !gitlab_supplement.entries.is_empty() {
+        let rows = work_review_core::gitlab::entries_to_rows(&gitlab_supplement.entries, &date);
+        let state_guard = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        if let Err(error) = state_guard.database.upsert_gitlab_commits(&rows) {
+            log::warn!("GitLab 提交入库失败（不影响日报生成）: {error}");
+        }
+    }
 
     let spawn_result = tokio::spawn(async move {
         analyzer

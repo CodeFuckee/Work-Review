@@ -696,7 +696,7 @@ impl SummaryAnalyzer {
                 AppLocale::Ar => "لا تتوفر بيانات نشاط بالساعة".to_string(),
             });
 
-        let timeline = generate_activity_timeline(activities, self.locale);
+        let timeline = generate_activity_timeline(activities, &[], self.locale);
 
         // 为 override 分支保留引用（base_prompt 构建后会 move 这些变量）
         let apps_list_for_override = apps_list.clone();
@@ -1182,7 +1182,7 @@ impl Analyzer for SummaryAnalyzer {
         report.push_str(&wrap_block(BLOCK_AI_ANALYSIS, &ai_section));
 
         // 活动时间线放在最底部
-        let timeline = generate_activity_timeline(activities, locale);
+        let timeline = generate_activity_timeline(activities, &gitlab.entries, locale);
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);
