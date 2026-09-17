@@ -244,3 +244,184 @@ impl PolicyEnforcer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+
+    fn enforcer(localhost_enabled: bool) -> PolicyEnforcer {
+        let config = AppConfig {
+            localhost_api_enabled: localhost_enabled,
+            ..AppConfig::default()
+        };
+        PolicyEnforcer::new(&config)
+    }
+
+    #[test]
+    fn mcp工具读操作放行写配置拒绝且拒绝带原因() {
+        let mut enforcer = enforcer(true);
+        let mcp = CallSource::McpTool {
+            tool_name: "query_timeline".into(),
+            client_id: Some("client-1".into()),
+        };
+        assert_eq!(
+            enforcer.check_permission(&mcp, Permission::ReadActivities),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            enforcer.check_permission(&mcp, Permission::WriteConfig),
+            PolicyDecision::Deny
+        );
+        // 拒绝决策应记录拒绝原因
+        let last = enforcer.audit_log.last().unwrap();
+        assert!(
+            last.denied_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("WriteConfig"),
+            "拒绝原因应包含被拒权限名"
+        );
+    }
+
+    #[test]
+    fn 前端来源默认全部放行() {
+        let mut enforcer = enforcer(true);
+        let frontend = CallSource::Frontend {
+            route: Some("/report".into()),
+        };
+        for permission in [
+            Permission::ReadActivities,
+            Permission::WriteConfig,
+            Permission::ExecuteAi,
+        ] {
+            assert_eq!(
+                enforcer.check_permission(&frontend, permission),
+                PolicyDecision::Allow,
+                "{permission:?} 应放行"
+            );
+        }
+    }
+
+    #[test]
+    fn localhost开关关闭时应拒绝一切调用() {
+        let mut enforcer = enforcer(false);
+        let api = CallSource::LocalhostApi {
+            endpoint: "/api/activities".into(),
+        };
+        assert_eq!(
+            enforcer.check_permission(&api, Permission::ReadActivities),
+            PolicyDecision::Deny,
+            "开关关闭时连读操作也应拒绝"
+        );
+    }
+
+    #[test]
+    fn localhost开关开启时读放行写配置拒绝() {
+        let mut enforcer = enforcer(true);
+        let api = CallSource::LocalhostApi {
+            endpoint: "/api/stats".into(),
+        };
+        assert_eq!(
+            enforcer.check_permission(&api, Permission::ReadStats),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            enforcer.check_permission(&api, Permission::WriteConfig),
+            PolicyDecision::Deny
+        );
+    }
+
+    #[test]
+    fn 未注册权限的技能只放行读操作() {
+        let mut enforcer = enforcer(true);
+        let skill = CallSource::SkillExecution {
+            skill_id: "unknown_skill".into(),
+        };
+        assert_eq!(
+            enforcer.check_permission(&skill, Permission::ReadReports),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            enforcer.check_permission(&skill, Permission::WriteConfig),
+            PolicyDecision::Deny
+        );
+    }
+
+    #[test]
+    fn 注册权限后技能按名单放行与拒绝() {
+        let mut enforcer = enforcer(true);
+        let skill = CallSource::SkillExecution {
+            skill_id: "daily_review".into(),
+        };
+        enforcer.register_skill_permissions(
+            "daily_review",
+            vec![Permission::ReadStats, Permission::ExecuteAi],
+        );
+        assert_eq!(
+            enforcer.check_permission(&skill, Permission::ExecuteAi),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            enforcer.check_permission(&skill, Permission::ReadSessions),
+            PolicyDecision::Deny,
+            "已注册名单的技能不再享受未注册只读兜底"
+        );
+    }
+
+    #[test]
+    fn 审计日志应截断到上限并按来源分组统计() {
+        let mut enforcer = enforcer(true);
+        for i in 0..1200 {
+            let source = if i % 2 == 0 {
+                CallSource::Frontend {
+                    route: Some(format!("/route-{}", i % 3)),
+                }
+            } else {
+                CallSource::LocalhostApi {
+                    endpoint: "/api/x".into(),
+                }
+            };
+            enforcer.check_permission(&source, Permission::ReadStats);
+        }
+        assert!(
+            enforcer.audit_log.len() <= 1000,
+            "审计日志应截断到上限: {}",
+            enforcer.audit_log.len()
+        );
+        let stats = enforcer.get_call_stats();
+        assert!(!stats.is_empty());
+        assert!(stats
+            .keys()
+            .all(|k| k.starts_with("frontend:") || k.starts_with("api:")));
+        let api_total: u64 = stats
+            .iter()
+            .filter(|(k, _)| k.starts_with("api:"))
+            .map(|(_, v)| v)
+            .sum();
+        assert_eq!(
+            api_total, 500,
+            "截断应丢弃最旧 200 条（含 100 条 api），保留窗口内 api 恰为 500"
+        );
+    }
+
+    #[test]
+    fn 审计条目id应单调递增() {
+        let a = AuditEntry::new(
+            CallSource::Frontend { route: None },
+            Permission::ReadStats,
+            PolicyDecision::Allow,
+            None,
+            1,
+        );
+        let b = AuditEntry::new(
+            CallSource::Frontend { route: None },
+            Permission::ReadStats,
+            PolicyDecision::Allow,
+            None,
+            1,
+        );
+        assert!(b.id > a.id, "审计 id 应递增保证可排序");
+        assert!(b.timestamp >= a.timestamp);
+    }
+}

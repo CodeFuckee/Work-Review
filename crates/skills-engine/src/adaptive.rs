@@ -249,3 +249,325 @@ pub struct FieldUpdate {
     pub new_value: serde_json::Value,
     pub confidence: f64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        AdaptiveConfig, LearnableField, LearningStrategy, SignalSource, SkillCategory, SkillPackage,
+    };
+    use std::collections::HashMap;
+
+    fn package(adaptive: AdaptiveConfig) -> SkillPackage {
+        SkillPackage {
+            id: "s".into(),
+            name: "s".into(),
+            description: "".into(),
+            version: "1.0.0".into(),
+            author: None,
+            category: SkillCategory::Automation,
+            pipeline: crate::model::Pipeline {
+                query: crate::model::QueryStep::DailyStats { date: "d".into() },
+                transforms: vec![],
+                output: crate::model::OutputStep::Text {
+                    template: "t".into(),
+                },
+            },
+            adaptive,
+            enabled: true,
+            required_permissions: vec![],
+        }
+    }
+
+    fn learnable(strategy: LearningStrategy, sources: Vec<SignalSource>) -> AdaptiveConfig {
+        AdaptiveConfig {
+            enabled: true,
+            learnable_fields: vec![LearnableField {
+                field_path: "prompt_template".into(),
+                strategy,
+                signal_sources: sources,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn ctx_value(v: serde_json::Value) -> HashMap<String, serde_json::Value> {
+        let mut map = HashMap::new();
+        map.insert("prompt_template".to_string(), v);
+        map
+    }
+
+    #[test]
+    fn 自适应关闭或学习暂停时应跳过() {
+        let mut cfg = learnable(
+            LearningStrategy::Frequency,
+            vec![SignalSource::AcceptSuggestion],
+        );
+        cfg.enabled = false;
+        let mut state = SkillState::new("s".into());
+        assert!(matches!(
+            AdaptiveEngine::process_signal(
+                &mut state,
+                &package(cfg.clone()),
+                SignalSource::AcceptSuggestion,
+                &HashMap::new()
+            ),
+            AdaptiveResult::Skipped
+        ));
+        cfg.enabled = true;
+        AdaptiveEngine::pause_learning(&mut state);
+        assert!(matches!(
+            AdaptiveEngine::process_signal(
+                &mut state,
+                &package(cfg),
+                SignalSource::AcceptSuggestion,
+                &HashMap::new()
+            ),
+            AdaptiveResult::Skipped
+        ));
+        AdaptiveEngine::resume_learning(&mut state);
+        assert!(!state.learning_paused, "恢复后应可继续学习");
+    }
+
+    #[test]
+    fn 信号不在字段来源名单内应无变化() {
+        let cfg = learnable(
+            LearningStrategy::Frequency,
+            vec![SignalSource::AcceptSuggestion],
+        );
+        let pkg = package(cfg);
+        let mut state = SkillState::new("s".into());
+        let result = AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::IgnoreSuggestion,
+            &ctx_value(serde_json::json!(100)),
+        );
+        assert!(matches!(result, AdaptiveResult::NoChange));
+    }
+
+    #[test]
+    fn 频率策略小偏差应取平均大偏差应按最大幅度钳制() {
+        let cfg = learnable(
+            LearningStrategy::Frequency,
+            vec![SignalSource::AcceptSuggestion],
+        );
+        let pkg = package(cfg);
+        let mut state = SkillState::new("s".into());
+        state
+            .learned_params
+            .insert("prompt_template".into(), serde_json::json!(100.0));
+
+        // 偏差 10% ≤ 20%：取平均 (100+110)/2 = 105
+        let result = AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::AcceptSuggestion,
+            &ctx_value(serde_json::json!(110.0)),
+        );
+        match result {
+            AdaptiveResult::Updated(updates) => {
+                assert_eq!(updates[0].new_value, serde_json::json!(105.0));
+                assert!(updates[0].confidence > 0.0);
+            }
+            other => panic!("应有更新: {other:?}"),
+        }
+        assert_eq!(
+            state.learned_params["prompt_template"],
+            serde_json::json!(105.0),
+            "学习结果应写回参数"
+        );
+        assert_eq!(state.learning_history.len(), 1);
+
+        // 偏差远超 20%：钳制为 105 + 1*105*0.2 = 126
+        let result = AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::AcceptSuggestion,
+            &ctx_value(serde_json::json!(500.0)),
+        );
+        match result {
+            AdaptiveResult::Updated(updates) => {
+                assert!((updates[0].new_value.as_f64().unwrap() - 126.0).abs() < 1e-9);
+            }
+            other => panic!("应有更新: {other:?}"),
+        }
+        assert_eq!(state.learning_history.len(), 2);
+    }
+
+    #[test]
+    fn 加权平均策略应按03权重收敛() {
+        let cfg = learnable(
+            LearningStrategy::WeightedAverage,
+            vec![SignalSource::FollowupAction],
+        );
+        let pkg = package(cfg);
+        let mut state = SkillState::new("s".into());
+        state
+            .learned_params
+            .insert("prompt_template".into(), serde_json::json!(100.0));
+        let result = AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::FollowupAction,
+            &ctx_value(serde_json::json!(110.0)),
+        );
+        match result {
+            AdaptiveResult::Updated(updates) => {
+                let expected = 100.0 * 0.7 + 110.0 * 0.3;
+                assert!((updates[0].new_value.as_f64().unwrap() - expected).abs() < 1e-9);
+            }
+            other => panic!("应有更新: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn 阈值策略接受加0点05忽略减0点05其余信号不动() {
+        let cfg = learnable(
+            LearningStrategy::ThresholdTuning,
+            vec![
+                SignalSource::AcceptSuggestion,
+                SignalSource::IgnoreSuggestion,
+            ],
+        );
+        let pkg = package(cfg);
+        let mut state = SkillState::new("s".into());
+        state
+            .learned_params
+            .insert("prompt_template".into(), serde_json::json!(0.5));
+
+        AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::AcceptSuggestion,
+            &HashMap::new(),
+        );
+        assert_eq!(
+            state.learned_params["prompt_template"],
+            serde_json::json!(0.55)
+        );
+
+        AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::IgnoreSuggestion,
+            &HashMap::new(),
+        );
+        assert_eq!(
+            state.learned_params["prompt_template"],
+            serde_json::json!(0.5)
+        );
+
+        // 非接受/忽略信号（阈值策略返回 None）→ 无变化
+        let result = AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::FollowupAction,
+            &HashMap::new(),
+        );
+        assert!(matches!(result, AdaptiveResult::NoChange));
+    }
+
+    #[test]
+    fn 排序偏好策略应按信号加减计分() {
+        let cfg = learnable(
+            LearningStrategy::RankPreference,
+            vec![
+                SignalSource::AcceptSuggestion,
+                SignalSource::FollowupAction,
+                SignalSource::IgnoreSuggestion,
+            ],
+        );
+        let pkg = package(cfg);
+        let mut state = SkillState::new("s".into());
+        state
+            .learned_params
+            .insert("prompt_template".into(), serde_json::json!(5));
+
+        AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::FollowupAction,
+            &HashMap::new(),
+        );
+        assert_eq!(
+            state.learned_params["prompt_template"],
+            serde_json::json!(6)
+        );
+
+        AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::IgnoreSuggestion,
+            &HashMap::new(),
+        );
+        assert_eq!(
+            state.learned_params["prompt_template"],
+            serde_json::json!(5)
+        );
+    }
+
+    #[test]
+    fn 首次学习无当前值时应直接采用上下文值() {
+        let cfg = learnable(
+            LearningStrategy::Frequency,
+            vec![SignalSource::ManualCategoryEdit],
+        );
+        let pkg = package(cfg);
+        let mut state = SkillState::new("s".into());
+        let result = AdaptiveEngine::process_signal(
+            &mut state,
+            &pkg,
+            SignalSource::ManualCategoryEdit,
+            &ctx_value(serde_json::json!("development")),
+        );
+        match result {
+            AdaptiveResult::Updated(updates) => {
+                assert_eq!(updates[0].new_value, serde_json::json!("development"));
+            }
+            other => panic!("应有更新: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn 回滚应清除早于时间戳的记录并按剩余历史重建参数() {
+        let mut state = SkillState::new("s".into());
+
+        state.record_learning(
+            SignalSource::AcceptSuggestion,
+            "prompt_template".into(),
+            serde_json::json!(null),
+            serde_json::json!("old"),
+            0.5,
+            100,
+        );
+        state.record_learning(
+            SignalSource::AcceptSuggestion,
+            "prompt_template".into(),
+            serde_json::json!("old"),
+            serde_json::json!("new"),
+            0.8,
+            100,
+        );
+
+        // 时间下界为 0：所有记录都应保留，参数按历史重建并清掉脏字段
+        state
+            .learned_params
+            .insert("dirty".into(), serde_json::json!(1));
+        assert_eq!(AdaptiveEngine::rollback(&mut state, 0), 0);
+        assert_eq!(state.learning_history.len(), 2);
+        assert_eq!(
+            state.learned_params.get("prompt_template"),
+            Some(&serde_json::json!("new")),
+            "参数应按剩余历史的最后一条重建"
+        );
+        assert!(!state.learned_params.contains_key("dirty"));
+
+        // 时间下界推到当前之后：全部记录被回滚，参数清空
+        let future = SkillState::now_secs() + 3600;
+        let rolled = AdaptiveEngine::rollback(&mut state, future);
+        assert_eq!(rolled, 2);
+        assert!(state.learning_history.is_empty());
+        assert!(state.learned_params.is_empty());
+    }
+}

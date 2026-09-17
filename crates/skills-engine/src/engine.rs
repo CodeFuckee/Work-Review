@@ -49,3 +49,49 @@ impl Default for SkillEngine {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn 引擎应加载全部内置技能() {
+        let engine = SkillEngine::new();
+        let ids: Vec<&str> = engine.list_skills().iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids.len(), 5);
+        assert!(ids.contains(&"daily_review"));
+        assert!(ids.contains(&"focus_session_advisor"));
+    }
+
+    #[test]
+    fn 引擎执行应走通并更新状态与统计() {
+        let mut engine = SkillEngine::new();
+        let result = engine.execute(
+            "weekly_summary",
+            &ExecutionContext {
+                params: HashMap::new(),
+                db_path: ":memory:".into(),
+                ai_endpoint: None,
+                ai_api_key: None,
+                ai_model: None,
+                allow_script_skills: false,
+            },
+        );
+        assert!(result.success, "{:?}", result.error);
+        assert!(
+            result.output.contains("query_prepared"),
+            "markdown 模板应渲染查询数据: {}",
+            result.output
+        );
+        assert!(engine.get_skill_state("weekly_summary").is_some());
+        let stats = engine.get_all_stats();
+        assert_eq!(stats.len(), 5, "每个注册技能都有统计条目");
+        let weekly = stats
+            .iter()
+            .find(|(id, _)| *id == "weekly_summary")
+            .unwrap();
+        assert_eq!(weekly.1.total_executions, 1);
+        assert_eq!(weekly.1.success_count, 1);
+    }
+}

@@ -381,3 +381,328 @@ impl SkillExecutor {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{OutputStep, Pipeline, QueryStep, SkillPackage, TransformStep};
+    use crate::registry::builtin_skills;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn ctx(allow_script: bool) -> ExecutionContext {
+        ExecutionContext {
+            params: HashMap::new(),
+            db_path: ":memory:".into(),
+            ai_endpoint: None,
+            ai_api_key: None,
+            ai_model: None,
+            allow_script_skills: allow_script,
+        }
+    }
+
+    fn package_with(pipeline: Pipeline, enabled: bool) -> SkillPackage {
+        SkillPackage {
+            id: "test_skill".into(),
+            name: "测试技能".into(),
+            description: "".into(),
+            version: "1.0.0".into(),
+            author: None,
+            category: crate::model::SkillCategory::Automation,
+            pipeline,
+            adaptive: Default::default(),
+            enabled,
+            required_permissions: vec![],
+        }
+    }
+
+    #[test]
+    fn 未注册技能应失败并报技能未找到() {
+        let mut registry = SkillRegistry::new();
+        let result = SkillExecutor::execute(&mut registry, "nope", &ctx(false));
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("技能未找到"));
+        assert!(result.output.is_empty());
+    }
+
+    #[test]
+    fn 已禁用技能应失败并报已禁用() {
+        let mut registry = SkillRegistry::new();
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::DailyStats { date: "d".into() },
+                transforms: vec![],
+                output: OutputStep::Text {
+                    template: "x".into(),
+                },
+            },
+            false,
+        ));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &ctx(false));
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("技能已禁用"));
+    }
+
+    #[test]
+    fn 未授权的script步骤应被安全门禁拒绝() {
+        let mut registry = SkillRegistry::new();
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::DailyStats { date: "d".into() },
+                transforms: vec![TransformStep::Script {
+                    language: "js".into(),
+                    code: "malicious".into(),
+                }],
+                output: OutputStep::Text {
+                    template: "x".into(),
+                },
+            },
+            true,
+        ));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &ctx(false));
+        assert!(!result.success, "未授权时必须拒绝执行");
+        assert!(result.error.unwrap().contains("Script"));
+    }
+
+    #[test]
+    fn 显式授权后script步骤可执行() {
+        let mut registry = SkillRegistry::new();
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::DailyStats { date: "d".into() },
+                transforms: vec![TransformStep::Script {
+                    language: "js".into(),
+                    code: "ok".into(),
+                }],
+                output: OutputStep::Text {
+                    template: "done".into(),
+                },
+            },
+            true,
+        ));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &ctx(true));
+        assert!(result.success, "显式授权后应放行: {:?}", result.error);
+        assert_eq!(result.output, "done");
+    }
+
+    #[test]
+    fn 查询参数模板应被上下文解析() {
+        let mut registry = SkillRegistry::new();
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::DailyStats {
+                    date: "{{date}}".into(),
+                },
+                transforms: vec![],
+                output: OutputStep::Json { schema: None },
+            },
+            true,
+        ));
+        let mut c = ctx(false);
+        c.params.insert("date".into(), json!("2026-09-17"));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &c);
+        assert!(result.success);
+        assert_eq!(result.content_type, OutputContentType::Json);
+        let value: Value = serde_json::from_str(&result.output).unwrap();
+        assert_eq!(value["type"], "daily_stats");
+        assert_eq!(value["date"], "2026-09-17", "模板变量应被解析");
+    }
+
+    #[test]
+    fn 文本输出应渲染数据字段与整体数据占位() {
+        let mut registry = SkillRegistry::new();
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::Custom {
+                    params: HashMap::new(),
+                },
+                transforms: vec![],
+                output: OutputStep::Text {
+                    template: "应用={{app}} 详情={{data}}".into(),
+                },
+            },
+            true,
+        ));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &ctx(false));
+        assert!(result.success);
+        assert_eq!(result.content_type, OutputContentType::Text);
+        assert!(
+            result.output.starts_with("应用="),
+            "Custom 查询产出的 params 无 app 字段时替换为空: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("custom"),
+            "{{data}} 应渲染完整查询 JSON"
+        );
+    }
+
+    #[test]
+    fn ai转换应包裹输入并保留提示词模板() {
+        let mut registry = SkillRegistry::new();
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::DailyStats {
+                    date: "2026-09-17".into(),
+                },
+                transforms: vec![TransformStep::AiTransform {
+                    prompt_template: "基于：{{data}}".into(),
+                    model: Some("qwen3".into()),
+                }],
+                output: OutputStep::Text {
+                    template: "{{data}}".into(),
+                },
+            },
+            true,
+        ));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &ctx(false));
+        assert!(result.success);
+        let value: Value = serde_json::from_str(&result.output).unwrap();
+        assert_eq!(value["ai_transform"], json!(true));
+        assert_eq!(value["model"], json!("qwen3"));
+        assert_eq!(value["input_data"]["type"], "daily_stats");
+    }
+
+    #[test]
+    fn 执行成功应记录统计() {
+        let mut registry = SkillRegistry::new();
+        let pkg = builtin_skills()
+            .into_iter()
+            .find(|s| s.id == "weekly_summary")
+            .unwrap();
+        registry.register(pkg);
+        let result = SkillExecutor::execute(&mut registry, "weekly_summary", &ctx(false));
+        assert!(result.success);
+        let stats = registry.get_execution_stats("weekly_summary").unwrap();
+        assert_eq!(stats.total_executions, 1);
+        assert_eq!(stats.success_count, 1);
+        assert_eq!(stats.failure_count, 0);
+    }
+
+    #[test]
+    fn 过滤排序聚合限流转换在当前实现下应保持数据不变() {
+        let mut registry = SkillRegistry::new();
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::DailyStats { date: "d".into() },
+                transforms: vec![
+                    TransformStep::Filter {
+                        field: "x".into(),
+                        operator: crate::model::FilterOperator::Eq,
+                        value: json!(1),
+                    },
+                    TransformStep::Sort {
+                        field: "x".into(),
+                        order: crate::model::SortOrder::Desc,
+                    },
+                    TransformStep::Aggregate {
+                        group_by: "x".into(),
+                        metric: crate::model::AggregateMetric::Count,
+                    },
+                    TransformStep::Limit { count: 10 },
+                ],
+                output: OutputStep::Json { schema: None },
+            },
+            true,
+        ));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &ctx(false));
+        assert!(result.success);
+        let value: Value = serde_json::from_str(&result.output).unwrap();
+        assert_eq!(
+            value["type"], "daily_stats",
+            "四类转换均透传时数据应原样到达输出"
+        );
+    }
+
+    #[test]
+    fn 各查询变体应产出对应类型与就绪状态() {
+        let variants: Vec<(QueryStep, Value, Value)> = vec![
+            (
+                QueryStep::Timeline {
+                    date: "d".into(),
+                    limit: Some(7),
+                },
+                json!({"type": "timeline"}),
+                json!("7"),
+            ),
+            (
+                QueryStep::SearchActivities {
+                    query: "q".into(),
+                    date_from: None,
+                    date_to: None,
+                    limit: 50,
+                },
+                json!({"type": "search_activities"}),
+                json!("q"),
+            ),
+            (
+                QueryStep::WorkSessions { date: "d".into() },
+                json!({"type": "work_sessions"}),
+                json!("d"),
+            ),
+            (
+                QueryStep::Report {
+                    date: "d".into(),
+                    locale: Some("zh-CN".into()),
+                },
+                json!({"type": "report"}),
+                json!("zh-CN"),
+            ),
+            (
+                QueryStep::AnalyzeIntents { date: "d".into() },
+                json!({"type": "analyze_intents"}),
+                json!("d"),
+            ),
+            (
+                QueryStep::DeviceStatus {},
+                json!({"type": "device_status"}),
+                json!(null),
+            ),
+        ];
+        for (query, expect, _) in variants {
+            let mut registry = SkillRegistry::new();
+            registry.register(package_with(
+                Pipeline {
+                    query,
+                    transforms: vec![],
+                    output: OutputStep::Json { schema: None },
+                },
+                true,
+            ));
+            let result = SkillExecutor::execute(&mut registry, "test_skill", &ctx(false));
+            assert!(result.success, "{:?}", result.error);
+            let value: Value = serde_json::from_str(&result.output).unwrap();
+            for (k, v) in expect.as_object().unwrap() {
+                assert_eq!(&value[k], v, "查询变体字段 {k} 不符");
+            }
+            assert_eq!(value["status"], "query_prepared");
+        }
+    }
+
+    #[test]
+    fn 设备状态查询与自定义参数查询应正确成型() {
+        let mut registry = SkillRegistry::new();
+        let mut params = HashMap::new();
+        params.insert("project".to_string(), json!("{{project}}"));
+        params.insert("count".to_string(), json!(3));
+        registry.register(package_with(
+            Pipeline {
+                query: QueryStep::Custom { params },
+                transforms: vec![],
+                output: OutputStep::Json { schema: None },
+            },
+            true,
+        ));
+        let mut c = ctx(false);
+        c.params.insert("project".into(), json!("g/p"));
+        let result = SkillExecutor::execute(&mut registry, "test_skill", &c);
+        assert!(result.success);
+        let value: Value = serde_json::from_str(&result.output).unwrap();
+        assert_eq!(
+            value["params"]["project"],
+            json!("g/p"),
+            "字符串参数应做模板解析"
+        );
+        assert_eq!(value["params"]["count"], json!(3), "非字符串参数应原样保留");
+    }
+}
