@@ -35,15 +35,15 @@ function activity(timestamp: number, id: number | null = 1) {
   };
 }
 
-test('提交行应与活动行按时间戳交错排序', () => {
+test('提交行应与活动行按时间戳交错排序（最新在最上）', () => {
   const rows = mergeTimelineRows(
     [activity(200), activity(100)],
     [commit('c', 150)],
   );
   assert.deepEqual(
     rows.map((row) => row.key),
-    [100, 150, 200],
-    '提交 150 应插在两条活动之间',
+    [200, 150, 100],
+    '降序排列，提交 150 应插在两条活动之间',
   );
   assert.equal(rows[1].kind, 'commit');
   assert.equal(rows[0].kind, 'activity');

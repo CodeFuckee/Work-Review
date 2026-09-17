@@ -27,8 +27,13 @@ export function mergeTimelineRows<TActivity extends { timestamp: number }>(
     ...activities.map((activity) => ({ kind: 'activity' as const, key: activity.timestamp, activity })),
     ...commits.map((commit) => ({ kind: 'commit' as const, key: commit.committed_at, commit })),
   ];
-  // key 相同时提交排在前（瞬时事件先于区间记录的展示习惯）；排序需稳定
-  rows.sort((left, right) => left.key - right.key || (left.kind === 'commit' ? -1 : 0) - (right.kind === 'commit' ? -1 : 0));
+  // 时间线页为「最新在最上」（prepareTimelineActivities 的既有约定），合并后
+  // 必须延续降序；同 key 时提交行在前（提交结束才轮到截图活动）。
+  rows.sort(
+    (left, right) =>
+      right.key - left.key ||
+      (left.kind === 'commit' ? -1 : 0) - (right.kind === 'commit' ? -1 : 0),
+  );
   return rows;
 }
 
