@@ -1,4 +1,4 @@
-# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮）
+# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮）
 
 评审范围：全部 71k 行 Rust（crates/core、crates/mcp-server、crates/skills-engine、src-tauri）
 + 15k 行 TS + 22k 行 Svelte（40 组件）+ CI 配置。按 code-review-skill 的 rust.md 与
@@ -11,6 +11,230 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 - ⏸ 待确认：修复必须改变对外行为/测试契约，按约定未经确认不动
 - 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
 - ⚠️ 仓库级：需人工处置的事项
+
+---
+
+# 第三轮（2026-09-17）
+
+范围：第二轮之后的增量变更（更新链路 CI 五提交）+ 全库七域复扫（crates/core、src-tauri
+服务层、commands/agent、bots/MCP/skills-engine、前端 TS 逻辑、Svelte 41 组件、CI/scripts），
+只报前两轮清单之外的新问题。
+
+## 第三轮已修复
+
+### 批次 1（Rust，commit a6e7c2b）
+
+- ✅ [P1] agent/tools.rs:1432 — SSRF 护栏 is_non_public_v4 不拦 0.0.0.0/8 非全零地址
+  （Linux/BSD 内核把该段目的地按本机处理，http://0.16.32.48:47831/ 直达本机 localhost
+  API）、100.64.0.0/10（CGNAT/tailnet）、198.18.0.0/15、组播、240/4 保留段 — 补判定
+  + 9 组回归（含 IPv4-mapped IPv6 形式）
+- ✅ [P1] storage.rs:56,169 + config.rs normalize — storage_limit_mb=0 时周期清理
+  "删到低于上限"循环永不满足，逐个删光全部截图目录（后端 normalize 对 storage 字段
+  零钳制，配置同步/手改配置可绕过 UI 下限直通入库）— normalize 钳 ≥256 + 回归测试
+- ✅ [P1] main.rs:3294 — 桌宠浮动窗（PiP）时长按单次轮询间隔（≈1s）记账且该检测块
+  只在截图发生的轮次执行到（未截图轮次早已 continue），macOS 上挂 30s 只记 ≈1s，
+  系统性低估约一个数量级 — 与主活动同口径按 elapsed_secs.max(1) 记账
+- ✅ [P1] feishu_bot.rs:129 — 飞书「回复消息」API body 字段名写错：content_type ≠
+  官方必填的 msg_type，进度/最终回复全部被服务端拒绝且进度分支静默吞错，整条飞书
+  通道无法回复任何消息 — 改 msg_type（对照 open.feishu.cn 官方文档）
+- ✅ [P2] wecom_aibot.rs:473 — 长连接 connect_async 无超时，防火墙 DROP 时 TCP 重试
+  挂 20~120 秒且状态面板停在"启动中"无反馈 — 包 tokio::time::timeout(10s)
+- ✅ [P2] localhost_api.rs:278 — mask_localhost_api_token 按字节切片，token 文件被手改成
+  多字节内容时非字符边界直接 panic（get_localhost_api_status 崩）— 按字符截取 + 回归
+- ✅ [P2] monitor.rs:4111 — parse_xdotool_geometry_shell_output 循环内 split_once('=')?，
+  输出混入任何无 '=' 的行（空行/告警）整个函数返回 None，按窗口裁剪静默退化为整屏
+  截图 — 无 '=' 行 continue
+- ✅ [P2] database.rs:3637 — create_assistant_conversation 的两条超额清理 DELETE 未包
+  事务，语句间崩溃留下无会话归属的孤儿 assistant_messages 且无任何入口清理 —
+  unchecked_transaction 包裹
+- ✅ [P2] database.rs:2717 — get_activities_in_range 用 WHERE (?1 IS NULL OR timestamp
+  >= ?1)，SQLite 无法把参数下推为索引范围约束，每次调用全表扫描+排序（agent 单轮
+  问答会多次以 5000/10000 limit 调用）— 按实参拼确定性条件，索引可走范围扫描
+- ✅ [P2] analysis/summary.rs:448 — try_openai_compatible_request 对所有 4xx 一律 break，
+  端点漏带 /v1 时服务器对首条 URL 恰返回 404/405，/v1 回退地址永不尝试（该回退在最
+  想解决的场景失效）— 404/405/410 视为路径级不匹配换下一候选，其余 4xx 照旧快速失败
+- ✅ [P2] commands/stats.rs:1230 — remove_screenshot_files 用 data_dir.join(&p) 直拼 DB
+  路径后 remove_file，未经 validated_join（第一轮已给截图"读取"路径加校验，删除路径
+  漏网），DB 内 screenshot_path 被污染可越出 data_dir 删文件 — 复用 validated_join
+- ✅ [P2] commands/report.rs:400 — daily_report_auto_export 是三个日报导出入口中唯一
+  不做敏感目录校验的（目录来源还含配置同步载荷）— 写入前补
+  ensure_export_dir_components_safe（自动导出目录允许尚不存在，故不做要求已存在的
+  validate_export_dir）；失败仅记日志保持"日报已落库"语义
+- ✅ [P2] commands/system.rs:640 — macOS 图标缓存硬编码共享 /tmp/work_review_icons_v4
+  （路径完全可预测、多用户共享，可被预置/污染 .b64 替换图标内容）— 改 std::env::temp_dir()
+- ✅ [P2] commands/ask.rs:2434 — WorkReview 模式每次提问无条件构造 system prompt（内含
+  实时上下文：系统调用+全局锁+300 行时间线聚合），FastPath/Fallback 无模型路径整段
+  丢弃纯属白付 — 按编排器同款 has_model 判定惰性构造
+- ✅ [P2] commands/stats.rs / system.rs — Windows 进程快照、Shell/GDI 图标 FFI、cocoa
+  msg_send 等 unsafe 块无 SAFETY 注释 — 逐块补齐（含提前返回路径的资源释放说明）
+
+### 批次 2（前端 TS + CI/scripts）
+
+- ✅ [P1] .gitlab-ci.yml publish-release — 该作业跑在 linux-x64 共享持久 workspace
+  （GIT_CLEAN_FLAGS 排除 target），产物经 artifact 解压获得，解压只覆盖同名文件不删
+  旧文件；bundle 清理只加在打包作业上，publish 漏了——上一版本通用名产物
+  （Yue-Review.app.tar.gz/.sig）残留，本次 mac runner 恰好再丢 .sig（v1.1.20 实测过）
+  时补签循环见旧 sig 非空即跳过重签，updater.json 变成"新包配旧签名"，客户端验签
+  永久失败（f516a19 根治修复的遗漏面）— 作业开头补同款 rm -rf bundle
+- ✅ [P2] scripts/verify-update-artifacts.mjs — 头部注释声称"签名字段非空且与本地 .sig
+  文件一致"，实现只查非空从不比对（上一条的"新包旧签"本应被这道防线拦住）—
+  补本地 .sig 去换行后逐字比对
+- ✅ [P2] scripts/verify-update-artifacts.mjs:69 — 阻断化后令牌无回退：--token-env
+  GIT_PUSH_TOKEN 为空直接 exit 1，而同作业 glab/curl 都有 CI_JOB_TOKEN 回退——
+  未配 GIT_PUSH_TOKEN 的标准 GitLab 实例上发布链必红（资产其实已上传）— 同款回退
+- ✅ [P2] .gitlab-ci.yml:478 — version-bump 的 git clean -ffdx（-x 含 ignored）把
+  GIT_CLEAN_FLAGS 特意排除的 target/.cargo/.npm 全删，每次发版抹掉增量编译缓存，
+  随后流水线三平台全量冷启动 — 加 -e target -e .cargo -e .npm
+- ✅ [P2] scripts/generate-updater-json.mjs:126 — isCliEntry 判定未 realpath 且大小写
+  敏感，symlink（macOS /tmp→/private/tmp、CI workspace 软链）或 Windows 大小写照面
+  时静默跳过主流程、退出码 0、updater.json 不落盘 — realpathSync（对齐 bump-version.mjs）
+- ✅ [P2] scripts/bump-version.mjs:38 — package.json/tauri.conf.json 用 "old"→"new"
+  全量替换，任一依赖恰好 pin 为当前应用版本号时被连坐升版（npm ci 失败或依赖被静默
+  升版）— 改锚定 `"version": "x.y.z"` 键值对替换（replaceVersionField）
+- ✅ [P2] scripts/stage-tauri-key.sh — 更新签名私钥临时文件落盘后从不清理，长期残留在
+  runner 共享 /tmp — trap EXIT 清理（本脚本在 CI 全部以 bash 子进程调用，export 不
+  回传父 shell，退出清理不影响后续步骤）。.ps1 **保持原样**：PowerShell 的
+  `& script.ps1` 是同进程子作用域，$env: 指向的文件被后续打包步骤真实消费，脚本内
+  清理会破坏 Windows 打包（评审初版建议的 finally 清理已在落地前识别并回退）
+- ✅ [P2] src/lib/stores/assistant.ts:300 — appendMessage 的 slice(-40) 与 setConversation
+  不设上限互相矛盾：切到超过 40 条的 SQLite 长会话后发一条消息，内存态即被静默裁到
+  40 条，用户眼前旧消息消失，且该残缺列表 500ms 后被写进 localStorage（重启后恢复的
+  也是残缺的）— 内存态不截断，localStorage 容量兜底统一收口 persistState（裁最近
+  40 条），新增回归测试 assistantPersist.test.ts 2 用例
+
+## 第三轮待确认（修复会改变行为/语义或涉及 UI 过目，按约定不动）
+
+### 安全类（建议优先确认；P0 族合并为一个批次即可动）
+- ⏸ [P0] validate_model_endpoint 校验缺口四路径（同族合并）：(a) embedding_endpoint
+  完全不校验——save_config 对五个端点都调校验唯独漏它，embed_texts/test_embedding_model
+  也不校验，远程 http:// 端点会把 Bearer API Key 与含屏幕 OCR 全文的记忆块明文外发
+  （semantic_memory.rs:192/807 + commands/config.rs:55-63）；(b) 已知 ⏸ ask.rs:1606 /
+  ai.rs:704；(c) main.rs:3672 classify_entities_with_model 自建请求不校验；(d)
+  config_sync.rs pull_and_apply 对同步配置整体替换后 persist_app_config 只 normalize
+  不校验。统一对齐调用校验即闭环，存量 http:// 端点用户会报错（行为收紧）
+- ⏸ [P1] localhost_api.rs:684 + mcp-server main.rs:788 — get_current_context 的 live
+  委托路径整体绕过用户隐私过滤：recent_apps 过滤了，primary_app/window_title/
+  browser_url 取自实时前台窗口未过滤，MCP 侧透传且 hint 内嵌完整标题——用户标记
+  Ignored/Excluded 的应用/域名经 MCP AI 客户端原样外泄（与 DB 回退路径口径矛盾；
+  与已知 💤 sanitize 缺口同域但根因不同）
+- ⏸ [P2] database.rs:3230 等已知 ⏸ LIKE 转义族的联动项：search_memory FTS 回退路径
+  三条 SQL 无任何文本条件只取最近 limit*12 条在 Rust 侧打分，FTS5 不分词中文几乎必
+  落回退——中文记忆搜索实际只命中最近 ~120 条活动/600 条摘要 — 与 LIKE 转义一并做
+- ⏸ [P2] privacy.rs:33 邮箱正则域名段贪婪且不限长，OCR 噪声合并域名可整段被"已过滤"
+  吞掉（低危，收紧会改变脱敏输出）
+- ⏸ [P2] database.rs search_user_memories — Rust 侧 to_lowercase（Unicode 折叠）与 SQL
+  侧 LOWER/LIKE（ASCII 折叠）不一致，带变音符查询永远匹配不到 — 需定目标语言面
+- ⏸ [P2] config.rs:1806 — migrate_legacy_config 的 vision_model 迁移条件永假（serde
+  默认即 "llava"），旧自定义视觉模型从不迁移（已知 ⏸ commands/config.rs:1780 的 core
+  侧独立实例）
+- ⏸ [P2] hourly.rs:102 / summary.rs:634 — OCR 关键词过滤 c >= '\u{4e00}' 是死条件
+  （CJK 本身 is_alphabetic），且含连字符的词（"pull-request"）被 all() 整体过滤 —
+  启发式调整
+- ⏸ [P2] About.svelte 手动"检查更新"未传 confirmBeforeDownload（默认 false），发现新版
+  跳过确认直接下载安装并重启 — 是否产品有意需确认（涉及 .svelte，随过目批次）
+
+### 正确性/行为类
+- ⏸ [P1] LocalizedDatePicker.svelte:21 — 星期表头基准用 Date.UTC(2026,2,1)（UTC 零点）
+  而网格用本地星期，UTC 负时区（如美国）本地化为 2/28 周六，表头整行错位一天，全部
+  日期选择器表头与日期列错位 — 改本地正午 new Date(2026,2,1,12)（涉及 .svelte，随
+  过目批次，建议优先）
+- ⏸ [P1] bot_common.rs:300 — /devices 对所有设备逐台串行健康检查（每台 10s 超时），
+  5 台不可达 = 50s，企微被动回调 5s 即被判超时重试（加剧已知 ⏸ 超时/去重问题）、
+  Telegram 阻塞长轮询循环 — 并发化与该 ⏸ 族联动处理
+- ⏸ [P2] gitlab.rs:416/513 — fetch_today_commits 逐项目串行无剩余时间预算（allowlist
+  空时最多 2000 项目 × 30s），自托管大实例拉满外层 300s 超时后 GitLab 小节整体丢失；
+  每项目只取最新 20 条后才做作者过滤，活跃共享仓库当天团队提交 >20 条时本人较早提交
+  被静默截断 — 需并发/翻页/服务端 author 参数设计
+- ⏸ [P2] semantic_memory.rs:596 — 已知 ⏸"末块游标被改写为 max_id"疑似半修复：仅整批
+  被过滤为空时才写独立 __cursor__ 行，非空批次仍 last_activity_id = max(last,
+  max_id)，批尾遇隐私排除应用仍会反复失败 — 需确认按原计划游标始终走独立行
+- ⏸ [P2] main.rs:3592 — 截图补传查询固定取最新 20 条缺 URL 记录，永久性失败的记录
+  每轮重试永不退让，更早缺口永远轮不到 — 需退避/排除设计
+- ⏸ [P2] screenshot.rs:849,1008-1256 + screen_lock.rs:118 — macOS screencapture、Linux
+  scrot/import/maim/grim 等、xrandr/gdbus、loginctl+pgrep 全部 .output() 无超时（与已
+  知 ⏸ WGC join 无超时是不同机制），任一工具挂起即截图循环永久停摆且发生在双锁持有
+  期间拖死全部 UI 命令 — 平台路径无法本地自动化验证（同第二轮处置），统一改带超时
+  封装
+- ⏸ [P2] localhost_api.rs:408 — sync_localhost_api_runtime 放锁后才 bind，快速连续保存
+  并发调用可双 bind，后败者 record_runtime_error 把状态改写为 stopped 而先启服务器
+  仍在运行 — 需绑定幂等/串行化
+- ⏸ [P2] node_gateway.rs:86 — 身份文件 JSON 损坏时永久报错不自愈（重建 device_id 还是
+  保留现场需产品决策）
+- ⏸ [P2] avatarStateMeta.ts — AvatarBubbleLocale 声明含 'ar' 但四组气泡词条全无 ar，
+  回退链首选 zh-CN，阿语界面桌宠气泡显示中文（en 也拿不到）— 需补翻译 + 回退顺序
+  决策（locale→en→zh-CN）
+- ⏸ [P2] src/lib/utils/updater.ts:285 — catch 不区分静默后台检查，离线/超时每次启动
+  无条件弹 toast + 阻塞模态（"静默"语义只覆盖"已是最新"分支）— catch 内读
+  silentWhenUpToDate（UI 可见行为，随过目批次）
+- ⏸ [P2 .svelte 待过目批次，建议下一轮一并处理]：
+  - SettingsStorage.svelte:585 「自动导出」开关漏 dispatch change（全页唯一），脏标记
+    失效后任何 config-changed 会把开关当着用户面翻回且修改丢失
+  - SettingsAppearance.svelte:595/612 avatar_click_through/avatar_body_hidden 两开关既
+    不 dispatch 也不 saveConfigQuietly——运行时即不生效、离开设置页静默丢失
+  - SettingsGeneral.svelte:226 toggleDockIcon 立即 set_dock_visibility 但从不 save_config
+    （重启回滚，与同页其他开关心智不一致）
+  - TelegramBotPanel.svelte:126 "Bot running" 硬编码英文（同组状态均已 t()）
+  - Timeline.svelte:1374-1389 时钟每秒整秒刷新（Overview 同模式已做分钟级节流并写明
+    动机），每秒新建 Intl.DateTimeFormat
+  - App.svelte:899 {#key currentLocale} 全路由重挂载：切语言丢设置页未保存修改/Ask 草稿/
+    Timeline 选中状态——设计代价需产品确认
+  - Ask.svelte:1030 工具步骤 running→done 时 Svelte 移除 open 属性，用户手动展开的
+    details 被强制折叠
+  - Overview.svelte:715 canStepOverviewDateForward 跨午夜后"下一日"按钮保持禁用（跨午
+    夜家族新实例）
+
+### CI 待确认（需发布链设计/实例核实，本机无法端到端验证）
+- ⏸ [P2] .gitlab-ci.yml:816,831 — PACKAGE_MACOS_X64=true 时两个 arch 的通用名
+  Yue-Review.app.tar.gz 上传到同一 registry 路径互相覆盖（字母序 x64 后传覆盖 arm64，
+  清单给 darwin-aarch64 分发 x64 包）；且 *_x64.app.tar.gz 选择器永不匹配原始文件名，
+  darwin-x86_64 永不进清单——当前 PACKAGE_MACOS_X64=false 休眠，启用前必须做
+  per-arch+version rename（参照 GitHub release.yml）
+- ⏸ [P2] .gitlab-ci.yml:824-850 — "自检失败=发布失败"实际时序是 verify 排在 release
+  create 与全部资产（含 updater.json）上传之后：自检抓到的任何问题都已对用户生效，
+  job 变红不会回收发布 — 需时序重排设计（先传包→verify→再传 updater.json/建 release）
+- ⏸ [P2] audit 作业 changes: 规则在 tag 流水线的评估语义（bump 提交的 push 流水线被
+  workflow 规则排除，lockfile 变更只能靠 tag 流水线 changes 触发审计）——若本实例对
+  tag 流水线 changes 评估为 false，每次正式发版完全跳过 Rust/npm 安全审计；建议在
+  v1.1.53+ tag 流水线上核实 audit 是否真实执行
+
+### 其他待确认
+- ⏸ [P2] crates/skills-engine adaptive.rs — AdaptiveEngine 全模块（process_signal/
+  rollback/pause_learning）在仓库内无任何调用方，learned_params 永不产生——属占位/
+  规划死代码，与已知 ⏸ executor 占位假成功条目合并处置
+- ⏸ [P2] crates/mcp-server — 不支持 JSON-RPC batch（数组）请求（当前主流 MCP 客户端
+  不使用，实际影响存疑）
+
+## 第三轮暂缓（💤）
+
+- 💤 [P2] database.rs:1598 delete_activities_before_date 把待删行 timestamp 逐行载入
+  Vec 再 Rust 侧转日期 — 可 SQL 聚合下推，但 SQLite date(...,'localtime') 与 chrono
+  Local 的时区语义在 DST 边界可能不一致，漏失效日报缓存比慢更危险，不动
+- 💤 [P2] commands/report.rs:114 export_daily_report_markdown 同步 thread::sleep 重试
+  （async 命令上下文最多占死 worker 1.5s）— async 化牵动 localhost_api 同步链路
+  （export_report_markdown_inner 被 HTTP handler 的同步 and_then 闭包调用），收益
+  不抵风险
+- 💤 [P2] bot_common api_get 每调用新建 Client 等 reqwest 复用点 — 归入已知 💤 Client
+  复用战役
+
+## 第三轮测试与流水线
+
+- 批次 1（Rust，a6e7c2b，已推送）：本地 cargo fmt --check ✓、clippy --workspace
+  --all-targets ✓、cargo test --workspace --all-targets 510+203+21 全过（含 SSRF 9 组、
+  存储钳制、token 掩码 3 个新回归）。
+- 批次 2（TS+CI+2 个补回归，本地提交待推送）：svelte-check 0 错误、node:test 807/807
+  全过（含 assistantPersist 2 用例）、vite build ✓；cargo fmt/clippy ✓、xdotool 与
+  删除路径 2 个新回归通过。
+- 流水线：批次 1（pipeline 2463）推送后遭遇 GitLab 自托管实例宕机约 2 小时（502/连接
+  超时）。恢复后 frontend、rust-verify-linux/windows/macos(retry)、
+  build-release-linux/windows 全部 success；唯 build-release-macos 三次尝试均失败：
+  前两次 server_timeout_running（恰 3600.0s，实例/runner 的 1 小时运行上限把声明
+  timeout:3h 的作业掐死——触碰 crates/core 的提交会使 mac release 编译全量重编，
+  在 1h 上限内跑不完；第三次 retry 后 28+ 分钟 runner 一直 pending 不领取作业，疑似
+  宕机期间作业被杀但 runner 本地进程/状态残留）。**定性为基础设施问题，需在 mac
+  机器上处置**（检查 gitlab-runner 与残留 cargo 进程、必要时清理 runner 构建目录
+  target/release、并把实例/runner 的 max timeout 提到 ≥2h），代码侧无可修项。
+  ⚠️ 该上限问题会咬住今后任何触碰 crates/core 的提交（compile 阶段 mac 必全量重编）。
+- 批次 2 按约定等批次 1 全绿后再推送；为保成果已先行本地提交（未推送）。
 
 ---
 

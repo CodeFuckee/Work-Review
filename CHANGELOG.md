@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 修复
+- **第三轮全量代码评审修复（行为保持，Rust 批次 + TS/CI 批次）**：
+  - **SSRF 护栏漏段（P1，Rust）**：Agent 联网工具的内网护栏 `is_non_public_v4` 不拦 0.0.0.0/8 非全零地址（Linux/BSD 内核把该段目的地按本机处理，`http://0.16.32.48:47831/` 可直达持有工作数据的本机 localhost API），也漏 100.64.0.0/10（CGNAT/Tailscale tailnet）、198.18.0.0/15、组播与 240/4 保留段；补齐判定并新增 9 组回归（含 IPv4-mapped IPv6 形式）。
+  - **存储上限 0 值删光全部截图（P1，Rust）**：`storage_limit_mb=0`（配置同步/手改配置可绕过设置页下限直通入库）会让周期清理把上限算成 0 字节、"删到低于上限"的循环永不满足，从最旧到最新逐个删光全部截图目录；`normalize` 阶段钳到 ≥256（与设置页下限对齐），新增回归测试。
+  - **桌宠浮动窗时长低估一个数量级（P1，Rust）**：浮动窗口（PiP 画中画）时长按单次轮询间隔（≈1s）记账，且该检测块只在截图发生的轮次执行到（未截图轮次早已 `continue`），macOS 上 PiP 挂 30s 只累计 ≈1s；改为与主活动同口径按"距上次采集的实际间隔"记账。
+  - **飞书机器人无法回复任何消息（P1，Rust）**：「回复消息」API 请求体字段名写成 `content_type`，飞书官方必填字段为 `msg_type`——进度提示与最终回复全部被服务端校验拒绝，且进度分支静默吞错；修正字段名。
+  - **发布产物"新包配旧签名"残留面（P1，CI）**：publish-release 跑在共享持久 workspace，产物经 artifact 解压获得（只覆盖同名、不删旧文件），bundle 清理此前只加在打包作业上——上一版本的通用名产物 `Yue-Review.app.tar.gz/.sig` 残留，mac runner 再次偶发丢 `.sig` 时补签循环见旧签名非空即跳过，更新清单会变成"新包配旧签名"、客户端验签永久失败；publish-release 作业开头补同款 bundle 清理，产物自检脚本补上头部注释声称却未实现的"清单签名与本地 .sig 逐字比对"，并为自检令牌补齐与同作业 glab/curl 一致的 `CI_JOB_TOKEN` 回退。
+  - **长会话发消息即截断可见历史（P2，前端 TS）**：助手 store 的 `appendMessage` 带 `slice(-40)` 上限而 `setConversation` 全量装入不设上限互相矛盾——切到超过 40 条的 SQLite 长会话后发一条消息，内存态即被静默裁到 40 条（旧消息"眼前消失"）且残缺列表被写回 localStorage；改为内存态不截断，localStorage 容量兜底统一收口到持久化层（裁最近 40 条），新增回归测试（`assistantPersist.test.ts`）。
+  - **其余修复**：企微 AI 机器人长连接建立无超时（防火墙 DROP 时挂 20~120 秒，包 10s 超时）；localhost API token 掩码按字节切片在手改多字节内容时 panic（改按字符截取 + 回归）；xdotool 窗口几何解析遇到无 `=` 的行整条失败退化为整屏截图（改为跳过）；助手会话新建与超额清理两条 DELETE 未包事务、崩溃留孤儿消息（包同事务）；`get_activities_in_range` 的 `(?1 IS NULL OR …)` 写法令索引失效每次全表扫描（按实参拼确定性条件）；OpenAI 兼容端点漏带 `/v1` 时的候选地址回退对所有 4xx 一律中止、永不尝试 /v1 地址（404/405/410 改为换下一候选）；删除活动记录的截图文件路径未过 `validated_join` 即删除（复用校验）；日报自动导出是三个导出入口中唯一不做敏感目录校验的（补组件校验，失败仅记日志）；macOS 应用图标缓存硬编码共享 `/tmp` 可被同机其他用户污染（改用户级临时目录）；无模型问答不再白付实时上下文采集（按编排器同款 has_model 判定惰性构造）；Windows/macOS FFI 的 unsafe 块补 SAFETY 注释；version-bump 的 `git clean -ffdx` 不再抹掉 runner 增量编译缓存（排除 target/.cargo/.npm）；`generate-updater-json.mjs` 的 CLI 入口判定改 realpathSync（软链/大小写照面时此前会静默退出 0 不产清单）；`bump-version.mjs` 的版本替换改锚定 `"version": "x.y.z"` 键值对（全量替换会误伤恰好同版本号的依赖）；更新签名私钥临时文件在 shell 侧加退出清理（PowerShell 侧保持原样——该文件被后续打包步骤真实消费）。
+
 ### 新增
 - **更新链路测试（层次化发布门禁）**：修复“更新后版本号不变”缺陷（发布时安装包选择被 runner 构建目录里累积的旧版产物污染，v1.1.47 起的更新清单全部指向 v1.1.46 安装包，用户每次“更新”都在重装 v1.1.46）过程中新增三层测试，防止同类问题再次溜进发布：
   - **发布产物端到端自检**（`scripts/verify-update-artifacts.mjs`，publish-release 上传完成后运行）：以下载方视角重新拉取更新清单与安装包，校验清单版本一致、各平台下载 URL 与本地上传文件一致、远端安装包 SHA256 与本地一致、签名字段非空；当前为**观察模式**（失败只打 ⚠️ 不阻断，因安装包按版本选择的根因修复尚未落地），根因修复后升级为阻断发布；
