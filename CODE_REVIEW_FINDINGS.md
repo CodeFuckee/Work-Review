@@ -112,7 +112,19 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
   cargo test --workspace --all-targets 513+222+21+30 全过（含控制字符剥离新回归）；
   svelte-check 0 错误、node:test 821/821 全过（含 bump-version 2 个新回归）、
   vite build ✓。
-- 流水线：见各批次推送后的监控记录（待补）。
+- 流水线（pipeline 2541，push d9b42c3）：**测试门禁 4/4 job 全部 success**
+  （frontend 20s、rust-verify-linux 38s、rust-verify-windows 1m49s、
+  rust-verify-macos 33m09s），build-release-windows/linux success；
+  build-release-macos 三次尝试均失败：第 1 次在 get_sources 后日志即中断
+  （GitLab 自托管实例经 SafeLine WAF 宕机约 40 分钟，切断 runner 上报）后被服务器
+  恰在 3600.0s 杀掉；第 2、3 次重试网络干净、编译正常推进（第 3 次已到最后的
+  src-tauri crate），但均以 `server_timeout_running`、`duration: 3600.0` 收场——
+  即第三轮已记录的 mac runner 1 小时运行上限（第三轮 ⚠️ 预言："触碰 crates/core
+  的提交会使 mac release 编译全量重编，在 1h 上限内跑不完"）。**定性为基础设施
+  问题，需在 mac 机器上处置**（把 runner/实例 max timeout 提到 ≥2h 后在
+  pipeline 2541 上 retry build-release-macos，version-bump 随后补跑即可出
+  v1.1.62），代码侧无可修项；发布链未受代码影响（windows/linux 包与全部测试
+  均 green）。version-bump 因依赖 mac 打包未执行，本次推送未切出 release tag。
 
 
 ---
