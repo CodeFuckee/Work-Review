@@ -42,7 +42,7 @@ ARG ADMIN_CORE_REPO
 ARG ADMIN_CORE_REF
 RUN apk add --no-cache git \
     && git clone --depth 1 --branch "${ADMIN_CORE_REF}" "${ADMIN_CORE_REPO}" /src/Admin.Core \
-    && rm -f /src/Admin.Core/pnpm-workspace.yaml
+    && rm -f /src/Admin.Core/pnpm-workspace.yaml /src/Admin.Core/ui/zhontai.ui.admin.vue3/pnpm-workspace.yaml
 # 根级 pnpm-workspace.yaml 会让子目录 pnpm install 报 packages field missing（上游新增），删除之
 WORKDIR /src/Admin.Core/ui/zhontai.ui.admin.vue3
 # pnpm 钉 9.x：corepack 默认拉 pnpm 12，其 supply-chain policy 与上游锁文件不兼容
