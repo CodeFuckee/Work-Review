@@ -3671,6 +3671,10 @@ async fn classify_entities_with_model(
         .timeout(std::time::Duration::from_secs(60))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
+        .map_err(|e| {
+            log::warn!("实体分类 HTTP client 构建失败，本轮跳过语义分类: {e}");
+            e
+        })
         .ok()?;
     let mut request = client.post(&url).json(&serde_json::json!({
         "model": model.model,
@@ -3682,7 +3686,14 @@ async fn classify_entities_with_model(
         request = request.header("Authorization", format!("Bearer {key}"));
     }
 
-    let response = request.send().await.ok()?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| {
+            log::warn!("实体分类模型请求发送失败（DNS/连接/超时），本轮跳过语义分类: {e}");
+            e
+        })
+        .ok()?;
     if !response.status().is_success() {
         log::warn!("实体分类模型调用失败: HTTP {}", response.status());
         return None;
