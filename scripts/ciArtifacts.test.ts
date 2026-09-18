@@ -11,7 +11,7 @@ test('stages 应包含 daily-package（在 compile 与 audit 之间）', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
   assert.match(
     yaml,
-    /stages: \[verify, compile, daily-package, audit, version, preflight, package, publish\]/,
+    /stages: \[verify, compile, daily-package, audit, deploy-admin, version, preflight, package, publish\]/,
   );
 });
 

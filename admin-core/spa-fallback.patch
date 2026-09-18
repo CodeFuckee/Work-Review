@@ -1,0 +1,26 @@
+diff --git a/src/modules/admin/ZhonTai.Admin.Core/HostApp.cs b/src/modules/admin/ZhonTai.Admin.Core/HostApp.cs
+index 1d4046c..8cacdb4 100644
+--- a/src/modules/admin/ZhonTai.Admin.Core/HostApp.cs
++++ b/src/modules/admin/ZhonTai.Admin.Core/HostApp.cs
+@@ -846,6 +846,21 @@ public class HostApp
+             app.UseMiniProfiler();
+         }
+ 
++        //SPA fallback（bim5d 定制）：history 路由前端的无扩展名深链接（排除 /api、/swagger）回退到 index.html
++        app.Use(async (context, next) =>
++        {
++            var path = context.Request.Path.Value ?? "/";
++            if (HttpMethods.IsGet(context.Request.Method)
++                && path != "/"
++                && !path.StartsWith("/api", StringComparison.OrdinalIgnoreCase)
++                && !path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase)
++                && !System.IO.Path.HasExtension(path))
++            {
++                context.Request.Path = "/";
++            }
++            await next();
++        });
++
+         //静态文件
+         app.UseDefaultFiles();
+         app.UseStaticFiles();
