@@ -58,6 +58,8 @@ RUN npm i -g pnpm@9.15.9 \
               -e 's|content="中台Admin"|content="工作回顾管理后台"|g' index.html \
     && grep -q "工作回顾管理后台" src/stores/themeConfig.ts index.html src/layout/footer/index.vue \
     && npm run build \
+    # POC-4：vite 8 产物嵌套在 dist/src/Admin.Core/ui/zhontai.ui.admin.vue3/ 下，先归并到 dist 根
+    && if [ -d dist/src ]; then cp -r dist/src/Admin.Core/ui/zhontai.ui.admin.vue3/. dist/ && rm -rf dist/src; fi \
     && sed -i 's|"VITE_API_URL": *"[^"]*"|"VITE_API_URL": ""|' dist/env.config.js \
     && grep -q '"VITE_API_URL": ""' dist/env.config.js \
     && ! grep -q "中台Admin" dist/index.html dist/env.config.js \
