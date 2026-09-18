@@ -1,4 +1,4 @@
-# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮 / 2026-09-18 第四轮）
+# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮 / 2026-09-18 第四轮 / 2026-09-19 第五轮）
 
 评审范围：全部 71k 行 Rust（crates/core、crates/mcp-server、crates/skills-engine、src-tauri）
 + 15k 行 TS + 22k 行 Svelte（40 组件）+ CI 配置。按 code-review-skill 的 rust.md 与
@@ -11,6 +11,89 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 - ⏸ 待确认：修复必须改变对外行为/测试契约，按约定未经确认不动
 - 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
 - ⚠️ 仓库级：需人工处置的事项
+
+# 第五轮（2026-09-19）
+
+范围：第四轮之后增量（admin-core Dockerfile/SPA 补丁、deploy-admin-core-yx 部署作业与
+多次 CI 修复）逐行评审 + 全库五维复扫（Rust bots/updater/agent 面 SSRF·吞错·并发、
+前端 stores/utils/components/scripts、SQL/XSS 面复核）+ 第四轮 9 项修复完好性抽检
+（全部完好）。新发现 12 条 + 2 条既有仓库级项：8 条行为保持本轮修复（批次 1 = Rust
+480778e；批次 2 = CI/脚本 d772772），4 条涉行为/仓外配置列入待确认，1 条涉 .svelte
+归过目批次，另 3 条 P2 健康检查类暂缓。
+
+## 第五轮已修复
+
+### 批次 1（Rust，480778e）
+
+- ✅ [P1] src-tauri/src/dingtalk_bot.rs:157,186-191 — sessionWebhook 出站 client 未设重定向
+  策略（reqwest 默认跟 10 跳），域名白名单只校验初始 URL：`*.dingtalk.com` 任一端点 30x
+  即把请求发往白名单外地址，307/308 原样重发 POST body（整段日报内容外泄；与既有⏸"签名
+  不盖 body"窗口叠加）— 出站改 `redirect(Policy::none())` 专用 client（白名单语义即
+  "只许直连钉钉"；正常路径钉钉直接 200 行为不变；全仓第三个发外链面，remote_upload 与
+  agent/tools 此前已分别用 Policy::none/逐跳校验）
+- ✅ [P2] src-tauri/src/feishu_bot.rs:95 — `TOKEN_CACHE.lock().ok()?` 把 PoisonError 吞成
+  None：任一次持锁 panic 后租户 token 永久获取失败，飞书回复通道整体静默失效且重启前
+  不可自愈（与仓库他处 into_inner 口径不一致）— 中毒时 `unwrap_or_else(into_inner)`
+  恢复读，缓存仅是加速器、语义不变
+- ✅ [P2] src-tauri/src/feishu_bot.rs:124 — 事件里的 message_id 未编码直接进 URL path，
+  含 `/?#` 可改写回复请求的 path/query 结构（仍限 open.feishu.cn 域、需持 verification
+  token，实际风险低）— 补 `encode_path_segment` 百分号编码（RFC 3986 unreserved 保留集
+  覆盖真实 om_ id，编码后恒等）+ 单测
+- ✅ [P2] src-tauri/src/main.rs:3674,3685 — classify_entities_with_model 的 client 构建
+  `.ok()?` 与 send `.ok()?` 全静默（仅 HTTP 非 2xx 分支有 warn），DNS/连接故障时实体
+  分类静默消失无从排查 — 两处各补 log::warn（返回 Option 的降级语义不变）
+
+### 批次 2（CI/脚本，d772772）
+
+- ✅ [P1] admin-core/Dockerfile:58 — 品牌化 sed `s|content="[^"]*"|…|g` 把 index.html
+  全部 content 属性刷成品牌文案：viewport（`content="width=device-width…"`）与
+  X-UA-Compatible 一并毁掉，admin UI 移动端布局失配（POC 桌面端测不出）— 收窄到
+  title/keywords/description 三个目标（`name="…" content=` 锚定），加"viewport 必须原样
+  保留"构建期守卫 grep（busybox sed 兼容）
+- ✅ [P2] scripts/bump-version.mjs:88-97 — replaceCargoToml 仍文件级 split/join：依赖恰好
+  pin 成当前应用版本号被连坐升版（第四轮修掉 JSON 侧后的同族残留）— 改 `[package]` 段内
+  锚定（段内 version 与全局版本不一致时直接报错）+ 回归测试（依赖 pin 1.2.99 不被升版、
+  仅 [package] 一处 1.3.0）
+- ✅ [P2] scripts/setup-codesign.sh:22-59 — 自签名私钥落共享 /tmp 且清理只在成功路径：
+  set -e 下任一步失败即带私钥残留多用户可读目录 — `umask 077` + `trap …EXIT` 全路径清理
+- ✅ [P2] scripts/deb/reinstall.sh:39-45,194 — `run()` 用 eval 执行含 $DEB 的命令：
+  cwd 被投放 `Work_Review_a;$(…).deb` 即以 sudo 执行任意命令（DEB 来自 $PWD glob/
+  WR_DEB）— 污染路径改 argv 版 run_argv（%q 干跑回显；其余纯常量 eval 调用点不动）
+
+## 第五轮待确认（修复会改对外行为/涉仓外配置，未经确认不动）
+
+- ⏸ [P1] .gitlab-ci.yml:167-171 + admin-core/Dockerfile:25,44 — GIT_PUSH_TOKEN 拼进
+  clone URL 作 build-arg 传入两次 git clone：`git ls-remote`/容器内 clone 失败时带 token
+  的 URL 原样进作业日志（能否被遮蔽取决于该 CI 变量是否勾选 masked，仓库内无法验证）；
+  ARG 值也会留在 runner 本地构建缓存。建议：先核验 GitLab 变量 masked 勾选；根治可迁
+  BuildKit `--secret`（需先确认 yx runner docker 支持 buildkit）
+- ⏸ [P2] src-tauri/src/bot_common.rs:383 + commands/shared.rs:105-129 — `/report` 日期
+  参数未识别时原样返回并拼进 `{device.url}/v1/reports/{date}`：`/report ../../health`
+ 可借 reqwest 点段规范化改写路径，探测 node_devices 同源任意端点并把 JSON content 反射
+  回群聊（全部 bot 共用）；修法 = 强制 `^\d{4}-\d{2}-\d{2}$` 白名单 + 固定提示——但会改
+  变 bot 对非法输入的回复文案，待确认
+- ⏸ [P2] src-tauri/src/wecom_aibot.rs:528-539 — 主循环对每条 WS 文本消息无条件
+  tokio::spawn 无并发上限：`/generate` 长跑期间刷消息会无界堆积任务与内存（out_tx 16
+  容量只限流回复帧发送）；修法 = Arc<Semaphore>（如 4 许可）或改顺序处理——改变高负载下
+  的并发/排队语义，待确认
+- ⏸ [P2] .gitlab-ci.yml:186 — 部署健康检查 `!=000 && <500` 连 404 都算上线（wwwroot
+  缺失时误报健康）；收紧到 2xx/3xx 前需先确认真实响应码形态，待确认
+
+## 第五轮待过目批次（.svelte，按红线待用户过目）
+
+- 💤 [P2] src/lib/components/Avatar/AvatarCanvas.svelte:151 — 鼠标手臂闭合点用魔法下标
+  `pss[36]/pss[37]`，隐式依赖 oof=6 推出的 38 项长度：任何采样密度调整即越界出 NaN
+  静默吞掉整条鼠标手臂 — 改 `pss[pss.length-2]/[pss.length-1]`（当前输出恒等，涉
+  .svelte 归过目批次）
+
+## 第五轮复核无新问题（抽样说明）
+
+database.rs 全 SQL 参数化 + VACUUM INTO 已转义 + 动态 WHERE 恒为常量条件；前端 3 处
+{@html} 均过 DOMPurify（marked→sanitize 链路闭合）、无 innerHTML/eval/javascript: 面；
+Command::new 均固定程序名+argv；telegram/wecom bot 验签·退避·停机判定、agent 编排
+Deadline 贯通、semantic_memory 隐私双重校验、skills-engine Script 门禁均复核完好；
+avatar/窗口组件定时器与监听器清理完整；capture-star-history/fetch-provider-icons 等
+脚本无 shell 拼接。第四轮 9 项修复抽检全部完好。
 
 # 第四轮（2026-09-18）
 

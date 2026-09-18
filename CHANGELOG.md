@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **第五轮全量代码评审修复（行为保持，Rust 批次 + CI 脚本批次）**：
+  - **钉钉 webhook 出站重定向绕过 SSRF 白名单（P1，安全）**：回复消息用的 HTTP client 未设重定向策略（reqwest 默认跟随 10 跳），`sessionWebhook` 域名白名单只校验初始 URL——`*.dingtalk.com` 上任一端点 30x 重定向即可把请求发往白名单外地址，307/308 还会原样重发 POST body（即整段日报内容外泄）。出站改用 `redirect(Policy::none())` 专用 client（白名单语义本就是"只许直连钉钉"；正常路径钉钉直接 200，行为不变）。
+  - **飞书 token 缓存锁中毒放大为整条回复通道失效（P2）**：`TOKEN_CACHE.lock().ok()?` 把 PoisonError 静默吞成 None——任何一次持锁 panic 后租户 token 永久获取失败、飞书回复全灭且无日志、重启前不可自愈；改为中毒时 `into_inner()` 恢复（缓存仅是加速器，语义不变）。
+  - **飞书 message_id 未经编码直接进 URL path（P2，加固）**：事件里的 message_id 若含 `/?#` 等字符可改写回复请求的 path/query 结构；补 path 段百分号编码（飞书真实 om_ id 全在保留集内，编码后恒等），配单测。
+  - **实体分类模型调用传输层失败全静默（P2，可诊断性）**：`classify_entities_with_model` 的 client 构建 `.ok()?` 与请求发送 `.ok()?` 均无日志（只有 HTTP 非 2xx 分支有 warn），DNS/连接故障时语义分类静默消失无从排查；两处各补一条 `log::warn`（降级语义不变）。
+  - **管理后台品牌化 sed 毁掉 viewport meta（P1，admin-core 镜像）**：`index.html` 的品牌替换用 `content="[^"]*"` 全量匹配——viewport、X-UA-Compatible 的 content 属性一并被刷成品牌文案，移动端布局失配（POC 桌面端测不出）。收窄到 title/keywords/description 三个目标，并加"viewport 必须原样保留"的构建期守卫。
+  - **bump-version 对 Cargo.toml 仍全量替换（P2，CI 脚本）**：第四轮修掉 JSON 侧"依赖恰好 pin 成当前版本号被连坐升版"后，`replaceCargoToml` 仍是文件级 split/join 同族残留；改为 `[package]` 段内锚定（段内 version 与全局版本不一致时直接报错），配回归测试。
+  - **codesign 脚本私钥残留共享 /tmp（P2，本地脚本）**：`setup-codesign.sh` 生成的签名私钥落 `/tmp/wr_key.pem`，清理只在成功路径末尾——任一步失败即带私钥残留多用户可读目录；加 `umask 077` 收紧新建文件权限 + `trap ... EXIT` 全路径清理。
+  - **reinstall.sh 对 DEB 路径 eval 执行（P2，本地脚本）**：`run()` 用 `eval` 执行含 `$DEB` 的安装命令，当前目录被投放 `Work_Review_a;$(…).deb` 这类文件名即以 sudo 权限执行任意命令；被污染路径改走 argv 版 `run_argv`（不经 shell 再解释），其余纯常量命令保持原样。
+
 - **第四轮全量代码评审修复（行为保持，Rust 批次 + CI 脚本批次）**：
   - **Tauri 能力授权裁剪（P1，安全）**：`capabilities/migrated.json` 授予了前端从未使用的能力——fs 插件的读/写/删/改名/建目录（scope 还含 `$RESOURCE/**`，Windows 上即安装目录）与 `shell:allow-execute`（命令 `open`，参数验证器仅要求非空白）。前端既无 `@tauri-apps/plugin-fs` 依赖也从无 `Command.execute` 调用，这些授权只构成"renderer 被攻陷后"的提权面：可写/删安装目录内文件、可借 PATH 解析执行同名 `open` 程序。裁剪为仅保留实际使用的 `shell:allow-open` 与 `fs:default` 基线。
   - **GitLab 提交文本控制字符剥离（P2，安全加固）**：提交标题/项目路径/分支名来自 GitLab API（自托管实例被劫持时即不可信），此前未剥控制字符直接拼进日报 markdown——标题携带 `\n## …` 即可注入伪造小节/列表行。现于拉取构造条目处统一剥离（控制字符折叠为空格），真实 git 提交标题不含控制字符、对正常输入输出不变；配回归测试。
