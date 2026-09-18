@@ -44,6 +44,19 @@ run() {
     fi
 }
 
+# argv 版 run：不经 eval，参数里的 ;/$(...) 等元字符不会被 shell 再解释。
+# 用于携带外部输入（如 $PWD 扫描出的 $DEB 文件名）的命令——eval 版会把
+# 文件名里的元字符当命令执行（sudo 权限）。
+run_argv() {
+    if [ "$DRY" -eq 1 ]; then
+        printf '\033[2m[dry]\033[0m'
+        printf ' %q' "$@"
+        printf '\n'
+    else
+        "$@"
+    fi
+}
+
 do_rm() {
     local t="$1"
     if [ ! -e "$t" ] && [ ! -L "$t" ]; then return 0; fi
@@ -191,7 +204,7 @@ fi
 
 log "  sudo apt install $DEB (auto-resolves dependencies)"
 run "sudo apt-get update -qq"
-run "sudo apt-get install -y \"$DEB\""
+run_argv sudo apt-get install -y "$DEB"
 
 log "  ensuring Chinese OCR language packs"
 OCR_MISSING=()

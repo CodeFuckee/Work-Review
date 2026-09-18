@@ -7,6 +7,11 @@
 
 set -euo pipefail
 
+# 私钥落盘 /tmp：收紧新建文件权限（默认 0644 在多用户机上全局可读），
+# 且任何一步失败都经 trap 清理，避免带私钥半途退出后残留共享目录
+umask 077
+trap 'rm -f /tmp/wr_key.pem /tmp/wr_cert.pem /tmp/wr_cert.p12' EXIT
+
 CERT_NAME="WorkReview Self-Signed"
 KEYCHAIN=~/Library/Keychains/login.keychain-db
 

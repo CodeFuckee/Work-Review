@@ -162,3 +162,21 @@ test('任一版本源变换失败时零写入，不留半升版工作区', (t) =
     'tauri.conf.json 不得被写入新版本',
   );
 });
+
+test('src-tauri/Cargo.toml 依赖恰好 pin 成当前版本号时不得被连坐升版', (t) => {
+  const dir = fixtureRepo(t);
+  const cargoPath = join(dir, 'src-tauri', 'Cargo.toml');
+  writeFileSync(
+    cargoPath,
+    '[package]\nname = "work-review"\nversion = "1.2.99"\n\n[dependencies]\nwork-review-core = { path = "../core", version = "1.2.99" }\n',
+    'utf8',
+  );
+
+  const result = spawnSync(process.execPath, [SCRIPT, '--root', dir], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+
+  const cargo = readFileSync(cargoPath, 'utf8');
+  assert.match(cargo, /^\[package\]\nname = "work-review"\nversion = "1\.3\.0"$/m, '[package] 段自身版本应升版');
+  assert.match(cargo, /version = "1\.2\.99"/, '依赖恰好 pin 成旧版本号时必须原样保留');
+  assert.equal(cargo.match(/1\.3\.0/g)?.length, 1, '只有 [package] 一处升版');
+});

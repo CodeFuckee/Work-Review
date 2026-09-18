@@ -55,8 +55,11 @@ RUN npm i -g pnpm@9.15.9 \
               -e "s|globalViceTitleMsg: '[^']*'|globalViceTitleMsg: '工作回顾集中管理平台'|" src/stores/themeConfig.ts \
     && sed -i -E -e "s|Copyright © [0-9]{4} [^<]*All rights reserved.|Copyright © 2026 工作回顾 All rights reserved.|" src/layout/footer/index.vue \
     && sed -i -E -e 's|<title>[^<]*</title>|<title>工作回顾管理后台</title>|' \
-              -e 's|content="[^"]*"|content="工作回顾管理后台"|g' index.html \
+              -e 's|(name="keywords"[[:space:]]+content=")[^"]*"|\1工作回顾管理后台"|' \
+              -e 's|(name="description"[[:space:]]+content=")[^"]*"|\1工作回顾管理后台"|' index.html \
     && grep -q "工作回顾管理后台" src/stores/themeConfig.ts index.html src/layout/footer/index.vue \
+    # 只允许动 title/keywords/description：viewport、X-UA-Compatible 等其余 content 属性必须原样保留
+    && grep -q 'name="viewport" content="width=device-width' index.html \
     && npm run build \
     # POC-4：vite 8 产物嵌套在 dist/src/Admin.Core/ui/zhontai.ui.admin.vue3/ 下，先归并到 dist 根
     && if [ -d dist/src ]; then cp -r dist/src/Admin.Core/ui/zhontai.ui.admin.vue3/. dist/ && rm -rf dist/src; fi \

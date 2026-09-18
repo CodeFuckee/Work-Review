@@ -84,16 +84,28 @@ function replaceCargoLock(text, oldVersion, newVersion) {
   return text.split(pattern).join(`[[package]]\nname = "work-review"\nversion = "${newVersion}"`);
 }
 
-/** Cargo.toml：替换与旧版本一致的 `version = "x.y.z"` 行（依赖的 `version = "2"` 等不会误伤）。 */
+/**
+ * Cargo.toml：只替换 [package] 段内的 `version = "x.y.z"`。
+ * 不做文件级全量替换：任一依赖恰好 pin 成当前应用版本号时，split/join
+ * 会把它连坐升版（与 replaceVersionField 第四轮修掉的缺陷同族）。
+ * [package] 段自身 version 与 oldVersion 不一致时直接报错。
+ */
 function replaceCargoToml(text, oldVersion, newVersion) {
-  const pattern = `version = "${oldVersion}"`;
-  if (!text.includes(pattern)) {
-    const match = text.match(/^version\s*=\s*"([^"]+)"/m);
+  const sectionAt = text.indexOf('[package]');
+  if (sectionAt < 0) throw new Error('src-tauri/Cargo.toml 未找到 [package] 段');
+  const nextSectionAt = text.indexOf('\n[', sectionAt + 1);
+  const section = text.slice(sectionAt, nextSectionAt < 0 ? text.length : nextSectionAt);
+  const versionRe = /^version[ \t]*=[ \t]*"([^"]+)"/m;
+  const match = section.match(versionRe);
+  if (!match) throw new Error('src-tauri/Cargo.toml [package] 段未找到 version 字段');
+  if (match[1] !== oldVersion) {
     throw new Error(
-      `src-tauri/Cargo.toml 未找到版本 ${oldVersion}${match ? `（当前 ${match[1]}）` : ''}`,
+      `src-tauri/Cargo.toml 版本 ${match[1]} 与 package.json ${oldVersion} 不一致`,
     );
   }
-  return text.split(pattern).join(`version = "${newVersion}"`);
+  const needleAt = sectionAt + section.indexOf(match[0]);
+  const replacement = match[0].replace(oldVersion, newVersion);
+  return text.slice(0, needleAt) + replacement + text.slice(needleAt + match[0].length);
 }
 
 function readWithCheck(root, relative) {
