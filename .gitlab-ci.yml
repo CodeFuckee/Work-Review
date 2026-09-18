@@ -164,7 +164,8 @@ deploy-admin-core-yx:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     # 1. 构建一体化镜像（Admin.Core 源由 gitee 按 ADMIN_CORE_REF 克隆；pnpm 钉 9.15.9）
-    - docker build -t workreview-admin:latest admin-core/
+    - ADMIN_CORE_REPO="https://oauth2:${GIT_PUSH_TOKEN}@home.chenkaidi.top:509/chenkaidi/admin-core.git"
+    - docker build --build-arg ADMIN_CORE_REPO="$ADMIN_CORE_REPO" --build-arg ADMIN_CORE_REF=master -t workreview-admin:latest admin-core/
     # 2. 确保数据面（幂等）：网络 + 专用 Postgres + 生产配置目录
     - docker network create workreview-net 2>/dev/null || true
     - test -f "$HOME/workreview/admin-config/dbconfig.json" || { echo "缺少 ~/workreview/admin-config 生产配置（首次需手动初始化）" >&2; exit 1; }

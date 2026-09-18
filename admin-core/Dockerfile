@@ -12,6 +12,7 @@
 #         -v $HOME/workreview/admin-config:/app/ConfigCenter workreview-admin:latest
 # =============================================================================
 
+# 默认上游；work-review CI 以 build-arg 指向自管 fork（含业务模块），token 经 CI 变量注入
 ARG ADMIN_CORE_REPO=https://gitee.com/zhontai/Admin.Core.git
 ARG ADMIN_CORE_REF=master
 ARG NODE_IMAGE=node:20-alpine
