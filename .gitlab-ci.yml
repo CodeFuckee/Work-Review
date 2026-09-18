@@ -183,7 +183,7 @@ deploy-admin-core-yx:
         sleep 2
       done
       [ "$ok" = 1 ] || { echo "管理后台健康检查失败" >&2; docker logs --tail 40 workreview-admin >&2; exit 1; }
-      echo "管理后台已上线: http://10.37.80.25:4191
+      echo "管理后台已上线: http://10.37.80.25:4191"
 
 # 夜间流水线门禁：自最新发布 tag 以来没有新提交时，通过 API 取消整条夜间流水线
 # （不重复打包完全相同的产物）；有新提交时放行，各 package-daily 依赖本作业。
