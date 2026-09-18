@@ -23,9 +23,9 @@ ARG ADMIN_CORE_REPO
 ARG ADMIN_CORE_REF
 ARG NUGET_SOURCE=https://api.nuget.org/v3/index.json
 RUN git clone --depth 1 --branch "${ADMIN_CORE_REF}" "${ADMIN_CORE_REPO}" /src/Admin.Core
-# SPA 回退补丁：history 路由深链接（/login 等）回退 index.html
+# SPA 回退补丁：history 路由深链接（/login 等）回退 index.html（fork 已含补丁时幂等跳过）
 COPY spa-fallback.patch /tmp/spa-fallback.patch
-RUN cd /src/Admin.Core && git apply /tmp/spa-fallback.patch \
+RUN cd /src/Admin.Core && (git apply /tmp/spa-fallback.patch 2>/dev/null || true) \
     && grep -q "SPA fallback" src/modules/admin/ZhonTai.Admin.Core/HostApp.cs
 # 启用 PostgreSQL provider（上游默认只启用 Sqlite+QuestDb）
 RUN cd /src/Admin.Core/src/modules/admin/ZhonTai.Admin.Host \
