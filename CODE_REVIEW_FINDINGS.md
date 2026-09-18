@@ -60,6 +60,16 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
   cwd 被投放 `Work_Review_a;$(…).deb` 即以 sudo 执行任意命令（DEB 来自 $PWD glob/
   WR_DEB）— 污染路径改 argv 版 run_argv（%q 干跑回显；其余纯常量 eval 调用点不动）
 
+### 批次 3（推送后流水线监控发现，commit 见 git log）
+
+- ✅ [P1] admin-core/Dockerfile:25,44 — 27ba788 引入的 `git clone --depth 1 --branch
+  <裸SHA>` 必现失败：--branch 只接受分支/标签名，报 "Remote branch not found"——
+  2598/2604 两条 main 流水线的 deploy-admin-core-yx 均死于此（version-bump 因
+  when: always 照常 bump，掩盖了红流水线）。修法 = `git init` + `git fetch --depth 1
+  origin <SHA>` + `checkout FETCH_HEAD`（fetch-by-SHA 在本自托管 GitLab 实测可用，
+  服务端 allowAnySHA1InWant 开启）；上游 gitee 未开该配置时回退 fetch master，
+  兼容 Dockerfile 默认参数的本地构建。
+
 ## 第五轮待确认（修复会改对外行为/涉仓外配置，未经确认不动）
 
 - ⏸ [P1] .gitlab-ci.yml:167-171 + admin-core/Dockerfile:25,44 — GIT_PUSH_TOKEN 拼进

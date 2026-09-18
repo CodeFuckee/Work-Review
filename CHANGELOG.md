@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **bump-version 对 Cargo.toml 仍全量替换（P2，CI 脚本）**：第四轮修掉 JSON 侧"依赖恰好 pin 成当前版本号被连坐升版"后，`replaceCargoToml` 仍是文件级 split/join 同族残留；改为 `[package]` 段内锚定（段内 version 与全局版本不一致时直接报错），配回归测试。
   - **codesign 脚本私钥残留共享 /tmp（P2，本地脚本）**：`setup-codesign.sh` 生成的签名私钥落 `/tmp/wr_key.pem`，清理只在成功路径末尾——任一步失败即带私钥残留多用户可读目录；加 `umask 077` 收紧新建文件权限 + `trap ... EXIT` 全路径清理。
   - **reinstall.sh 对 DEB 路径 eval 执行（P2，本地脚本）**：`run()` 用 `eval` 执行含 `$DEB` 的安装命令，当前目录被投放 `Work_Review_a;$(…).deb` 这类文件名即以 sudo 权限执行任意命令；被污染路径改走 argv 版 `run_argv`（不经 shell 再解释），其余纯常量命令保持原样。
+  - **admin 镜像按裸 SHA clone 必现失败（P1，CI）**：27ba788 把 admin-core 源改为「以最新 commit SHA 为 ref」击穿层缓存，但 `git clone --branch` 只接受分支/标签名，裸 SHA 直接报 `Remote branch not found`——此后每条 main 流水线的 `deploy-admin-core-yx` 全部失败（version-bump 因 `when: always` 照常升版打 tag，掩盖了红流水线）。改为 `git init` + `git fetch --depth 1 origin <SHA>` + `checkout FETCH_HEAD`（本自托管 GitLab 已开 allowAnySHA1InWant，实测可按 SHA 浅取），上游 gitee 未开该配置时回退 fetch master，本地直接构建 Dockerfile 默认参数仍可用。
 
 - **第四轮全量代码评审修复（行为保持，Rust 批次 + CI 脚本批次）**：
   - **Tauri 能力授权裁剪（P1，安全）**：`capabilities/migrated.json` 授予了前端从未使用的能力——fs 插件的读/写/删/改名/建目录（scope 还含 `$RESOURCE/**`，Windows 上即安装目录）与 `shell:allow-execute`（命令 `open`，参数验证器仅要求非空白）。前端既无 `@tauri-apps/plugin-fs` 依赖也从无 `Command.execute` 调用，这些授权只构成"renderer 被攻陷后"的提权面：可写/删安装目录内文件、可借 PATH 解析执行同名 `open` 程序。裁剪为仅保留实际使用的 `shell:allow-open` 与 `fs:default` 基线。

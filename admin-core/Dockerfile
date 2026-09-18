@@ -22,9 +22,16 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG ADMIN_CORE_REPO
 ARG ADMIN_CORE_REF
 ARG NUGET_SOURCE=https://api.nuget.org/v3/index.json
-RUN git clone --depth 1 --branch "${ADMIN_CORE_REF}" "${ADMIN_CORE_REPO}" /src/Admin.Core
 # SPA 回退补丁：history 路由深链接（/login 等）回退 index.html（fork 已含补丁时幂等跳过）
 COPY spa-fallback.patch /tmp/spa-fallback.patch
+# --branch 只接受分支/标签名，裸 commit SHA 会报 "Remote branch not found"
+# （流水线 2598/2604 均失败于此）；init+fetch+checkout 支持按 SHA 定点浅取，
+# SHA 不可取（上游 gitee 未开 allowAnySHA1InWant）时回退默认分支。
+RUN git init -q /src/Admin.Core \
+    && cd /src/Admin.Core \
+    && git remote add origin "${ADMIN_CORE_REPO}" \
+    && (git fetch -q --depth 1 origin "${ADMIN_CORE_REF}" || git fetch -q --depth 1 origin master) \
+    && git checkout -q FETCH_HEAD
 RUN cd /src/Admin.Core && (git apply /tmp/spa-fallback.patch 2>/dev/null || true) \
     && grep -q "SPA fallback" src/modules/admin/ZhonTai.Admin.Core/HostApp.cs
 # 启用 PostgreSQL provider（上游默认只启用 Sqlite+QuestDb）
@@ -41,7 +48,11 @@ FROM ${NODE_IMAGE} AS ui
 ARG ADMIN_CORE_REPO
 ARG ADMIN_CORE_REF
 RUN apk add --no-cache git \
-    && git clone --depth 1 --branch "${ADMIN_CORE_REF}" "${ADMIN_CORE_REPO}" /src/Admin.Core \
+    && git init -q /src/Admin.Core \
+    && cd /src/Admin.Core \
+    && git remote add origin "${ADMIN_CORE_REPO}" \
+    && (git fetch -q --depth 1 origin "${ADMIN_CORE_REF}" || git fetch -q --depth 1 origin master) \
+    && git checkout -q FETCH_HEAD \
     && rm -f /src/Admin.Core/pnpm-workspace.yaml /src/Admin.Core/ui/zhontai.ui.admin.vue3/pnpm-workspace.yaml
 # 根级 pnpm-workspace.yaml 会让子目录 pnpm install 报 packages field missing（上游新增），删除之
 WORKDIR /src/Admin.Core/ui/zhontai.ui.admin.vue3
