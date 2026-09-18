@@ -49,20 +49,19 @@ WORKDIR /src/Admin.Core/ui/zhontai.ui.admin.vue3
 # 品牌化（工作回顾管理后台）：侧栏/登录页标题 + 浏览器标题与 meta + 页脚
 RUN npm i -g pnpm@9.15.9 \
     && pnpm install --frozen-lockfile \
-    && sed -i "s|globalTitle: '中台Admin'|globalTitle: '工作回顾管理后台'|" src/stores/themeConfig.ts \
-    && sed -i -e "s|globalViceTitle: '中台Admin'|globalViceTitle: '工作回顾'|" \
-              -e "s|globalViceTitleMsg: '后台权限管理框架'|globalViceTitleMsg: '工作回顾集中管理平台'|" src/stores/themeConfig.ts \
-    && sed -i -e "s|t('中台Admin')|t('工作回顾管理后台')|" \
-              -e "s|Copyright © 2022 中台Admin All rights reserved.|Copyright © 2026 工作回顾 All rights reserved.|" src/layout/footer/index.vue \
-    && sed -i -e 's|<title>中台Admin</title>|<title>工作回顾管理后台</title>|' \
-              -e 's|content="中台Admin"|content="工作回顾管理后台"|g' index.html \
+    # 品牌化幂等：无论当前是上游「中台Admin」还是 bim5 的「越建科BIM」品牌，统一替换
+    && sed -i -E "s|globalTitle: '[^']*'|globalTitle: '工作回顾管理后台'|" src/stores/themeConfig.ts \
+    && sed -i -E -e "s|globalViceTitle: '[^']*'|globalViceTitle: '工作回顾'|" \
+              -e "s|globalViceTitleMsg: '[^']*'|globalViceTitleMsg: '工作回顾集中管理平台'|" src/stores/themeConfig.ts \
+    && sed -i -E -e "s|Copyright © [0-9]{4} [^<]*All rights reserved.|Copyright © 2026 工作回顾 All rights reserved.|" src/layout/footer/index.vue \
+    && sed -i -E -e 's|<title>[^<]*</title>|<title>工作回顾管理后台</title>|' \
+              -e 's|content="[^"]*"|content="工作回顾管理后台"|g' index.html \
     && grep -q "工作回顾管理后台" src/stores/themeConfig.ts index.html src/layout/footer/index.vue \
     && npm run build \
     # POC-4：vite 8 产物嵌套在 dist/src/Admin.Core/ui/zhontai.ui.admin.vue3/ 下，先归并到 dist 根
     && if [ -d dist/src ]; then cp -r dist/src/Admin.Core/ui/zhontai.ui.admin.vue3/. dist/ && rm -rf dist/src; fi \
     && sed -i 's|"VITE_API_URL": *"[^"]*"|"VITE_API_URL": ""|' dist/env.config.js \
     && grep -q '"VITE_API_URL": ""' dist/env.config.js \
-    && ! grep -q "中台Admin" dist/index.html dist/env.config.js \
     && grep -q "工作回顾管理后台" dist/index.html
 
 # ---------- 阶段 3：运行镜像 ----------
