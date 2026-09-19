@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **第六轮全量代码评审修复（行为保持，Rust 批次 + 前端批次 + CI 批次，共 17 项（run.ps1 两小项合并计）+ 1 项源码契约同步）**：
+  - **Ollama 非流式响应套用 OpenAI 解析器恒得空答案（P1，正确性）**：`chat_ollama` 请求的是 Ollama 原生 `/api/chat`（顶层是 `message`、无 `choices`），却用 `parse_openai_response` 解析——所有非流式 Ollama 调用（桌宠主动开口、流式中断回退、无事件通道分支）内容恒为空、主动开口永久静默失效。新增 `parse_ollama_response` 按原生格式解析（`message.content`/`message.tool_calls`/`done_reason`，与流式装配器口径一致），配回归测试。
+  - **思考型模型流式输出被思维链污染（P2，正确性）**：OpenAI 兼容流式装配器把 `reasoning_content` 增量无条件累积进 `content`——DeepSeek-R1/Qwen3 等模型先发思维链帧再发正文帧时，最终回答=思维链+正文拼接并进会话历史。改为思维链单独累积，仅当正文为空时在 finish 兜底（对齐非流式契约），流式打字增量照发；同步更新前端侧 Rust 源码契约测试。
+  - **记忆搜索三个 FTS 检索面从未返回过结果（P1，正确性）**：`search_activities_fts`/`search_hourly_fts`/`search_reports_fts` 都把 FTS5 的 `rank`（bm25 分数，REAL 类型）按 `i64` 读取，遇小数 `FromSql` 失败后被 `filter_map(row.ok())` 静默丢光全部命中行，记忆搜索一直靠 LIKE fallback 兜底（仅 rank 恰为整数的退化情形偶尔工作）。rank 改按 `f64` 读取，补活动/小时摘要/日报三面命中回归。
+  - **日报 FTS 检索同日多语言命中返回随机语言（P2，正确性）**：`search_reports_fts` 用 `GROUP BY d.date` 但 `content` 等均为裸列，SQLite 取值未定义——同日存有 zh-CN 与 en 两份日报且双双命中时正文语言随机漂移。附加唯一 `MIN(d.created_at)` 聚合，SQLite 保证裸列取自 created_at 最早那行（结果确定）。
+  - **macOS 应用图标转换临时文件落共享 /tmp（P2，加固）**：sips 输出路径 `/tmp/app_icon_{app}_{pid}.png` 完全可预测，多用户机器上可被其他用户预置符号链接写穿；改用户级临时目录+纳秒随机后缀+文件名字符净化。
+  - **背景图读取未校验路径（P2，加固）**：`get_background_image` 对 `config.background_image` 直接 `data_dir.join` 后读文件返回 base64——配置同步载荷写入绝对路径/`..` 即可把 data_dir 外任意文件读回前端；复用 `validated_join` 校验。
+  - **macOS 浮窗时长被双倍记账（P2，正确性）**：`get_overlay_windows` 用 `dedup_by` 去重同名应用，但该 API 只折叠相邻元素——CGWindowList 按 z 序返回、同应用两个浮动窗口被其他应用隔开时去重失效，同一 tick 内浮窗时长记双倍；改按 app_name 全局保序去重。
+  - **设备身份文件首启并发写入竞态（P2，正确性）**：写入用固定临时名 `with_extension("tmp")`——首次启动两个状态查询并发触发时 Unix 上后写者覆盖先写者（两个调用方拿到不同 device_id）、Windows 上 rename 目标已存在直接失败；临时名加 pid+纳秒，rename 冲突时回退采用已落盘身份。
+  - **GitLab 提交作者邮箱入库未剥控制字符（P2，加固）**：fetch 侧 `strip_control_chars` 覆盖 title/author_name/project/branch 但漏掉 `author_email`，被劫持的自托管服务端可让入库行携带换行注入 markdown 结构；入库前补同一清洗（对合法邮箱恒等），配回归测试。
+  - **阿语界面报告小节编号用中文数字（P2，本地化）**：`sectionNumberPrefix` 只特判 `en`，`ar` locale 落入中文数字分支；改 CJK 白名单（zh-CN/zh-TW），其余语言一律西文数字。
+  - **assistant `setMessages` 保留 slice(-40) 静默截断（P2，正确性）**：生产零调用的死入口上残留第三轮从 `appendMessage` 修掉的同类截断——未来任何调用方装入超 40 条的会话即静默丢历史；去掉截断（持久化已有统一兜底）。
+  - **图标缓存逐项落盘阻塞主线程（P2，性能）**：每个图标请求完成（含失败分支）都同步执行整包 JSON 序列化+localStorage 写（单项可达上百 KB base64），时间线滚动预热一批图标时卡顿累积；落盘改 100ms 节流（与 store 刷新同款），测试同步为等待首次落盘。
+  - **GLIBC 兼容门禁永不生效（P1，CI）**：`check-linux-glibc.sh` 放在 `.tauri-package-linux` 的 `after_script` 里，GitLab 不以 after_script 退出码判定作业成败——门禁 `exit 1` 只打印 ❌ 作业仍绿，不兼容产物照常流入 publish/发布；移入 `script` 末尾（`artifacts: when: always` 仍收集产物便于排查）。
+  - **publish-release 补签私钥失败路径残留 /tmp（P2，CI）**：minisign 补签循环里 base64 解码后的私钥临时文件只在成功路径 `rm`，`set -e` 下签名失败即残留共享 runner；补 EXIT trap 兜底。
+  - **reinstall.sh 后设 trap 覆盖先设 trap（P2，本地脚本）**：GNOME 扩展段的 `trap 'rm -rf "$TMP_FWD"' EXIT` 整体替换下载段的 `trap 'rm -f "$DEB"' EXIT`——全新机器走下载路径时下载的 .deb 退出不再清理；合并为单一 `register_cleanup`/`on_exit_cleanup` 注册表统一清理。
+  - **杂项（tests/e2e）**：`tauri-mock.ts` 删除 `get_ai_providers` 重复键（108 行死值被 116 行 last-wins 覆盖）；`installer-isolation/run.ps1` 下载补 `-f`（404 时不再把 HTML 错误页写进 zip）、超时报错 `$Args` 改 `$ArgList` 修正变量。
 - **第五轮全量代码评审修复（行为保持，Rust 批次 + CI 脚本批次）**：
   - **钉钉 webhook 出站重定向绕过 SSRF 白名单（P1，安全）**：回复消息用的 HTTP client 未设重定向策略（reqwest 默认跟随 10 跳），`sessionWebhook` 域名白名单只校验初始 URL——`*.dingtalk.com` 上任一端点 30x 重定向即可把请求发往白名单外地址，307/308 还会原样重发 POST body（即整段日报内容外泄）。出站改用 `redirect(Policy::none())` 专用 client（白名单语义本就是"只许直连钉钉"；正常路径钉钉直接 200，行为不变）。
   - **飞书 token 缓存锁中毒放大为整条回复通道失效（P2）**：`TOKEN_CACHE.lock().ok()?` 把 PoisonError 静默吞成 None——任何一次持锁 panic 后租户 token 永久获取失败、飞书回复全灭且无日志、重启前不可自愈；改为中毒时 `into_inner()` 恢复（缓存仅是加速器，语义不变）。

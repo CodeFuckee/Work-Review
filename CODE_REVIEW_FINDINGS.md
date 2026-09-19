@@ -1,4 +1,4 @@
-# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮 / 2026-09-18 第四轮 / 2026-09-19 第五轮）
+# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮 / 2026-09-18 第四轮 / 2026-09-19 第五轮 / 2026-09-20 第六轮）
 
 评审范围：全部 71k 行 Rust（crates/core、crates/mcp-server、crates/skills-engine、src-tauri）
 + 15k 行 TS + 22k 行 Svelte（40 组件）+ CI 配置。按 code-review-skill 的 rust.md 与
@@ -11,6 +11,162 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 - ⏸ 待确认：修复必须改变对外行为/测试契约，按约定未经确认不动
 - 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
 - ⚠️ 仓库级：需人工处置的事项
+
+# 第六轮（2026-09-20）
+
+范围：五轮之后增量（admin Dockerfile fetch 修复等 CI 提交）+ 全库六分片复扫——
+src-tauri 核心 33 文件（main/monitor/localhost_api/commands 全部）、agent+bots、
+crates 三库（database 7.9k 行 SQL 面、mcp-server、skills-engine）、前端纯 TS
+（stores/utils/i18n/routes 逻辑层）、Svelte 组件（Timeline/Overview/Settings 全家）、
+CI/scripts/tests。六分片各按 rust.md/typescript.md/cross-cutting 清单五维度检查并与
+前五轮清单逐条去重。新发现 28 条（3 P1 + 25 P2）：17 条行为保持本轮修复（批次 1
+Rust 3c513d0+af97fa4 / 批次 2 前端 c144aee / 批次 3 CI 5de05a3），7 条涉行为/平台
+语义列待确认，4 条涉 .svelte 归过目批次。
+
+## 第六轮已修复
+
+### 批次 1（Rust，3c513d0 + 契约同步 af97fa4）
+
+- ✅ [P1] src-tauri/src/agent/model.rs:306 — `chat_ollama`（非流式）请求 Ollama 原生
+  `/api/chat`（顶层 `message`、无 `choices`）却用 `parse_openai_response` 解析：所有
+  非流式 Ollama 调用（avatar_proactive 主动开口 / 流式失败回退 / executor 无事件分支）
+  content/tool_calls 恒空，桌宠配 Ollama 时主动开口永久静默失效 — 新增
+  `parse_ollama_response` 按原生格式解析（与流式装配器 `message.content` 口径一致）
+  + 回归测试
+- ✅ [P2] src-tauri/src/agent/model.rs:955 — OpenAI 兼容流式装配器把 reasoning_content
+  增量无条件 `push_str` 进 content：思考型模型（DeepSeek-R1/Qwen3）最终回答=思维链+正文
+  拼接并持久化，与非流式 parse_openai_response（仅正文为空时兜底）语义矛盾 — 思维链
+  单独累积、finish 仅正文为空时兜底；流式增量照发；前端 ReasoningModelCompat 契约测试
+  同步为验证分离累积语义
+- ✅ [P1] crates/core/src/database.rs:3473/3530/3568 — 记忆搜索三个 FTS 面
+  （search_activities_fts / search_hourly_fts / search_reports_fts）把 FTS5 rank
+  （bm25 分数，REAL）按 `row.get::<_, i64>` 读取：遇小数 FromSql 失败、
+  `filter_map(row.ok())` 静默丢光全部命中行——记忆搜索的 FTS 通道从未返回过结果，
+  一直靠 LIKE fallback 兜底（仅 rank 恰为整数的退化情形偶尔工作）；本轮新增回归测试
+  时实测揪出（GROUP BY 修复的验证测试先红于此）— rank 改按 f64 读取（调用方均未使用
+  rank 值，排序在 SQL 内完成）
+- ✅ [P2] crates/core/src/database.rs:3581 — search_reports_fts `GROUP BY d.date` 的
+  content/ai_mode/rank 均为裸列（SQLite 取值未定义）：同日 zh-CN+en 双份日报双双命中时
+  正文语言随机漂移 — 附加唯一 `MIN(d.created_at)` 聚合，SQLite 裸列规则保证取自最早行
+  （多语言用户从"随机"变"确定"）+ 回归测试
+- ✅ [P2] src-tauri/src/commands/system.rs:740 — macOS 图标转换 sips 输出仍硬编码共享
+  `/tmp/app_icon_{app}_{pid}.png`（第三轮只改了缓存目录）：可预测路径多用户机可被预置
+  符号链接写穿 — 改 env::temp_dir + 纳秒随机后缀 + 文件名字符净化
+- ✅ [P2] src-tauri/src/commands/system.rs:1339 — get_background_image 对
+  config.background_image 直接 data_dir.join 后读文件回 base64（截图读取/删除均已
+  validated_join，此处漏网；config 同步载荷可写入绝对路径/`..` 越界读）— 复用
+  validated_join
+- ✅ [P2] src-tauri/src/monitor.rs:4406 — get_overlay_windows 用 dedup_by 去重同名应用，
+  但该 API 只折叠相邻元素：CGWindowList 按 z 序、同应用双浮窗被其他应用隔开时失效，
+  main.rs 浮窗记账对同 tick 第二条浮窗再次合并 → PiP 时长双倍记账 — 改 app_name
+  全局保序去重
+- ✅ [P2] src-tauri/src/node_gateway.rs:105 — 设备身份写入临时名固定 with_extension("tmp")：
+  首启两个状态查询并发 ensure 时 Unix 后写者覆盖先写者（两调用方 device_id 不一致）、
+  Windows rename 目标已存在直接失败 — 临时名加 pid+纳秒，rename 冲突回退采用已落盘身份
+- ✅ [P2] crates/core/src/gitlab.rs:504 — entries_to_rows 的 author_email 未 strip：
+  fetch 侧 strip_control_chars 只覆盖 title/author_name/project/branch，入库行单行化
+  不变量漏该字段（被劫持服务端可注入 `\n## ` 伪造小节）— 入库前补同一清洗（合法邮箱
+  恒等）+ 回归测试
+
+### 批次 2（前端 TS + e2e，c144aee）
+
+- ✅ [P2] src/routes/report/reportSections.ts:136 — sectionNumberPrefix 只特判 `en`，
+  ar locale 落入中文数字分支（阿语界面看到"一、二、"）— 改 CJK 白名单（zh-CN/zh-TW），
+  其余语言西文数字（zh 字节不变）
+- ✅ [P2] src/lib/stores/assistant.ts:331 — setMessages 残留 slice(-40) 截断（第三轮
+  从 appendMessage 修掉的同类语义在死 API 上残留，生产零调用；未来调用方装入超 40 条
+  会话即静默丢历史）— 去截断
+- ✅ [P2] src/lib/stores/iconCache.ts:251,257 — 每个图标完成（成功/失败两分支）都同步
+  persistIconCache()：整包序列化+localStorage 同步写（单项可达上百 KB base64），批量
+  预热时主线程卡顿累积 — 改 100ms 节流（与 updateIconStore 同款）；测试同步为等待
+  首次落盘
+- ✅ [P2] tests/e2e/ui/tauri-mock.ts:108 — baseSpec 对象重复键 get_ai_providers
+  （108 行 `[]` 死代码，运行时 last-wins 取 116 行）— 删除死键
+- ✅ [P2] tests/e2e/installer-isolation/run.ps1:66,49 — curl.exe 缺 `-f`（404 时 HTML
+  错误页写进 zip，错误延迟到 Expand-Archive 晦涩暴露）；超时报错拼接用错变量 `$Args`
+  （恒空，丢失完整安装参数）— 补 `-f` + 改 `$ArgList`
+
+### 批次 3（CI，5de05a3）
+
+- ✅ [P1] .gitlab-ci.yml:720 — GLIBC 兼容门禁放 after_script：GitLab 不以 after_script
+  退出码判定作业成败（gitlab-org/gitlab#21008），check-linux-glibc.sh 的 exit 1 永不
+  生效——产物 GLIBC 超限时仅打印 ❌ 作业仍绿，不兼容包照常流入 publish/发布 — 移入
+  .tauri-package-linux script 末尾（artifacts when:always 仍收集产物便于排查）
+- ✅ [P2] .gitlab-ci.yml:892 — publish-release 补签循环 rawkey（base64 解码后的
+  minisign 私钥）只在成功路径 rm：set -e 下 minisign 失败即带私钥残留共享 runner
+  /tmp（与第三/五轮 stage-tauri-key/setup-codesign 同族清理缺口）— EXIT trap 兜底
+- ✅ [P2] scripts/deb/reinstall.sh:363 — 第 363 行 `trap 'rm -rf "$TMP_FWD"' EXIT`
+  整体覆盖第 195 行 `trap 'rm -f "$DEB"' EXIT`（bash 后设 trap 替换先设）：全新机器
+  走下载路径时下载的 .deb 退出不再清理 — 合并为 register_cleanup/on_exit_cleanup
+  注册表统一清理
+
+## 第六轮待确认（修复会改对外行为/平台语义，未经确认不动）
+
+- ⏸ [P1] crates/mcp-server/src/main.rs:612-627 — filter_activities_by_privacy 的
+  Anonymize 分支清空 title/url/path/screenshot 但不清 ocr_text：用户标记"内容脱敏"
+  的活动经 query_timeline/get_work_sessions/analyze_intents/历史回退把整段 OCR 屏幕
+  文本（正是脱敏要挡的内容）原样发给 MCP 客户端 — Anonymize 分支补 `ocr_text = None`；
+  改变 MCP 工具对既有会话的返回内容（ocr_text 从有值变 null），建议与既有 ⏸
+  localhost live 上下文绕过同批决策
+- ⏸ [P2] crates/core/src/config.rs:500-526 — get_app_privacy_level 的 contains 匹配
+  无最小长度护栏：1-2 字符隐私规则（手滑输入 "a"/"w"）命中几乎所有应用，采集面被
+  静默 Ignored/Anonymized（统计数据无声丢失）；分类规则侧同族匹配有 len>=3 护栏此处
+  独缺 — 补护栏会缩小存量短规则的命中范围，待确认长度取 2 还是 3
+- ⏸ [P2] src-tauri/src/localhost_api.rs:832 — /v1/reports/generate 直调
+  generate_report_inner，绕过 generating_report 并发标志（该标志只在 Tauri 命令包装
+  与 ActionBridge 检查）：UI 生成中经本地 API/MCP 再触发会并发跑两个 AI 日报
+  （双倍模型调用、后写覆盖先写）— 守卫下沉 inner 后，并发 HTTP 调用从"重复执行"变
+  400「正在生成中」，调用方可见契约变化待确认
+- ⏸ [P2] src/App.svelte:707-762 — 日报自动生成/工作记忆合成失败后 lastAutoGenDate
+  不写：端点配错/停服的持久性失败会在每天工作结束时间后每分钟重试整轮 AI 调用
+  （整夜捶打失败端点+反复 warn 日志）— 加指数退避或当日失败上限改变"直到成功为止"
+  的重试语义（涉 .svelte），待确认
+- ⏸ [P2] src-tauri/src/avatar_input.rs:1811-1844 — Linux Wayland 输入联动线程每
+  120ms spawn 短命 gdbus/kdotool/hyprctl 进程 + 每次成功采样重查全部显示器（~8 次/秒
+  常驻开销，与既有 💤 idle_detector.rs:177 同族但频率翻倍且永不停止）— 降频/缓存
+  改变跟手延迟与热插拔新鲜度，平台路径无法本地自动化验证，随 spawn 战役一并设计
+- ⏸ [P2] .gitlab-ci.yml:163-164 — deploy-admin-core-yx 规则 `CI_COMMIT_BRANCH=="main"`
+  同样命中夜间 schedule（schedule 配置在 main 分支）：fork 无变更的夜晚也会重建镜像
+  并重启生产 admin 容器 — 补 `$CI_PIPELINE_SOURCE=="push"` 改变现有部署节奏，待确认
+  现状是否有意设计
+- ⏸ [P2] .gitlab-ci.yml:754-782+924 — 便携 zip 由 after_script 产出（失败不影响作业
+  状态，zip 可缺）、文件名无版本号且残留旧版 zip 会被 publish 照常上传挂到新版
+  release（generate/verify 对无版本号文件名放行）— 加新鲜度/存在性断言是发布收紧，
+  待确认（可先只加告警）
+
+## 第六轮待过目批次（.svelte，按红线待用户过目）
+
+- 💤 [P2] src/routes/settings/components/SettingsAI.svelte:669 — refreshModels 无
+  requestId/provider 快照防竞态：fetch 在途时切换 provider，旧 provider 慢响应后到
+  覆盖新 provider 的 fetchedModels（模型下拉显示错误服务商列表）— 参考 Ask.svelte
+  refreshDynamicPrompts 的 requestId 写法
+- 💤 [P2] src/routes/timeline/Timeline.svelte:2066 — 隐私级别说明 class 查找写成
+  "单元素数组包裹查找表再取 [0]"，每次渲染新建对象（复制粘贴残留）— 抽 const 查找表
+- 💤 [P2] src/lib/components/StatsCard.svelte:57-116 — href/非 href 两分支各自完整
+  复制同一套 4 图标 SVG 模板块（约 60 行逐字重复，已现漂移风险）— 包裹共享内容或
+  抽 snippet
+- 💤 [P2] src/routes/avatar/AvatarWindow.svelte:993 — onMoved 每次触发无条件
+  refreshBubbleEdge（每秒数十次 × 2 个 IPC；scheduleAvatarPositionSave 有 240ms 防抖
+  而它没有；+138 中心近似在跟进卡片展开态偏移）— 合并防抖 + 跨线判定才写
+
+## 第六轮复核无新问题（抽样说明）
+
+- src-tauri 核心：SQL 全参数化、日期均 NaiveDate 白名单、validated_join 三面在位
+  （唯 background_image 缺口已修）、localhost token 常量时间比较、PowerShell/AS
+  内嵌值转义正确、WGC/UIA 票据熔断无竞态、GDI/HICON/DIB 逐对释放、OCR 信号量有界
+- agent/bots：SSRF 护栏（IPv4-mapped/CGNAT/组播/内网 TLD）与重定向逐跳校验在位、
+  五 bot 验签/时间窗/ct_eq/redact 完整、Deadline 贯通与取消三路收束完备、字节切片
+  解析均由 ASCII find 推导无 UTF-8 边界 panic、生产代码无裸 unwrap
+- crates：FTS build_fts_query 引号转义闭合、VACUUM INTO 转义在位、语义记忆游标独立行
+  与指纹门禁完好、config 原子写+0600+恢复矩阵有测试、DST/时区翻转正确；daily_reports
+  遗留死表确认无生产写入方（删除需迁移批次）
+- 前端 TS：XSS 面无新增（3 处 {@html} 均 marked→DOMPurify 闭合）、requestEventGate/
+  requestId 竞态守卫完整、四语言 1359 key 零缺失、focusTrap/updater 监听器配对释放
+- Svelte 组件：定时器/监听器/订阅清理完整、Timeline/Overview/Report 异步竞态双守卫
+  在位、空态守卫完整、第五轮过目批次条目在现行号下原样未动
+- CI/scripts：verify→compile→version 门禁链、publish 版本化清理/stale-sig 判定、
+  bump-version 三轮修复完好、admin Dockerfile fetch-by-SHA+回退与 viewport 守卫在位、
+  CI 契约测试 18/18 通过无漂移
 
 # 第五轮（2026-09-19）
 
