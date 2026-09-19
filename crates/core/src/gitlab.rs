@@ -501,7 +501,8 @@ pub fn entries_to_rows(
                 additions: e.commit.stats.as_ref().map(|s| s.additions),
                 deletions: e.commit.stats.as_ref().map(|s| s.deletions),
                 author_name: e.commit.author_name.clone(),
-                author_email: e.commit.author_email.clone(),
+                // fetch 侧 strip 未覆盖该字段（入库行单行化不变量补齐，对合法邮箱恒等）
+                author_email: strip_control_chars(&e.commit.author_email),
             })
         })
         .collect()
@@ -882,6 +883,31 @@ mod tests {
             project: "work/test-proj".to_string(),
             branch: "main".to_string(),
         }
+    }
+
+    #[test]
+    fn 入库行应对author_email剥控制字符保持单行不变量() {
+        // fetch 侧 strip 只覆盖 title/author_name/project/branch；
+        // author_email 在入库行补齐同一清洗（对合法邮箱恒等）
+        let mut malicious = commit(
+            "abc123",
+            "fix: 标题",
+            "evil@example.com\n## 伪造小节",
+            "张三",
+            "2026-09-02T01:00:00.000Z",
+            None,
+        );
+        // fetch 侧清洗后 title/author_name 已单行，email 原样进入 entries
+        malicious.title = strip_control_chars(&malicious.title);
+        malicious.author_name = strip_control_chars(&malicious.author_name);
+
+        let rows = entries_to_rows(&[entry(malicious)], "2026-09-02");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].author_email, "evil@example.com ## 伪造小节",
+            "控制字符应被替换为空格，入库行不得携带换行"
+        );
+        assert!(!rows[0].author_email.contains('\n'));
     }
 
     #[test]

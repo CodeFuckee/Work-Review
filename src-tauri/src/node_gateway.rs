@@ -102,9 +102,26 @@ fn write_node_identity_to_path(path: &Path, identity: &NodeIdentity) -> Result<(
         std::fs::create_dir_all(parent)?;
     }
     let content = serde_json::to_string_pretty(identity)?;
-    let temp_path = path.with_extension("tmp");
+    // 临时名带 pid+纳秒：首启时两个状态查询并发触发 ensure，固定 tmp 名会让
+    // 双方写同一文件；Windows 上 rename 目标已存在还会直接失败
+    let unique = format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let temp_path = path.with_extension(unique);
     std::fs::write(&temp_path, &content)?;
-    std::fs::rename(&temp_path, path)?;
+    if let Err(e) = std::fs::rename(&temp_path, path) {
+        // 对方已并发落盘身份时以先落盘者为准，本次生成方放弃
+        let _ = std::fs::remove_file(&temp_path);
+        if read_node_identity_from_path(path)?.is_some() {
+            return Ok(());
+        }
+        return Err(e.into());
+    }
     Ok(())
 }
 

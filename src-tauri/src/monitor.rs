@@ -4402,8 +4402,11 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
         CFRelease(window_list as _);
     }
 
-    // 去重：同一应用可能有多个浮动窗口，只保留第一个
-    results.dedup_by(|a, b| a.app_name == b.app_name);
+    // 去重：同一应用可能有多个浮动窗口，只保留第一个。
+    // dedup_by 只折叠相邻元素，而 CGWindowList 按 z 序返回、同应用窗口可被
+    // 其他应用隔开，必须按 app_name 全局保序去重，否则浮窗时长被双倍记账
+    let mut seen = std::collections::HashSet::new();
+    results.retain(|w| seen.insert(w.app_name.clone()));
 
     results
 }

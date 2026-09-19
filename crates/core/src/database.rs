@@ -3485,7 +3485,7 @@ impl Database {
             Option<String>,
             Option<String>,
             i64,
-            i64,
+            f64,
         )>,
     > {
         let conn = self.conn.lock().map_err(|e| {
@@ -3513,7 +3513,9 @@ impl Database {
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, i64>(6)?,
-                    row.get::<_, i64>(7)?,
+                    // FTS5 rank 是 REAL（bm25 分数）；按 i64 读取遇小数即失败，
+                    // filter_map 会静默丢光全部命中行
+                    row.get::<_, f64>(7)?,
                 ))
             })?
             .filter_map(|row| row.ok())
@@ -3529,7 +3531,7 @@ impl Database {
         date_from: Option<&str>,
         date_to: Option<&str>,
         limit: i64,
-    ) -> Result<Vec<(i64, String, i32, String, String, i64, i64, i64)>> {
+    ) -> Result<Vec<(i64, String, i32, String, String, i64, i64, f64)>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
@@ -3555,7 +3557,9 @@ impl Database {
                     row.get::<_, String>(4)?,
                     row.get::<_, i64>(5)?,
                     row.get::<_, i64>(6)?,
-                    row.get::<_, i64>(7)?,
+                    // FTS5 rank 是 REAL（bm25 分数）；按 i64 读取遇小数即失败，
+                    // filter_map 会静默丢光全部命中行
+                    row.get::<_, f64>(7)?,
                 ))
             })?
             .filter_map(|row| row.ok())
@@ -3571,13 +3575,17 @@ impl Database {
         date_from: Option<&str>,
         date_to: Option<&str>,
         limit: i64,
-    ) -> Result<Vec<(String, String, String, Option<String>, i64, i64)>> {
+    ) -> Result<Vec<(String, String, String, Option<String>, i64, f64)>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
         let mut stmt = conn.prepare(
-            "SELECT d.date, d.content, d.ai_mode, d.model_name, d.created_at, fts.rank
+            // GROUP BY d.date 的裸列（content/ai_mode/rank 等）本属未定义取值；
+            // 附加唯一的 MIN(d.created_at) 聚合后，SQLite 保证全部裸列取自
+            // created_at 最小的那一行（同日多语言日报时结果确定而非随机）
+            "SELECT d.date, d.content, d.ai_mode, d.model_name, d.created_at, fts.rank,
+                    MIN(d.created_at)
              FROM daily_reports_fts fts
              JOIN daily_reports_localized d ON d.rowid = fts.rowid
              WHERE daily_reports_fts MATCH ?1
@@ -3596,7 +3604,9 @@ impl Database {
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
+                    // FTS5 rank 是 REAL（bm25 分数）；按 i64 读取遇小数即失败，
+                    // filter_map 会静默丢光全部命中行
+                    row.get::<_, f64>(5)?,
                 ))
             })?
             .filter_map(|row| row.ok())
@@ -5155,8 +5165,8 @@ impl Database {
 mod tests {
     use super::{
         apply_flex_overtime_correction, local_day_bounds, local_hour_bounds,
-        local_hour_end_timestamp, safe_local_timestamp, Activity, Database,
-        SemanticMemoryIndexState,
+        local_hour_end_timestamp, safe_local_timestamp, Activity, DailyReport, Database,
+        HourlySummary, SemanticMemoryIndexState,
     };
     use chrono::{TimeZone, Timelike};
     use rusqlite::params;
@@ -5175,6 +5185,97 @@ mod tests {
         let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").expect("解析日期失败");
         let ndt = date.and_hms_opt(hour, minute, 0).expect("构造本地时间失败");
         safe_local_timestamp(ndt)
+    }
+
+    #[test]
+    fn fts日报搜索同日多语言命中应返回确定行而非随机语言() {
+        let db_path = temp_db_path("fts-deterministic");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        // 同一日期先 zh-CN 后 en 两份日报，双双命中搜索词：
+        // GROUP BY date 的裸列必须确定取自 created_at 最早那行
+        // （FTS5 unicode61 对 CJK 连续串不切词，用英文词保证命中）
+        db.save_report(&DailyReport {
+            date: "2026-09-20".to_string(),
+            locale: "zh-CN".to_string(),
+            content: "# 日报\n\nProject review notes for today (中文总结见下节).".to_string(),
+            ai_mode: "ai".to_string(),
+            model_name: Some("m1".to_string()),
+            fallback_reason: None,
+            created_at: 1_000,
+        })
+        .expect("保存 zh-CN 报告失败");
+        db.save_report(&DailyReport {
+            date: "2026-09-20".to_string(),
+            locale: "en".to_string(),
+            content: "# Daily Report\n\nProject review translated to English.".to_string(),
+            ai_mode: "ai".to_string(),
+            model_name: Some("m1".to_string()),
+            fallback_reason: None,
+            created_at: 2_000,
+        })
+        .expect("保存 en 报告失败");
+
+        let rows = db
+            .search_reports_fts("review", None, None, 10)
+            .expect("搜索失败");
+        assert_eq!(rows.len(), 1, "同日多份命中应聚合为一行");
+        let (date, content, _, _, created_at, _) = &rows[0];
+        assert_eq!(date, "2026-09-20");
+        assert_eq!(*created_at, 1_000, "应固定返回 created_at 最早的行");
+        assert!(
+            content.contains("中文总结见下节"),
+            "content 应取自最早那行而非随机语言"
+        );
+    }
+
+    #[test]
+    fn fts活动与小时摘要搜索应对小数rank正常命中() {
+        let db_path = temp_db_path("fts-rank");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let now = chrono::Local::now().timestamp();
+
+        db.insert_activity(&Activity {
+            id: None,
+            timestamp: now - 60,
+            app_name: "Code".to_string(),
+            window_title: "review-notes.md — Editor".to_string(),
+            screenshot_path: String::new(),
+            ocr_text: None,
+            category: "development".to_string(),
+            duration: 60,
+            browser_url: None,
+            executable_path: None,
+            semantic_category: None,
+            semantic_confidence: None,
+            screenshot_url: None,
+        })
+        .expect("插入活动失败");
+
+        db.save_hourly_summary(&HourlySummary {
+            id: None,
+            date: "2026-09-20".to_string(),
+            hour: 10,
+            summary: "Refactored the review pipeline today".to_string(),
+            main_apps: "Code".to_string(),
+            activity_count: 3,
+            total_duration: 600,
+            representative_screenshots: None,
+            created_at: 1_000,
+        })
+        .expect("保存小时摘要失败");
+
+        // bm25 对命中的 rank 是小数 REAL：修复前按 i64 读取全部丢行、
+        // 记忆搜索永远走 LIKE fallback
+        let acts = db
+            .search_activities_fts("review", Some(0), None, 10)
+            .expect("活动搜索失败");
+        assert_eq!(acts.len(), 1, "活动 FTS 命中不应因 rank 类型被丢弃");
+
+        let hours = db
+            .search_hourly_fts("Refactored", None, None, 10)
+            .expect("小时摘要搜索失败");
+        assert_eq!(hours.len(), 1, "小时摘要 FTS 命中不应因 rank 类型被丢弃");
     }
 
     #[test]

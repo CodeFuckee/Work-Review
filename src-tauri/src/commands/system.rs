@@ -736,12 +736,24 @@ async fn get_app_icon_impl(
 
     log::debug!("找到图标文件: {icns_path}");
 
-    // 使用 sips 转换为 PNG
-    let temp_png = format!(
-        "/tmp/app_icon_{}_{}.png",
-        app_name.replace(' ', "_"),
-        std::process::id()
-    );
+    // 使用 sips 转换为 PNG。临时文件落用户级临时目录 + 随机后缀：
+    // 共享 /tmp 下的可预测路径可被其他用户预置符号链接写穿
+    let safe_name: String = app_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let temp_unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_png = std::env::temp_dir()
+        .join(format!(
+            "app_icon_{safe_name}_{}_{}.png",
+            std::process::id(),
+            temp_unique
+        ))
+        .to_string_lossy()
+        .into_owned();
 
     let macos_icon_source_size = MACOS_ICON_SOURCE_SIZE.to_string();
     let sips_output = Command::new("sips")
@@ -1335,7 +1347,9 @@ pub async fn get_background_image(
         _ => return Ok(None),
     };
 
-    let bg_path = data_dir.join(&filename);
+    // config 同步载荷可写入任意字段：background_image 必须校验仍位于 data_dir 内，
+    // 防止绝对路径/.. 逃逸后把 data_dir 外文件以 base64 读回前端
+    let bg_path = super::shared::validated_join(&data_dir, &filename)?;
     if !bg_path.exists() {
         return Ok(None);
     }
