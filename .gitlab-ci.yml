@@ -717,7 +717,11 @@ tauri-package-macos-x64:
     - !reference [.rust-node, before_script]
     - bash scripts/check-linux-deps.sh --for-package
     - bash scripts/stage-tauri-key.sh
-  after_script:
+  # GLIBC 兼容门禁必须在 script 里跑：GitLab 不以 after_script 的退出码判定
+  # 作业成败，放 after_script 的 exit 1 永远不生效，不兼容产物照常流入发布。
+  # 门禁失败时 artifacts(when: always) 仍收集产物便于排查。
+  script:
+    - !reference [.tauri-package, script]
     - >-
       bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Yue_Review
       $(find target -type f \( -path '*/release/bundle/appimage/*.AppImage' -o -path '*/release/bundle/deb/*.deb' -o -path '*/release/bundle/rpm/*.rpm' \) | sort)
@@ -875,6 +879,10 @@ publish-release:
     # 缺失且恰好有 .sig 丢失时才报错。
     - |
       set -e
+      # 补签私钥的临时文件：minisign 失败路径也必须清理（set -e 直接退出，
+      # 只靠成功路径的 rm 会把解码后的私钥留在共享 runner 的 /tmp）——
+      # EXIT trap 兜底，成功路径 rm 后 trap 再触发 rm -f 无害
+      trap 'rm -f "${rawkey:-}"' EXIT
       MS="$(command -v minisign 2>/dev/null || true)"
       if [ -z "$MS" ] && [ -x /opt/ci-cache/bin/minisign ]; then MS=/opt/ci-cache/bin/minisign; fi
       for f in target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/nsis/*"${VERSION}"*.exe; do

@@ -36,6 +36,17 @@ log()   { printf '\033[1;34m[reinstall]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[reinstall]\033[0m %s\n' "$*" >&2; }
 die()   { printf '\033[1;31m[reinstall]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# 统一的退出清理：多处临时路径在此注册（后设 trap 会整体替换先设的，
+# 各处各自 trap 会互相覆盖、丢失前一批临时文件的清理承诺）
+CLEANUP_PATHS=""
+register_cleanup() { CLEANUP_PATHS="$CLEANUP_PATHS $1"; }
+on_exit_cleanup() {
+    for p in $CLEANUP_PATHS; do
+        rm -rf "$p"
+    done
+}
+trap on_exit_cleanup EXIT
+
 run() {
     if [ "$DRY" -eq 1 ]; then
         printf '\033[2m[dry] %s\033[0m\n' "$*"
@@ -192,7 +203,7 @@ if [ -z "$DEB" ]; then
     log "  downloading $DEB_URL"
     if [ "$DRY" -eq 0 ]; then
         DEB=$(mktemp /tmp/work-review.XXXXXX.deb)
-        trap 'rm -f "$DEB"' EXIT
+        register_cleanup "$DEB"
         curl -fsSL --progress-bar -o "$DEB" "$DEB_URL" || die "download failed"
     else
         printf '\033[2m[dry] curl -o /tmp/work-review.deb %s\033[0m\n' "$DEB_URL"
@@ -360,7 +371,7 @@ else
         run "sudo apt-get install -y git"
     fi
     TMP_FWD=$(mktemp -d)
-    trap 'rm -rf "$TMP_FWD"' EXIT
+    register_cleanup "$TMP_FWD"
     if [ "$DRY" -eq 0 ]; then
         git clone --quiet https://github.com/flexagoon/focused-window-dbus.git "$TMP_FWD/fwd"
         (cd "$TMP_FWD/fwd" && git checkout --quiet 0368030 -- .)
