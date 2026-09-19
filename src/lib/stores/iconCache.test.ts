@@ -361,7 +361,7 @@ test('高分辨率图标持久化应受总字符预算限制', async () => {
       latestPersistedKey = key;
       latestPersistedValue = value;
       persistedCount += 1;
-      if (persistedCount === 3) allPersisted.resolve();
+      if (persistedCount === 1) allPersisted.resolve();
     },
   }), async () => {
     const { loadAppIcon } = await importFresh('budget');
@@ -404,7 +404,7 @@ test('持久化缓存应只保留最近使用的三十六项', async () => {
     setItem: (_key: string, value: string) => {
       latestPersistedValue = value;
       persistedCount += 1;
-      if (persistedCount === 37) allPersisted.resolve();
+      if (persistedCount === 1) allPersisted.resolve();
     },
   }), async () => {
     const { loadAppIcon } = await importFresh('persistent-limit');

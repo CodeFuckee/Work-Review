@@ -105,7 +105,6 @@ export function customTextModel(): MockSpec {
 export function baseSpec(overrides: MockSpec = {}): MockSpec {
   return {
     get_config: {},
-    get_ai_providers: [],
     get_storage_stats: {},
     get_data_dir: 'C:\\mock\\data',
     get_default_data_dir: 'C:\\mock\\data',

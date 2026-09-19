@@ -46,7 +46,7 @@ function Wait-InstallerExit([string]$Exe, [string[]]$ArgList, [int]$TimeoutMs) {
   $p = Start-Process -FilePath $Exe -ArgumentList $ArgList -PassThru
   if (-not $p.WaitForExit($TimeoutMs)) {
     try { $p.Kill() } catch {}
-    throw "进程超时未退出: $Exe $($Args -join ' ')"
+    throw "进程超时未退出: $Exe $($ArgList -join ' ')"
   }
   return $p.ExitCode
 }
@@ -63,7 +63,8 @@ if ($oldProcs.Count -eq 0) {
   if ($candidates.Count -eq 0) {
     Write-Host '本地无旧版 exe，从 Release 下载便携版作为旧版进程载体...'
     $zip = Join-Path $TmpDir 'Work_Review_portable_x64.zip'
-    curl.exe -sSL -o $zip 'https://home.chenkaidi.top:509/chenkaidi/work-review/-/releases/v1.1.30/downloads/Work_Review_portable_x64.zip'
+    # -f：下载 404 时以非零退出而非把 HTML 错误页写进 zip
+    curl.exe -fsSL -o $zip 'https://home.chenkaidi.top:509/chenkaidi/work-review/-/releases/v1.1.30/downloads/Work_Review_portable_x64.zip'
     Expand-Archive -Force -Path $zip -DestinationPath (Join-Path $TmpDir 'Work_Review')
     $candidates = @((Join-Path $TmpDir 'Work_Review\Work_Review.exe') | Where-Object { Test-Path $_ })
   }

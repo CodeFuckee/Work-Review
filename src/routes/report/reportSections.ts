@@ -134,7 +134,8 @@ export function getVisibleReportSections(
 }
 
 function sectionNumberPrefix(visibleIndex: number, localeCode: string): string {
-  if (localeCode === 'en') {
+  // 仅中文界面用中文数字编号，其余语言（含 en/ar）一律西文数字
+  if (localeCode !== 'zh-CN' && localeCode !== 'zh-TW') {
     return `${visibleIndex + 1}. `;
   }
 

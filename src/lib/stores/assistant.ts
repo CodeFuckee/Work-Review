@@ -327,8 +327,10 @@ function createAssistantStore(): AssistantStore {
     setMessages: (messages) =>
       update((state) => ({
         ...state,
+        // 不做 slice 截断：截断会让装入超长历史时静默丢消息
+        // （persistState 已统一做 localStorage 兜底）
         messages: Array.isArray(messages)
-          ? messages.slice(-40).map((message) => normalizeMessage(message))
+          ? messages.map((message) => normalizeMessage(message))
           : [],
       })),
     // P3：绑定/切换 SQLite 会话（同时替换内存消息）
