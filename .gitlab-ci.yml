@@ -173,11 +173,8 @@ deploy-admin-core-yx:
     - docker network create workreview-net 2>/dev/null || true
     - test -f "$HOME/workreview/admin-config/dbconfig.json" || { echo "缺少 ~/workreview/admin-config 生产配置（首次需手动初始化）" >&2; exit 1; }
     # 3. 重建管理后台容器（配置目录挂载，密钥不进镜像）
-    - docker rm -f workreview-admin 2>/dev/null || true
-    - docker run -d --name workreview-admin --network workreview-net --restart unless-stopped
-        -p 4191:18010
-        -v "$HOME/workreview/admin-config:/app/ConfigCenter"
-        workreview-admin:latest
+    # yue-review stack：docker compose 统一编排 admin 与 db
+    - docker compose -p yue-review -f admin-core/compose.yaml up -d --wait
     # 4. 健康检查：登录页可访问（轮询最多 60 秒）
     - |
       ok=0
@@ -546,6 +543,14 @@ version-bump:
       # 增量编译缓存抹掉，随后每条流水线三平台全量冷启动
       git clean -ffdx -e target -e .cargo -e .npm
       echo "bump-base state: $(git rev-parse --short HEAD) $(git log -1 --oneline) $(node -p "require('./package.json').version")"
+      # docs-only 跳过：无程序代码变更（src/、src-tauri/、crates/ 均未变）时不递增
+      # 版本、不打 tag、不触发三平台打包（省 30–60 分钟）；构建计数 = tag 以来提交数。
+      if ! bash scripts/ci/has-code-changes.sh; then
+        LAST_TAG="$(git describe --tags --abbrev=0)"
+        BUILD_N="$(git rev-list --count "${LAST_TAG}..HEAD")"
+        echo "docs-only change: 版本保持 ${LAST_TAG}，构建计数 ${LAST_TAG}+${BUILD_N}，跳过版本递增与发版"
+        exit 0
+      fi
       node scripts/bump-version.mjs
       NEW_VERSION="$(node -p "require('./package.json').version")"
       git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json Cargo.lock
