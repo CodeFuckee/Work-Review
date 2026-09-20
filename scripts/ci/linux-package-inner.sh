@@ -2,7 +2,9 @@
 # 容器内执行的 linux 打包脚本（由 .tauri-package-linux 以 runner 同 UID 运行）
 set -euo pipefail
 
-npm ci --cache /build/.npmc --prefer-offline
+# npm 缓存指向 /build/.npm（GIT_CLEAN_FLAGS 排除清单内的持久缓存，与其余
+# 作业一致）；此前用 /build/.npmc 不在排除清单，每次 checkout 被清、全量重下
+npm ci --cache /build/.npm --prefer-offline
 # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
 # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
 rm -rf target/release/bundle target/*/release/bundle

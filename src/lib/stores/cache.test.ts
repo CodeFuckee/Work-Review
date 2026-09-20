@@ -167,7 +167,6 @@ test('invalidate 应只失效目标缓存，clear 应恢复完整初始状态', 
     overview: { data: null, timestamp: 0, loading: false, date: null },
     timeline: {},
     reports: {},
-    hourlySummaries: {},
     reportGenerating: false,
     config: null,
   });

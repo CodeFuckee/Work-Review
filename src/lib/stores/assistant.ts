@@ -95,7 +95,6 @@ export interface AssistantStore extends Readable<AssistantState> {
   setConversationId: (conversationId: number | null | undefined) => void;
   beginSending: (requestId: string) => void;
   finishSending: (requestId: string) => void;
-  updateLastStreaming: (updater: AssistantMessageUpdater) => void;
   updateMessageById: (messageId: string, updater: AssistantMessageUpdater) => void;
   reset: () => void;
 }
@@ -361,15 +360,6 @@ function createAssistantStore(): AssistantStore {
           sending: false,
           sendingRequestId: null,
         };
-      }),
-    // 增量更新当前 streaming 的 assistant message（流式事件驱动）。
-    updateLastStreaming: (updater) =>
-      update((state) => {
-        const index = state.messages.findIndex((message) => message.streaming);
-        if (index === -1) return state;
-        const newMessages = state.messages.slice();
-        newMessages[index] = normalizeMessage(updater({ ...newMessages[index] }));
-        return { ...state, messages: newMessages };
       }),
     // 按请求对应的消息 ID 定点更新，避免并发流式消息互相覆盖。
     updateMessageById: (messageId, updater) =>

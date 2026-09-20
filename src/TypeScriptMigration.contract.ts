@@ -495,7 +495,6 @@ type ExpectedAssistantStore = {
   setConversationId: (conversationId: number | null | undefined) => void;
   beginSending: (requestId: string) => void;
   finishSending: (requestId: string) => void;
-  updateLastStreaming: (updater: ExpectedAssistantMessageUpdater) => void;
   updateMessageById: (
     messageId: string,
     updater: ExpectedAssistantMessageUpdater,
@@ -601,7 +600,6 @@ type ExpectedCacheState = {
   overview: ExpectedOverviewCacheEntry;
   timeline: Record<string, ExpectedTimelineCacheEntry>;
   reports: Record<string, ExpectedCacheEntry>;
-  hourlySummaries: Record<string, unknown>;
   reportGenerating: boolean;
   config: unknown | null;
 };

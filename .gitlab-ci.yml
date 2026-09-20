@@ -150,8 +150,9 @@ frontend:
 # admin.ui 静态资源）并部署到越秀服务器（runner tags: yx/deploy，即
 # 10.37.80.25）。生产配置（DB 口令/JWT 密钥）持久化在服务器
 # ~/workreview/admin-config/，挂载进容器，密钥不进仓库与镜像。
-# 依赖（一次性，已在 2026-09-17 初始化）：docker 网络 workreview-net、
-# 专用 Postgres 容器 workreview-db、ConfigCenter 目录。
+# 拓扑：docker compose stack「yue-review」（admin + db，db 在 supabase_default
+# 网络上以唯一 hostname=workreview-db 供 OA 同步直连）；早期手工创建的
+# workreview-net / workreview-db 已弃用。
 # 管理界面：http://10.37.80.25:4191
 # ---------------------------------------------------------------------------
 deploy-admin-core-yx:
@@ -169,8 +170,8 @@ deploy-admin-core-yx:
     - ADMIN_CORE_REF=$(git ls-remote "$ADMIN_CORE_REPO" refs/heads/master | cut -c1-40)
     - echo "admin-core master = $ADMIN_CORE_REF"
     - docker build --build-arg ADMIN_CORE_REPO="$ADMIN_CORE_REPO" --build-arg ADMIN_CORE_REF="$ADMIN_CORE_REF" -t workreview-admin:latest admin-core/
-    # 2. 确保数据面（幂等）：网络 + 专用 Postgres + 生产配置目录
-    - docker network create workreview-net 2>/dev/null || true
+    # 2. 确保数据面（幂等）：compose 网络 + 生产配置目录
+    # （db 由 compose 统一编排，不再使用早期手工创建的 workreview-net/workreview-db）
     - test -f "$HOME/workreview/admin-config/dbconfig.json" || { echo "缺少 ~/workreview/admin-config 生产配置（首次需手动初始化）" >&2; exit 1; }
     # 3. 重建管理后台容器（配置目录挂载，密钥不进镜像）
     # yue-review stack：docker compose 统一编排 admin 与 db
@@ -183,7 +184,7 @@ deploy-admin-core-yx:
         if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then ok=1; break; fi
         sleep 2
       done
-      [ "$ok" = 1 ] || { echo "管理后台健康检查失败" >&2; docker logs --tail 40 workreview-admin >&2; exit 1; }
+      [ "$ok" = 1 ] || { echo "管理后台健康检查失败" >&2; docker compose -p yue-review -f admin-core/compose.yaml logs --tail 40 admin >&2; exit 1; }
       echo "管理后台已上线: http://10.37.80.25:4191"
 
 # 夜间流水线门禁：自最新发布 tag 以来没有新提交时，通过 API 取消整条夜间流水线
@@ -238,6 +239,9 @@ rust-verify-linux:
     - npm run build
     - cargo fmt --all -- --check
     - cargo clippy --workspace --all-targets -- -D warnings
+    # cargo install 落在 $CARGO_HOME/bin（项目内 .cargo/bin），而 cargo 子命令按
+    # PATH 查找：不把它加进 PATH 时，runner 预装缺失会导致每次流水线都重新编译安装
+    - export PATH="$CARGO_HOME/bin:$PATH"
     - command -v cargo-llvm-cov >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     - rustup component add llvm-tools-preview
     - cargo llvm-cov --workspace --all-targets --summary-only
@@ -728,7 +732,8 @@ tauri-package-macos-x64:
   before_script:
     - docker build -q -t wr-linux-builder:22 -f scripts/ci/linux-builder-22.Dockerfile scripts/ci 2>/dev/null || docker build -t wr-linux-builder:22 -f scripts/ci/linux-builder-22.Dockerfile scripts/ci
     - bash scripts/stage-tauri-key.sh
-    - mkdir -p "$HOME/workreview/ci-caches/linux22/cargo" "$HOME/workreview/ci-caches/linux22/rustup"
+    # （525df65 起容器不再挂载宿主 cargo/rustup 缓存目录，工具链用镜像内置，
+    # 此前为其准备的 ci-caches/linux22 mkdir 已随之作废）
   # GLIBC 兼容门禁必须在 script 里跑：GitLab 不以 after_script 的退出码判定
   # 作业成败，放 after_script 的 exit 1 永远不生效，不兼容产物照常流入发布。
   # 门禁失败时 artifacts(when: always) 仍收集产物便于排查。
