@@ -1983,6 +1983,13 @@ async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
 
             avatar_engine::emit_avatar_state(&app, &next_avatar_state);
 
+            // 桌宠循环没有采集循环那条隐私过滤链路：日志里的窗口签名
+            // （应用|标题|URL）先过敏感信息过滤，避免明文进日志文件
+            let log_signature = {
+                let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                state_guard.privacy_filter.filter_text(&window_signature)
+            };
+
             let entered_idle = match &last_avatar_state {
                 Some(previous) => !previous.is_idle && next_avatar_state.is_idle,
                 None => next_avatar_state.is_idle,
@@ -1999,7 +2006,7 @@ async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
                 "🐾 桌宠状态切换: {} -> {} | 窗口={} | 采集耗时={}ms",
                 previous_mode,
                 next_avatar_state.mode,
-                window_signature,
+                log_signature,
                 collect_cost_ms
             );
 
@@ -2391,12 +2398,25 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
 
         // ===== 应用切换日志 =====
         if app_changed && last_app_name.is_some() {
+            // 与入库同规：标题先过敏感信息过滤再落日志，避免邮件主题/会话名
+            // 等未脱敏内容绕过隐私规则进入日志文件
+            let (prev_title_log, cur_title_log) = {
+                let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                (
+                    state_guard
+                        .privacy_filter
+                        .filter_text(previous_window_title.as_deref().unwrap_or("")),
+                    state_guard
+                        .privacy_filter
+                        .filter_text(&active_window.window_title),
+                )
+            };
             log::info!(
                 "📊 应用切换: {} [{}] → {} [{}]",
                 last_app_name.as_deref().unwrap_or("无"),
-                previous_window_title.as_deref().unwrap_or(""),
+                prev_title_log,
                 active_window.app_name,
-                active_window.window_title,
+                cur_title_log,
             );
         }
 

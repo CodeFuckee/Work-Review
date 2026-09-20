@@ -1534,9 +1534,31 @@ pub fn filter_sensitive_text(text: &str) -> String {
         result = re.replace_all(&result, "[邮箱]").to_string();
     }
 
-    // 过滤 IP 地址
-    if let Ok(re) = Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b") {
-        result = re.replace_all(&result, "[IP地址]").to_string();
+    // 过滤 IP 地址。regex 的 \b 是 Unicode 词边界：CJK 汉字属词字符，中文与 IP
+    // 直接相邻（OCR 中文输出极常见）时首数字前不构成边界、整条漏配——与上方
+    // 银行卡号同款，匹配后手动校验前后邻位不是数字
+    if let Ok(re) = Regex::new(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}") {
+        let mut filtered = String::with_capacity(result.len());
+        let mut last_end = 0;
+        for m in re.find_iter(&result) {
+            let prev_is_digit = result[..m.start()]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_digit());
+            let next_is_digit = result[m.end()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit());
+            if prev_is_digit || next_is_digit {
+                // 属于更长数字串的一部分（如版本号/流水号片段），不视为 IP
+                continue;
+            }
+            filtered.push_str(&result[last_end..m.start()]);
+            filtered.push_str("[IP地址]");
+            last_end = m.end();
+        }
+        filtered.push_str(&result[last_end..]);
+        result = filtered;
     }
 
     // 过滤密码相关
@@ -1589,6 +1611,23 @@ mod tests {
             longer.contains("6222-0202-0011-2233-4444"),
             "实际输出: {longer}"
         );
+    }
+
+    #[test]
+    fn ip地址应被过滤且中文相邻不漏配() {
+        // 回归：\b 是 Unicode 词边界，中文与 IP 相邻时整条漏配
+        let masked = super::filter_sensitive_text("服务器192.168.1.1已重启");
+        assert!(!masked.contains("192.168.1.1"), "实际输出: {masked}");
+        assert!(masked.contains("[IP地址]"), "实际输出: {masked}");
+
+        // 独立 IP 正常打码
+        let plain = super::filter_sensitive_text("host: 10.0.0.7 end");
+        assert!(!plain.contains("10.0.0.7"), "实际输出: {plain}");
+
+        // 更长数字串的一部分（前后邻位是数字）不误报
+        let longer = super::filter_sensitive_text("编号 9192.168.1.19 结束");
+        assert!(longer.contains("9192.168.1.19"), "实际输出: {longer}");
+        assert!(!longer.contains("[IP地址]"), "实际输出: {longer}");
     }
 
     fn create_test_image(width: u32, height: u32) -> std::path::PathBuf {

@@ -36,6 +36,16 @@ fn format_duration_compact(seconds: i64) -> String {
     }
 }
 
+/// 带符号的时长变化量。format_duration_compact 对 <=0 早退返回 "0s"，
+/// 负变化量若直接传入会显示成 "0s (-37.5%)"，误导模型以为时长没变
+fn signed_duration_compact(delta: i64) -> String {
+    if delta < 0 {
+        format!("-{}", format_duration_compact(-delta))
+    } else {
+        format_duration_compact(delta)
+    }
+}
+
 /// 中文分类名 → 英文 key（支持部分匹配）
 ///
 /// "开发" → "development", "通讯" → "communication", "browser" → "browser"
@@ -1294,9 +1304,8 @@ fn trend_comparison_execute(ctx: &ToolContext, args: Value) -> Result<String, St
         let pct = delta as f64 / total_a as f64 * 100.0;
         let sign = if delta > 0 { "+" } else { "" };
         lines.push(format!(
-            "  总时长变化: {}{} ({sign}{pct:.1}%)",
-            sign,
-            format_duration_compact(delta)
+            "  总时长变化: {} ({sign}{pct:.1}%)",
+            signed_duration_compact(delta)
         ));
         lines.push("".to_string());
     }
@@ -2799,6 +2808,15 @@ mod tests {
         assert!(required_strs.contains(&"period_a_to"));
         assert!(required_strs.contains(&"period_b_from"));
         assert!(required_strs.contains(&"period_b_to"));
+    }
+
+    #[test]
+    fn test_signed_duration_compact_negative_delta_is_not_zero() {
+        // 回归：负变化量直接喂 format_duration_compact 会因 <=0 早退显示成 "0s"
+        assert_eq!(signed_duration_compact(-2250), "-37m");
+        assert_eq!(signed_duration_compact(-45), "-45s");
+        assert_eq!(signed_duration_compact(3600), "1h0m");
+        assert_eq!(signed_duration_compact(0), "0s");
     }
 
     #[test]

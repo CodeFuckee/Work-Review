@@ -627,7 +627,7 @@ async fn chat_gemini(
 // 第四部分：响应解析 — 各家格式 → 统一格式
 // ══════════════════════════════════════════════════════════
 
-/// 解析 OpenAI 格式的响应（Ollama 也用这个）
+/// 解析 OpenAI 格式的响应（Ollama 原生格式走 parse_ollama_response）
 fn parse_openai_response(result: &Value) -> Result<LlmResponse, AppError> {
     let choice = &result["choices"][0];
     let msg = &choice["message"];

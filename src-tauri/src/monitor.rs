@@ -615,10 +615,66 @@ fn firefox_family_session_store_base_dir(app_lower: &str) -> Option<PathBuf> {
     }
 }
 
+/// Firefox 会话文件解析结果的短 TTL 缓存：recovery.jsonlz4 重会话可达数十 MB，
+/// 浏览期间每轮轮询（macOS 1.5s/Linux 0.5s）全量读取+mozlz4 解压+JSON 解析是
+/// 常驻 CPU 热点。按（应用, 标题）键缓存，成功 3s/失败 2s 后重查——与 Windows
+/// 侧 BrowserUrlCache 的 TTL 口径一致；标题变化即键变化，不影响切换标签的即时性
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+struct FirefoxSessionCacheEntry {
+    app_lower: String,
+    window_title: String,
+    url: Option<String>,
+    cached_at: std::time::Instant,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+static FIREFOX_SESSION_CACHE: std::sync::Mutex<Option<FirefoxSessionCacheEntry>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+const FIREFOX_SESSION_CACHE_SUCCESS_TTL: std::time::Duration = std::time::Duration::from_secs(3);
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+const FIREFOX_SESSION_CACHE_FAILURE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
+
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn firefox_family_session_store_url(app_name: &str, window_title: &str) -> Option<String> {
     let app_lower = app_name.to_lowercase();
-    let base_dir = firefox_family_session_store_base_dir(&app_lower)?;
+    let now = std::time::Instant::now();
+
+    if let Ok(cache) = FIREFOX_SESSION_CACHE.lock() {
+        if let Some(entry) = cache.as_ref() {
+            let ttl = if entry.url.is_some() {
+                FIREFOX_SESSION_CACHE_SUCCESS_TTL
+            } else {
+                FIREFOX_SESSION_CACHE_FAILURE_TTL
+            };
+            if entry.app_lower == app_lower
+                && entry.window_title == window_title
+                && now.duration_since(entry.cached_at) < ttl
+            {
+                return entry.url.clone();
+            }
+        }
+    }
+
+    let url = firefox_family_session_store_url_uncached(&app_lower, window_title);
+    if let Ok(mut cache) = FIREFOX_SESSION_CACHE.lock() {
+        *cache = Some(FirefoxSessionCacheEntry {
+            app_lower,
+            window_title: window_title.to_string(),
+            url: url.clone(),
+            cached_at: now,
+        });
+    }
+    url
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+fn firefox_family_session_store_url_uncached(
+    app_lower: &str,
+    window_title: &str,
+) -> Option<String> {
+    let base_dir = firefox_family_session_store_base_dir(app_lower)?;
     let ini_path = base_dir.join("profiles.ini");
     let ini_content = std::fs::read_to_string(&ini_path).ok()?;
     let profile_dir = firefox_family_profile_dir_from_ini(&base_dir, &ini_content)?;
@@ -3385,6 +3441,13 @@ fn get_browser_url_via_system_events(process_name: &str) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn get_browser_url(app_name: &str, window_title: &str) -> Option<String> {
+    // 与 Linux/Windows 入口同款门禁：非浏览器应用不查 URL。缺此门禁时，
+    // 名称含 arc/safari 等子串的应用（如 Archive Utility）会 spawn osascript
+    // 去查真实浏览器的 URL，并把结果错误归属到当前应用名下
+    if !is_browser_app(app_name) {
+        return None;
+    }
+
     let app_lower = app_name.to_lowercase();
 
     if app_lower.contains("firefox") || app_lower.contains("zen") {

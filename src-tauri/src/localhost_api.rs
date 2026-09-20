@@ -3,7 +3,6 @@ use crate::screenshot::ScreenshotResult;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::TcpListener as StdTcpListener;
 use std::path::{Path, PathBuf};
@@ -193,29 +192,45 @@ fn generate_localhost_api_token() -> String {
     format!("wr-local-{}", Uuid::new_v4().simple())
 }
 
+// 写入 token 内容；Unix 上保持 0600（明文凭据不允许组/其他用户可读）
 #[cfg(unix)]
-fn open_secret_file(path: &Path) -> std::io::Result<std::fs::File> {
+fn write_token_file_at(path: &Path, token: &str) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true).mode(0o600);
-    options.open(path)
+    let mut file = options.open(path)?;
+    file.write_all(token.as_bytes())
 }
 
 #[cfg(not(unix))]
-fn open_secret_file(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    options.open(path)
+fn write_token_file_at(path: &Path, token: &str) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(token.as_bytes())
 }
 
 fn write_localhost_api_token(path: &Path, token: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut file = open_secret_file(path)?;
-    file.write_all(token.as_bytes())?;
-    file.flush()?;
+    // 原子写（同 node_gateway 身份文件模式）：truncate+write 中途崩溃会留下
+    // 半截 token 文件，而 ensure 只对"缺失或空"自愈，残文会让所有客户端持续 401；
+    // 临时名带 pid+纳秒避免并发写同一临时文件/Windows rename 目标已存在失败
+    let unique = format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let temp_path = path.with_extension(unique);
+    write_token_file_at(&temp_path, token)?;
+    if let Err(e) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(e.into());
+    }
     // 主动刷新缓存，保证生成/轮换后新 token 立即生效
     if let Ok(mut cache) = LOCALHOST_API_TOKEN_CACHE.lock() {
         *cache = Some((path.to_path_buf(), token.to_string(), Instant::now()));
@@ -283,7 +298,16 @@ fn mask_localhost_api_token(token: &str) -> String {
     format!("{head}…{tail}")
 }
 
+/// 串行化 token 的"读-判-写"（ensure）与轮换（rotate）：文件缺失时两个并发
+/// ensure 各自生成不同 token 先后落盘，后写覆盖先写，先返回方据其配置的客户端
+/// 将恒 401（第六轮 node_gateway 同族问题的本文件对应面）
+static LOCALHOST_API_TOKEN_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn ensure_localhost_api_token(state: &Arc<Mutex<AppState>>) -> Result<String> {
+    let _write_guard = LOCALHOST_API_TOKEN_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     let token_path = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         localhost_api_token_path(&state.data_dir)
@@ -299,6 +323,10 @@ pub fn ensure_localhost_api_token(state: &Arc<Mutex<AppState>>) -> Result<String
 }
 
 pub fn rotate_localhost_api_token(state: &Arc<Mutex<AppState>>) -> Result<String> {
+    let _write_guard = LOCALHOST_API_TOKEN_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     let token_path = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         localhost_api_token_path(&state.data_dir)

@@ -3890,14 +3890,18 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
-        conn.execute(
+        // 两条 DELETE 包事务：第二条失败/中途崩溃时不留 0 消息的空壳会话
+        // （同 create_assistant_conversation / append 系列的事务口径）
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "DELETE FROM assistant_messages WHERE conversation_id = ?1",
             params![conversation_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM assistant_conversations WHERE id = ?1",
             params![conversation_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 

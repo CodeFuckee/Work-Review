@@ -139,7 +139,10 @@ pub fn sync_telegram_bot_runtime(state: &Arc<Mutex<AppState>>) -> Result<(), App
         return Ok(());
     }
 
-    if bot_token.is_none() || bot_token.as_ref().is_none_or(|t| t.trim().is_empty()) {
+    // 入口 trim：守卫按 trim 后判空，实际使用也应同规，否则粘贴带首尾空白
+    // 的 token 会通过守卫后拼 URL 401（与 wecom_aibot 的 id/secret 处理对齐）
+    let bot_token = bot_token.map(|t| t.trim().to_string());
+    if bot_token.is_none() || bot_token.as_ref().is_none_or(|t| t.is_empty()) {
         s.telegram_bot_runtime.stop();
         if let Ok(mut st) = s.telegram_bot_runtime.shared.lock() {
             st.last_error = Some("Bot Token 未填写".to_string());
