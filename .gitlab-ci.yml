@@ -729,7 +729,7 @@ tauri-package-macos-x64:
   # 门禁失败时 artifacts(when: always) 仍收集产物便于排查。
   script:
     - |
-      docker run --rm --user "$(id -u):$(id -g)"         -e TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"         -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"         -e HOME=/build         -v "$CI_PROJECT_DIR":/build -w /build         wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh "$TAURI_BUILD_ARGS"
+      docker run --rm --user "$(id -u):$(id -g)"         -e TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"         -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"         -e HOME=/build         -e CARGO_HOME=/build/.cargo-home         -v "$CI_PROJECT_DIR":/build -w /build         wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh "$TAURI_BUILD_ARGS"
     - >-
       bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Yue_Review
       $(find target -type f \( -path '*/release/bundle/appimage/*.AppImage' -o -path '*/release/bundle/deb/*.deb' -o -path '*/release/bundle/rpm/*.rpm' \) | sort)
