@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **Linux 安装包要求 GLIBC_2.39 被兼容门禁拦截（v1.1.74–78 发布失败根因，CI）**：linux-x64 runner 主机为 Ubuntu 24.04（glibc 2.39），直接构建的 deb/rpm/AppImage 主程序要求 GLIBC_2.39，被第六轮评审加入的 GLIBC 兼容门禁（上限 2.35 = Ubuntu 22.04 基线）连续拦截——门禁按设计工作，根因是构建环境超出基线。修复：Linux 包构建容器化——新增 `scripts/ci/linux-builder-22.Dockerfile`（ubuntu:22.04 + webkit2gtk-4.1 全依赖 + rust 1.97.1 + node 20，基镜像走 daocloud 源规避 docker.io 限流）与容器内打包脚本，`.tauri-package-linux` 作业改为构建器镜像内以 runner 同 UID 构建（`CARGO_HOME` 覆盖到项目内可写目录）、宿主执行 GLIBC 门禁与产物收集；CI 以 fork/上游最新 commit SHA 作克隆 ref 击穿构建缓存。过程中顺带修复：上游新增的根级/子目录 `pnpm-workspace.yaml` 导致子目录 `pnpm install` 报 packages field missing（构建前删除）、vite 8 产物嵌套路径 `dist/src/...` 未归并导致品牌替换与校验全挂（构建后归并到 dist 根）。
 - **第六轮全量代码评审修复（行为保持，Rust 批次 + 前端批次 + CI 批次，共 17 项（run.ps1 两小项合并计）+ 1 项源码契约同步）**：
   - **Ollama 非流式响应套用 OpenAI 解析器恒得空答案（P1，正确性）**：`chat_ollama` 请求的是 Ollama 原生 `/api/chat`（顶层是 `message`、无 `choices`），却用 `parse_openai_response` 解析——所有非流式 Ollama 调用（桌宠主动开口、流式中断回退、无事件通道分支）内容恒为空、主动开口永久静默失效。新增 `parse_ollama_response` 按原生格式解析（`message.content`/`message.tool_calls`/`done_reason`，与流式装配器口径一致），配回归测试。
   - **思考型模型流式输出被思维链污染（P2，正确性）**：OpenAI 兼容流式装配器把 `reasoning_content` 增量无条件累积进 `content`——DeepSeek-R1/Qwen3 等模型先发思维链帧再发正文帧时，最终回答=思维链+正文拼接并进会话历史。改为思维链单独累积，仅当正文为空时在 finish 兜底（对齐非流式契约），流式打字增量照发；同步更新前端侧 Rust 源码契约测试。
