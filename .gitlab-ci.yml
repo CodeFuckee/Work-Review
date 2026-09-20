@@ -275,6 +275,10 @@ rust-verify-windows:
 .release-compile:
   extends: .rust-node
   stage: compile
+  # release 冷编译（tauri 全依赖树）在自建 runner 上可超 1 小时：
+  # `default: timeout` 需 GitLab 15.1+，本项目实例不生效（实测两次精确死于
+  # 3600s = 项目默认 1h，failure_reason=server_timeout_running），改作业级显式声明
+  timeout: 3h
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
@@ -663,6 +667,8 @@ release-preflight:
   extends: .rust-node
   stage: package
   needs: [release-preflight]
+  # 三平台打包（tauri build 全量）可超 1 小时，作业级显式超时（同 .release-compile）
+  timeout: 3h
   # 不重跑 fmt/check/clippy/test：tag 指向的提交与刚在 main 全量验证过的提交
   # 仅差版本号字符串（bump 提交），验证已在 main 流水线完成——此处只构建打包。
   script:
@@ -765,6 +771,8 @@ tauri-package-windows:
   stage: package
   tags: ["$WINDOWS_RUNNER_TAG"]
   needs: [release-preflight]
+  # 同 .tauri-package：Windows 全量打包可超 1 小时，作业级显式超时
+  timeout: 3h
   # 不重跑 fmt/check/clippy/test：tag 指向的提交与刚在 main 全量验证过的提交
   # 仅差版本号字符串（bump 提交），验证已在 main 流水线完成——此处只构建打包。
   script:
