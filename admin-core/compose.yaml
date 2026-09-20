@@ -26,6 +26,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # supabase_default 网络上另有 supabase 的 db 服务别名，主机名用唯一值避免歧义
+    hostname: workreview-db
     ports:
       - "15433:5432"
     environment:
