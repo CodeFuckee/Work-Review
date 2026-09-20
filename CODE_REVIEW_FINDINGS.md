@@ -12,6 +12,168 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 - 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
 - ⚠️ 仓库级：需人工处置的事项
 
+# 全量代码评审问题清单与处置结果（2026-09-15 第一轮 / 2026-09-16 第二轮 / 2026-09-17 第三轮 / 2026-09-18 第四轮 / 2026-09-19 第五轮 / 2026-09-20 第六轮 / 2026-09-21 第七轮）
+
+评审范围：全部 71k 行 Rust（crates/core、crates/mcp-server、crates/skills-engine、src-tauri）
++ 15k 行 TS + 22k 行 Svelte（40 组件）+ CI 配置。按 code-review-skill 的 rust.md 与
+cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL 注入/XSS/错误处理）、
+代码质量反模式、常见 bug。
+
+处置标签：
+- ✅ 已修复：本任务已修复并通过全量测试（第一轮：批次 1 = Rust，commit ac58a14；批次 2 = TS；
+  第二轮：批次 1 = CI（249c833）、批次 2 = Rust（b9fe7c9）、批次 3 = 前端 TS）
+- ⏸ 待确认：修复必须改变对外行为/测试契约，按约定未经确认不动
+- 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
+- ⚠️ 仓库级：需人工处置的事项
+
+# 第七轮（2026-09-21）
+
+范围：七分片并行复扫（main+commands / monitor+screenshot+ocr / localhost+avatar+杂项 /
+agent+五bot / crates 三库 / 前端纯 TS / Svelte 组件 / CI+scripts+admin-core），与
+前六轮清单逐条去重。新发现 22 条确认问题（3 P1 + 19 P2）+ 1 条仓库级 P1（updater
+私钥入库），分三批修复：批次 1 = Rust 安全/停机（18955b2）、批次 2 = Rust 健壮性
+（48e6037）、批次 3 = TS 死代码 + CI 诊断（b93e7a3）；12 条涉行为/部署语义列待确认；
+2 条涉 .svelte 归过目批次。
+
+## 第七轮已修复
+
+### 批次 1（Rust 安全/停机，18955b2）
+
+- ✅ [P1] crates/core/src/analysis/cloud.rs:240 — screenshots_dir.join(DB
+  screenshot_path) 未校验即读文件并 base64 外发 AI 端点：绝对路径整体替换/`..`
+  越界（调用方 report.rs:249 传 data_dir）可读任意文件——与第一轮已修
+  timeline.rs:124（P0）同族，crates/core 因无 validated_join 被漏网 — 新增
+  safe_screenshot_path（拒绝绝对/根/`..`/Prefix + 拼接后前缀复查）+ 平台分组回归测试
+- ✅ [P1] src-tauri/src/commands/shared.rs:46 — parse_temporal_range 对"最近/近/过去
+  N 天"的 N 无上限，超大 N 使 chrono::Duration::days 越界 panic；问题文本经
+  orchestrator fast_answer（FastPath 与 Agent 回退两路）直达此处，"近99999999天"
+  即可打崩一次助手请求 — N 夹紧 [0,3650] + 回归测试
+- ✅ [P1] src-tauri/src/localhost_api.rs:512 — accept 循环对任何 accept 错误 `?`
+  传播终止整个本地 API：Windows 客户端在 accept 前重置（WSAECONNRESET）即触发，
+  MCP live 上下文/设备面从此永久停机 — 瞬态错误记日志 + 50ms 退避重试，
+  连续 200 次失败仍按异常退出上报
+- ✅ [P2] src-tauri/src/main.rs:3600 — remote_upload_backfill_task 对 screenshot_path
+  只查 is_absolute 即 data_dir.join 并把文件内容上传远程存储：`..` 越界可把
+  data_dir 之外文件传上用户远程存储 — 复用 validated_join（commands/mod.rs 增
+  pub(crate) 再导出）
+
+### 批次 2（Rust 健壮性，48e6037）
+
+- ✅ [P2] src-tauri/src/main.rs:2394/1998 — 采集循环"应用切换"日志（隐私过滤之前）
+  与桌宠循环"状态切换"日志（完全无过滤）以 info 级记录原始窗口标题/URL：邮件主题、
+  IM 会话名绕过隐私规则持久进日志 — 落日志前经 privacy_filter.filter_text 同款脱敏
+- ✅ [P2] src-tauri/src/localhost_api.rs:216 — token 直接 truncate+write 非原子：
+  写中途崩溃留半截文件且 ensure 只对"缺失或空"自愈，持旧 token 客户端持续 401 —
+  临时文件（pid+纳秒）+ rename 原子写（同 node_gateway 第六轮模式），Unix 保持 0600
+- ✅ [P2] src-tauri/src/localhost_api.rs:292 — ensure/rotate 读-判-写无并发保护：
+  双并发 ensure 各自生成不同 token 先后落盘，先返回方配置的客户端恒 401（node_gateway
+  同族问题的本文件面）— LOCALHOST_API_TOKEN_WRITE_LOCK 串行化 ensure/rotate
+- ✅ [P2] src-tauri/src/monitor.rs:3387 — macOS get_browser_url 缺 is_browser_app
+  门禁（Linux/Windows 入口均有）：名称含 arc/safari 等子串的非浏览器应用（Archive
+  Utility/Archiver）每轮 spawn osascript 查 Arc 等 URL 并串号归属 — 入口补门禁
+- ✅ [P2] src-tauri/src/monitor.rs:619 — Firefox 会话文件（recovery.jsonlz4 可达数十
+  MB）每轮轮询全量读取+mozlz4 解压+JSON 解析无缓存（Windows 有 3s TTL 缓存，
+  macOS/Linux 无），浏览期间常驻 CPU 热点 — 按（应用,标题）键 3s 成功/2s 失败 TTL
+  缓存，与 Windows 口径一致
+- ✅ [P2] src-tauri/src/ocr.rs:1538 — IP 过滤正则 `\b` 是 Unicode 词边界：CJK 汉字属
+  词字符，中文与 IP 直接相邻（OCR 中文输出极常见）时整条漏配明文落库 — 与银行卡号
+  同款匹配后邻位手动校验 + 回归测试
+- ✅ [P2] src-tauri/src/agent/tools.rs:1292 — trend_comparison 总时长变化为负时
+  format_duration_compact(delta) 命中 <=0 早退返回 "0s"，模型收到 "0s (-37.5%)"
+  误以为时长没变 — 新增 signed_duration_compact（负值取绝对值+负号）+ 回归测试
+- ✅ [P2] crates/core/src/database.rs:3887 — delete_assistant_conversation 两条
+  DELETE 未包事务，第二条失败留 0 消息空壳会话（同表 create/append 已有事务先例）—
+  unchecked_transaction 包裹
+- ✅ [P2] src-tauri/src/telegram_bot.rs:142 — 守卫按 trim 判空但原样传 API：带首尾
+  空白 token 通过守卫后 401（wecom_aibot id/secret 已 trim，同族对齐）— 入口 trim
+- ✅ [P2] src-tauri/src/agent/model.rs:629 — parse_openai_response doc 注释仍写
+  "Ollama 也用这个"（第六轮已改走 parse_ollama_response）误导维护者 — 注释更正
+
+### 批次 3（TS 死代码 + CI 诊断/性能，b93e7a3）
+
+- ✅ [P2] src/lib/stores/cache.ts:29,85 — CacheState.hourlySummaries 全仓零读零写
+  死状态 — 删除 + TypeScriptMigration.contract.ts 契约 + cache.test.ts fixture 同步
+- ✅ [P2] src/lib/stores/assistant.ts:366 — updateLastStreaming 生产零调用死 API
+  且 findIndex 取第一条 streaming 消息与注释语义相悖（并发双流更新错消息）— 删除 +
+  契约同步；updateMessageById 已有独立测试覆盖，两个死 API 测试随之移除
+- ✅ [P2] .gitlab-ci.yml:186 — 健康检查失败诊断 `docker logs workreview-admin` 指向
+  不存在的容器名（compose 部署实际为 yue-review-admin-1），排障误导 — 改 compose logs
+- ✅ [P2] .gitlab-ci.yml:173 — `docker network create workreview-net` 死步骤
+  （compose 未引用该网络）— 删除；:153 头注释同步为 compose 拓扑
+- ✅ [P2] .gitlab-ci.yml:242 — cargo-llvm-cov 装进 $CARGO_HOME/bin（项目内）不在
+  PATH：预装缺失时每条流水线重复整编且永不自愈（现状靠 runner 预装掩盖）—
+  export PATH="$CARGO_HOME/bin:$PATH"
+- ✅ [P2] scripts/ci/linux-package-inner.sh:5 — npm cache /build/.npmc 不在
+  GIT_CLEAN_FLAGS 排除清单：每次发版 checkout 被清、全量重下依赖 — 改 /build/.npm
+  （与其余作业一致的持久缓存）
+- ✅ [P2] .gitlab-ci.yml:732 — ci-caches/linux22 死 mkdir（525df65 删除挂载后无
+  消费者）— 删除并留注释
+
+## 第七轮仓库级（需人工处置）
+
+- ⚠️ [P1] tauri-updater.key（minisign 私钥，CI 签名变量的原始材料）自首次提交起
+  被 git 跟踪。现仓库为私有自建 GitLab（GitHub 公开镜像经核实不含此文件、自建站
+  raw 需登录），且私钥有口令加密，实际暴露面有限；但密钥材料入库违反密钥管理基线，
+  任何读仓库权限扩散/GitLab 配置失误即升级为更新链投毒（全量安装端自动应用恶意
+  更新）。轮换涉及：新钥签名 + 旧钥过渡发布 + 历史清除（filter-repo）+ CI 变量
+  更新，会短暂影响更新链——需专项决策，本任务不动
+
+## 第七轮待确认（修复会改对外行为/部署语义，未经确认不动）
+
+- ⏸ [P1] admin-core/compose.yaml:31,36 — POSTGRES_PASSWORD 兜底 changeit-init-only
+  且全仓无 WR_DB_PASSWORD 注入点：空卷首启即众所周知的口令；:31 ports 绑 0.0.0.0
+  （15433），内网可直连存有 OA 账号+bcrypt 的库 — 改 127.0.0.1:15433 +
+  ${WR_DB_PASSWORD:?} fail-fast；涉生产库当前初始化状态与部署流程，需确认
+- ⏸ [P2] scripts/ci/has-code-changes.sh:17 — docs-only 白名单仅 src/*|src-tauri/*|crates/*，
+  Cargo.lock/package.json 等根级影响产物的变更被判 docs-only 跳过发版（依赖安全修复
+  不随发版到达用户）；窄白名单可能是 1c8be35 有意设计，需确认再补
+- ⏸ [P2] .gitlab-ci.yml:270/310/140 — .release-compile（三平台全量编译）与 frontend
+  job 的 rules 不排 schedule：夜间流水线白跑（唯一消费者 version-bump 仅 push）；
+  build-release-macos 不在 macos-package resource_group，可与夜间 mac 包并行挤占
+  唯一 mac runner — 补 schedule 排除/资源组改变夜间节奏，需确认
+- ⏸ [P2] crates/mcp-server/src/main.rs:657 — filter_memory_results_by_privacy 的
+  Anonymize 分支清 title/url 但不清 excerpt（search_activities 返回项的 OCR 派生
+  片段原样外发）：与第六轮 ⏸ filter_activities_by_privacy ocr_text 同根因，
+  建议同批决策
+- ⏸ [P2] src-tauri/src/monitor.rs:240 — is_browser_internal_segment 的 tab_patterns
+  含裸 "tab"/"tabs" contains（len<20）：含 "table"/"Tabs vs Spaces" 等的正常标题段
+  被当内部标签计数过滤、窗口标题信息静默丢失 — 收紧为带数字计数形态会改变入库内容
+- ⏸ [P2] src-tauri/src/commands/report.rs:98 — 自动导出文件名取自 date 参数仅替换
+  `/\` 分隔符、无 ^\d{4}-\d{2}-\d{2}$ 白名单：本地 API/ActionBridge 传任意值时
+  Windows 冒号可写 NTFS ADS（UI 恒传合法日期，可达性需核调用契约）
+- ⏸ [P2] src-tauri/src/agent/model.rs:986 — 流式装配器按 tc["index"] 扩容
+  partial_calls 无上限：自建中转返回极大 index 时内存放大（威胁模型是否含恶意端点）
+- ⏸ [P2] src-tauri/src/bot_common.rs:355 — /reports 设备返回 JSON 无 dates 数组时
+  return None，四个调用方兜底成"未知命令"误导排障 — 改明确异常文案即改 bot 回复
+- ⏸ [P2] src-tauri/src/config_sync.rs:92 — pull_and_apply 的 synced_at 读取与 config
+  克隆分两把锁，间隙内的本地保存可被更旧远端信封覆盖（与既有 ⏸ push 乱序同族的
+  "最后写入获胜"设计弱点）
+- ⏸ [P2] admin-core/compose.yaml:27 — postgres:16-alpine 直连 docker.io（该服务器
+  已被实测限流，fresh-host 首次部署可能拉取失败；同机 linux-builder-22.Dockerfile
+  已为此走 daocloud）
+- ⏸ [P2] src-tauri/src/ocr.rs:335 — 超时 kill 后无条件 join() 排空读线程：孙进程
+  继承管道句柄时永久阻塞（既有 ⏸ monitor.rs:95 同族未登记实例，归并同批处理）
+- ⏸ [P2] crates/core/src/gitlab.rs:524 — GitlabClient 允许任意 scheme base_url：
+  PRIVATE-TOKEN 可明文出网；私有化内网 http 是该功能中心用例，加 https 强制破坏
+  存量内网用户（历轮 ⏸ validate_model_endpoint 同族口径）
+
+## 第七轮待过目批次（.svelte，按红线待用户过目）
+
+- 💤 [P2] src/routes/avatar/AvatarWindow.svelte:317 — 专注会话期间 focusNowMs 每秒
+  tick 使 bubble 每秒换新对象身份，响应式块每秒触发 scheduleInteractiveRegionsSync
+  （querySelectorAll+全量 getBoundingClientRect+set_avatar_interactive_regions IPC
+  约 1500 次/25 分钟，几何变化本已由 ResizeObserver 覆盖）— 同步块改依赖结构信号
+  或 invoke 前 diff
+- 💤 [P2] src/App.svelte:241 — AvatarWindow 动态 import 无 .catch：chunk 加载失败
+  （损坏安装/安全软件拦截）时 rejection 无人处理且模板无 else 分支，桌宠窗口永久
+  空白无提示 — 补 .catch 记日志（占位渲染属视觉改动，随过目批次）
+
+## 第七轮暂缓（💤）
+
+- 💤 [P2] src-tauri/src/screenshot.rs:923 — 多屏拼接逐像素 put_pixel（8K 多屏约
+  3300 万次/帧，仅 All 模式）可改 imageops::overlay 整块拷贝；输出应逐像素等价但
+  无图像内容回归测试兜底，坐标错一位即花屏，不在本任务冒险
+
 # 第六轮（2026-09-20）
 
 范围：五轮之后增量（admin Dockerfile fetch 修复等 CI 提交）+ 全库六分片复扫——

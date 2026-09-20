@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **第七轮全量代码评审修复（行为保持，Rust 安全批次 + Rust 健壮性批次 + TS/CI 批次，共 21 项）**：
+  - **云端日报截图路径可越界读任意文件（P1，安全）**：`analysis/cloud.rs` 对 DB 内 `screenshot_path` 直接 `screenshots_dir.join` 后读文件并 base64 外发 AI 端点——绝对路径整体替换/`..` 越界可把 data_dir 外任意文件发给配置的端点（与第一轮已修的 timeline.rs:124 同族，crates/core 因无 `validated_join` 被漏网）；新增 `safe_screenshot_path` 校验，配平台分组回归测试。
+  - **"近N天"超大 N 打崩助手请求（P1，正确性）**：`parse_temporal_range` 对 N 无上限，`chrono::Duration::days` 在超大数值上 panic——问题文本经 orchestrator fast_answer 直达此处，"近99999999天"即可让一次助手请求异常中止；N 夹紧到 [0, 3650]，配回归测试。
+  - **localhost API 一次瞬态 accept 错误即永久停机（P1，正确性）**：accept 循环对任何错误直接 `?` 传播退出——Windows 上客户端在 accept 前重置连接（WSAECONNRESET，端口探测/健康检查即可触发）会把整个本地 API 打成 stopped，MCP live 上下文/设备面直到重启前全灭；改为瞬态错误记日志+50ms 退避重试（连续 200 次失败仍按异常上报）。
+  - **补传任务读取路径未校验（P2，安全）**：`remote_upload_backfill_task` 对 DB 内截图路径只查 `is_absolute` 即 `data_dir.join` 并上传远程存储，`..` 越界可把 data_dir 外文件传上用户网盘；复用 `validated_join`。
+  - **采集/桌宠日志明文记录未脱敏窗口标题（P2，隐私）**：采集循环"应用切换"日志在隐私过滤之前、桌宠循环日志完全无过滤，邮件主题/IM 会话名等绕过隐私规则持久进日志文件；两处落日志前经 `privacy_filter.filter_text` 同款脱敏。
+  - **localhost token 非原子写+并发竞态（P2，正确性）**：truncate+write 中途崩溃留半截 token 文件且 ensure 只对"缺失或空"自愈（所有客户端持续 401）；文件缺失时两个并发 ensure 各自生成不同 token 先后落盘，先返回方配置的客户端恒 401。改临时文件（pid+纳秒，Unix 保持 0600）+rename 原子写，并以进程内互斥串行化 ensure/rotate（同 node_gateway 第六轮模式）。
+  - **macOS 非浏览器应用被查浏览器 URL（P2，正确性）**：macOS `get_browser_url` 缺 `is_browser_app` 门禁（Linux/Windows 入口均有）——名称含 arc/safari 等子串的应用（如 Archive Utility）每轮轮询 spawn osascript 去查 Arc 等真实浏览器的 URL 并错误归属到当前应用名下；入口补门禁。
+  - **Firefox 会话文件每轮全量解析（P2，性能）**：recovery.jsonlz4 重会话可达数十 MB，macOS/Linux 每轮轮询（1.5s/0.5s）全量读取+mozlz4 解压+JSON 解析、无任何缓存（Windows 侧有 3s TTL 缓存），持续浏览时是常驻 CPU 热点；按（应用,标题）键加 3s 成功/2s 失败 TTL 缓存，与 Windows 口径一致。
+  - **OCR 中文相邻 IP 漏过滤（P2，隐私）**：IP 过滤正则的 `\b` 是 Unicode 词边界，CJK 汉字属词字符——"服务器192.168.1.1"这类中文紧邻形态整条漏配、明文落库流向日报/MCP；改与银行卡号同款的匹配后邻位手动校验，配回归测试。
+  - **时段对比负变化量显示 "0s"（P2，正确性）**：trend_comparison 总时长下降时 `format_duration_compact(负数)` 命中 `<=0` 早退返回 "0s"，模型收到 "总时长变化: 0s (-37.5%)" 误以为时长没变；新增 `signed_duration_compact`（负值取绝对值+负号），配回归测试。
+  - **删除助手会话非事务（P2，正确性）**：`delete_assistant_conversation` 两条 DELETE 未包事务，第二条失败/崩溃留 0 消息空壳会话（同表 create/append 已是事务先例）；`unchecked_transaction` 包裹。
+  - **Telegram bot token 未 trim（P2，正确性）**：守卫按 trim 后判空但原样传给 API，粘贴带首尾空白的 token 通过守卫后 401；入口 trim（与 wecom_aibot 的 id/secret 处理对齐）。
+  - **前端死代码清理（P2，可维护性）**：删除 `CacheState.hourlySummaries`（全仓零读零写）与 `updateLastStreaming`（生产零调用，且 findIndex 取"第一条"streaming 消息与注释语义相悖，未来复用并发双流会更新错消息），TypeScriptMigration 契约与测试 fixture 同步。
+  - **CI 部署链诊断与缓存修复（P2，CI）**：健康检查失败诊断 `docker logs workreview-admin` 指向不存在的容器名（compose 部署实际为 `yue-review-admin-1`），改 `docker compose logs`；删除 compose 未引用的 `workreview-net` 死步骤并更新头注释为 compose 拓扑；`cargo-llvm-cov` 安装根不在 PATH（预装缺失时每条流水线重复整编），补 `export PATH="$CARGO_HOME/bin:$PATH"`；linux 容器打包 npm 缓存从不被 GIT_CLEAN 排除的 `/build/.npmc` 改为持久缓存 `/build/.npm`（每次发版不再全量重下依赖）；删除 525df65 后无消费者的 ci-caches/linux22 死 mkdir。
+  - 另：`parse_openai_response` 过时的"Ollama 也用这个"注释更正。本轮 12 条涉行为/部署语义条目与 1 条仓库级事项（tauri-updater.key 私钥入库，建议专项轮换）记入 `CODE_REVIEW_FINDINGS.md` 第七轮待确认/仓库级清单。
 - **Linux 安装包要求 GLIBC_2.39 被兼容门禁拦截（v1.1.74–78 发布失败根因，CI）**：linux-x64 runner 主机为 Ubuntu 24.04（glibc 2.39），直接构建的 deb/rpm/AppImage 主程序要求 GLIBC_2.39，被第六轮评审加入的 GLIBC 兼容门禁（上限 2.35 = Ubuntu 22.04 基线）连续拦截——门禁按设计工作，根因是构建环境超出基线。修复：Linux 包构建容器化——新增 `scripts/ci/linux-builder-22.Dockerfile`（ubuntu:22.04 + webkit2gtk-4.1 全依赖 + rust 1.97.1 + node 20，基镜像走 daocloud 源规避 docker.io 限流）与容器内打包脚本，`.tauri-package-linux` 作业改为构建器镜像内以 runner 同 UID 构建（`CARGO_HOME` 覆盖到项目内可写目录）、宿主执行 GLIBC 门禁与产物收集；CI 以 fork/上游最新 commit SHA 作克隆 ref 击穿构建缓存。过程中顺带修复：上游新增的根级/子目录 `pnpm-workspace.yaml` 导致子目录 `pnpm install` 报 packages field missing（构建前删除）、vite 8 产物嵌套路径 `dist/src/...` 未归并导致品牌替换与校验全挂（构建后归并到 dist 根）。
 - **第六轮全量代码评审修复（行为保持，Rust 批次 + 前端批次 + CI 批次，共 17 项（run.ps1 两小项合并计）+ 1 项源码契约同步）**：
   - **Ollama 非流式响应套用 OpenAI 解析器恒得空答案（P1，正确性）**：`chat_ollama` 请求的是 Ollama 原生 `/api/chat`（顶层是 `message`、无 `choices`），却用 `parse_openai_response` 解析——所有非流式 Ollama 调用（桌宠主动开口、流式中断回退、无事件通道分支）内容恒为空、主动开口永久静默失效。新增 `parse_ollama_response` 按原生格式解析（`message.content`/`message.tool_calls`/`done_reason`，与流式装配器口径一致），配回归测试。
