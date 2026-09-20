@@ -712,16 +712,24 @@ tauri-package-macos-x64:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ && $PACKAGE_MACOS_X64 == "true"'
 
 .tauri-package-linux:
+  # linux-x64 runner 主机是 Ubuntu 24.04（glibc 2.39），直接构建的产物超出
+  # 发布基线 GLIBC 2.35（Ubuntu 22.04，v1.1.74/75 发布失败根因）。
+  # 构建改在 ubuntu:22.04 构建器容器内进行（wr-linux-builder:22，镜像持久复用），
+  # 以 runner 同 UID 运行避免 root 文件污染共享工作区；cargo/rustup 缓存挂载到
+  # ~/workreview/ci-caches/linux22/。GLIBC 门禁在容器外（宿主）执行。
+  # extends 保持 .tauri-package 以继承 artifacts/rules；不再使用 .rust-node
+  # （宿主 rust/node 仅容器外门禁用不到，工具链全部在容器内）。
   extends: .tauri-package
   before_script:
-    - !reference [.rust-node, before_script]
-    - bash scripts/check-linux-deps.sh --for-package
+    - docker build -q -t wr-linux-builder:22 -f scripts/ci/linux-builder-22.Dockerfile scripts/ci 2>/dev/null || docker build -t wr-linux-builder:22 -f scripts/ci/linux-builder-22.Dockerfile scripts/ci
     - bash scripts/stage-tauri-key.sh
+    - mkdir -p "$HOME/workreview/ci-caches/linux22/cargo" "$HOME/workreview/ci-caches/linux22/rustup"
   # GLIBC 兼容门禁必须在 script 里跑：GitLab 不以 after_script 的退出码判定
   # 作业成败，放 after_script 的 exit 1 永远不生效，不兼容产物照常流入发布。
   # 门禁失败时 artifacts(when: always) 仍收集产物便于排查。
   script:
-    - !reference [.tauri-package, script]
+    - |
+      docker run --rm --user "$(id -u):$(id -g)"         -e TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"         -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"         -e HOME=/build         -v "$CI_PROJECT_DIR":/build -w /build         -v "$HOME/workreview/ci-caches/linux22/cargo:/usr/local/cargo"         -v "$HOME/workreview/ci-caches/linux22/rustup:/usr/local/rustup"         wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh "$TAURI_BUILD_ARGS"
     - >-
       bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Yue_Review
       $(find target -type f \( -path '*/release/bundle/appimage/*.AppImage' -o -path '*/release/bundle/deb/*.deb' -o -path '*/release/bundle/rpm/*.rpm' \) | sort)
