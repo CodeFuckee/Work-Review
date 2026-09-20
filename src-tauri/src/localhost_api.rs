@@ -504,20 +504,41 @@ async fn run_localhost_api(
     app: AppHandle,
     state: Arc<Mutex<AppState>>,
 ) -> Result<()> {
+    // Windows 上客户端在 accept 前重置连接（WSAECONNRESET）会让 accept 返回瞬态
+    // 错误：直接退出会把整个本地 API 打成永久停机（端口探测/健康检查即可触发）。
+    // 记日志并短暂退避后重试；连续大量失败（如 fd 耗尽）仍按异常退出上报
+    const ACCEPT_ERROR_GIVE_UP: u32 = 200;
+    let mut consecutive_accept_errors: u32 = 0;
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => {
                 return Ok(());
             }
             accept_result = listener.accept() => {
-                let (stream, _) = accept_result.map_err(|e| AppError::Unknown(format!("接受本地 API 连接失败: {e}")))?;
-                let app = app.clone();
-                let state = state.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = handle_connection(stream, app, state).await {
-                        log::warn!("处理本地 API 请求失败: {e}");
+                match accept_result {
+                    Ok((stream, _)) => {
+                        consecutive_accept_errors = 0;
+                        let app = app.clone();
+                        let state = state.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = handle_connection(stream, app, state).await {
+                                log::warn!("处理本地 API 请求失败: {e}");
+                            }
+                        });
                     }
-                });
+                    Err(e) => {
+                        consecutive_accept_errors += 1;
+                        if consecutive_accept_errors >= ACCEPT_ERROR_GIVE_UP {
+                            return Err(AppError::Unknown(format!(
+                                "本地 API 连续接受连接失败: {e}"
+                            )));
+                        }
+                        log::warn!(
+                            "接受本地 API 连接失败（连续第 {consecutive_accept_errors} 次）: {e}"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                }
             }
         }
     }

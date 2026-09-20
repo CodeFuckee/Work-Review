@@ -3593,11 +3593,12 @@ async fn remote_upload_backfill_task(state: Arc<Mutex<AppState>>) {
 
         let mut uploaded = 0u32;
         for (activity_id, relative_path) in pending {
-            // 历史数据可能存过绝对路径，跳过以免拼出畸形的远程对象键
-            if std::path::Path::new(&relative_path).is_absolute() {
-                continue;
-            }
-            let local_path = data_dir.join(&relative_path);
+            // 历史数据可能存过绝对路径或被污染含 `..`：这里读取后内容会上传远程
+            // 存储，与截图读取/删除面同款 validated_join 护栏，非法路径直接跳过
+            let local_path = match commands::validated_join(&data_dir, &relative_path) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
             if !local_path.exists() {
                 continue; // 本地文件已被保留策略清理，无从补传
             }

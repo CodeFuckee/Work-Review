@@ -43,6 +43,9 @@ pub fn parse_temporal_range(question: &str) -> (Option<String>, Option<String>) 
     if let Ok(re) = regex::Regex::new(r"(?:最近|近|过去)\s*(\d+)\s*天") {
         for caps in re.captures_iter(&normalized) {
             if let Ok(n) = caps[1].parse::<i64>() {
+                // N 无上限时 chrono::Duration::days 在超大数值上 panic（该问题
+                // 文本经助手 fast_answer 直达此处），夹紧到 10 年内
+                let n = n.clamp(0, 3650);
                 ranges.push((today - chrono::Duration::days(n), today));
             }
         }
@@ -652,6 +655,19 @@ mod tests {
     fn test_temporal_recent_3_days() {
         let (from, to) = parse_temporal_range("最近3天的工作");
         assert_eq!(from.as_deref(), Some(days_ago_str(3).as_str()));
+        assert_eq!(to.as_deref(), Some(today_str().as_str()));
+    }
+
+    #[test]
+    fn test_temporal_oversized_n_days_is_clamped_not_panic() {
+        // 回归：超大 N 曾使 chrono::Duration::days 越界 panic（用户问题文本
+        // 经助手 fast_answer 直达此处），现应夹紧到 10 年内正常返回
+        let (from, to) = parse_temporal_range("最近99999999999天做了什么");
+        assert_eq!(from.as_deref(), Some(days_ago_str(3650).as_str()));
+        assert_eq!(to.as_deref(), Some(today_str().as_str()));
+        // 普通数值不受夹紧影响
+        let (from, to) = parse_temporal_range("过去90天");
+        assert_eq!(from.as_deref(), Some(days_ago_str(90).as_str()));
         assert_eq!(to.as_deref(), Some(today_str().as_str()));
     }
 

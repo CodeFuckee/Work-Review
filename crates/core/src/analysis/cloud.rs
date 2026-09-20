@@ -9,7 +9,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::Client;
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 fn build_chat_url(endpoint: &str) -> String {
@@ -37,6 +37,25 @@ fn report_system_prompt(locale: AppLocale) -> &'static str {
         AppLocale::En => "You are a thoughtful daily work-report assistant. Turn the user's work records into a natural, concrete, and trustworthy recap.",
         AppLocale::Ar => "أنت مساعد تقرير عمل يومي دقيق ومهتم. حول سجلات عمل المستخدم إلى ملخص طبيعي وملموس وموثوق.",
     }
+}
+
+/// 校验 DB 内的截图相对路径并安全拼接：路径被污染成绝对路径/带盘符根/
+/// 含 `..` 时 join 会逃逸出 screenshots_dir（与 src-tauri 侧 validated_join
+/// 同一威胁面——读取后内容会 base64 外发 AI 端点），读取前在此拒绝
+fn safe_screenshot_path(screenshots_dir: &Path, raw: &str) -> Option<PathBuf> {
+    let p = Path::new(raw);
+    if p.is_absolute()
+        || p.has_root()
+        || p.components()
+            .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+    {
+        return None;
+    }
+    let joined = screenshots_dir.join(p);
+    if !joined.starts_with(screenshots_dir) {
+        return None;
+    }
+    Some(joined)
 }
 
 /// 云端视觉分析器
@@ -237,7 +256,12 @@ impl Analyzer for CloudAnalyzer {
                 continue;
             }
 
-            let screenshot_path = screenshots_dir.join(&activity.screenshot_path);
+            let Some(screenshot_path) =
+                safe_screenshot_path(screenshots_dir, &activity.screenshot_path)
+            else {
+                log::warn!("跳过非法截图路径: {}", activity.screenshot_path);
+                continue;
+            };
             if screenshot_path.exists() {
                 match self.analyze_screenshot(&screenshot_path).await {
                     Ok(insight) => insights.push(format!("[{}] {}", activity.app_name, insight)),
@@ -292,5 +316,42 @@ impl Analyzer for CloudAnalyzer {
             fallback_reason,
             ai_order: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_screenshot_path;
+
+    #[test]
+    fn 正常相对截图路径应拼接成功() {
+        let dir = std::path::Path::new("/data/screenshots");
+        assert_eq!(
+            safe_screenshot_path(dir, "shot-1.png"),
+            Some(dir.join("shot-1.png"))
+        );
+        assert_eq!(
+            safe_screenshot_path(dir, "sub/shot-1.png"),
+            Some(dir.join("sub/shot-1.png"))
+        );
+    }
+
+    #[test]
+    fn 绝对路径与越界路径应被拒绝() {
+        let dir = std::path::Path::new("/data/screenshots");
+        // 绝对路径：join 会整体替换 base
+        assert!(safe_screenshot_path(dir, "/etc/passwd").is_none());
+        // .. 越界
+        assert!(safe_screenshot_path(dir, "../../etc/passwd").is_none());
+        assert!(safe_screenshot_path(dir, "sub/../../escape.png").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows盘符与unc根应被拒绝() {
+        let dir = std::path::Path::new("C:\\data\\screenshots");
+        assert!(safe_screenshot_path(dir, "C:/Windows/win.ini").is_none());
+        assert!(safe_screenshot_path(dir, r"\\server\share\k.png").is_none());
+        assert!(safe_screenshot_path(dir, "\\Windows\\win.ini").is_none());
     }
 }
