@@ -17,6 +17,9 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - /home/mdc/workreview/admin-config:/app/ConfigCenter
+    networks:
+      - default
+      - supabase_default
     depends_on:
       - db
 
@@ -31,3 +34,7 @@ services:
       POSTGRES_PASSWORD: ${WR_DB_PASSWORD:-changeit-init-only}
     volumes:
       - /home/mdc/workreview/pgdata:/var/lib/postgresql/data
+
+networks:
+  supabase_default:
+    external: true
