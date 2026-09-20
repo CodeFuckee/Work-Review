@@ -23,6 +23,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    ports:
+      - "15433:5432"
     environment:
       TZ: Asia/Shanghai
       # 仅首次初始化空数据卷时生效；线上库口令在首启时已固定
