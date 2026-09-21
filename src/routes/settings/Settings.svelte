@@ -2,10 +2,12 @@
   import { onMount } from 'svelte';
   import type { ComponentProps } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { push } from 'svelte-spa-router';
   import { cache } from '../../lib/stores/cache.ts';
   import { locale, t } from '$lib/i18n/index.ts';
   import { formatUserError } from '$lib/utils/errorDisplay.ts';
   import { showToast } from '../../lib/stores/toast.ts';
+  import { clearAuth, getAdminUrl, getAuth, setAdminUrl, type AuthState } from '$lib/stores/auth.ts';
 
   import SettingsGeneral from './components/SettingsGeneral.svelte';
   import SettingsAppearance from './components/SettingsAppearance.svelte';
@@ -404,7 +406,37 @@
     }
   }
 
+  // 账号区块（凭证在 localStorage，与 config 保存流程无关）
+  let accountState: AuthState | null = null;
+  let accountServerUrl = '';
+  let accountServerSaved = false;
+  let accountServerSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function refreshAccountState(): void {
+    accountState = getAuth();
+    accountServerUrl = getAdminUrl();
+  }
+
+  function saveAccountServerUrl(): void {
+    setAdminUrl(accountServerUrl);
+    accountServerUrl = getAdminUrl();
+    accountServerSaved = true;
+    if (accountServerSaveTimer !== null) clearTimeout(accountServerSaveTimer);
+    accountServerSaveTimer = setTimeout(() => {
+      accountServerSaved = false;
+      accountServerSaveTimer = null;
+    }, 2000);
+  }
+
+  function handleAccountLogout(): void {
+    clearAuth();
+    refreshAccountState();
+    // 通知 App.svelte 刷新认证门（无凭证会强制跳回登录页）
+    window.dispatchEvent(new CustomEvent('auth-changed'));
+  }
+
   onMount(() => {
+    refreshAccountState();
     const unsubscribeCache = cache.subscribe((state) => {
       if (!state.config) return;
       // 保存中或用户已编辑配置时，不覆盖（避免丢弃未保存的修改）
@@ -420,6 +452,7 @@
     return () => {
       unsubscribeCache();
       if (successTimer !== null) clearTimeout(successTimer);
+      if (accountServerSaveTimer !== null) clearTimeout(accountServerSaveTimer);
     };
   });
 </script>
@@ -473,6 +506,54 @@
     </div>
   {:else if config}
     <div class="w-full settings-editorial-board page-axis-operation">
+      <div class="settings-card settings-account">
+        <h3 class="settings-card-title">{t('settings.accountTitle')}</h3>
+        <p class="settings-card-desc">{t('settings.accountDesc')}</p>
+
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          {#if accountState}
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold text-slate-900 dark:text-[#e6edf3]">
+                {accountState.name || accountState.userName}
+              </p>
+              <p class="truncate text-xs text-slate-500 dark:text-slate-400">
+                {accountState.userName} · {t('settings.accountLoggedInAs')}
+              </p>
+            </div>
+            <div class="ms-auto flex items-center gap-2">
+              <button type="button" on:click={() => push('/auth')} class="page-control-btn min-h-9 px-3">
+                {t('auth.reloginAction')}
+              </button>
+              <button type="button" on:click={handleAccountLogout} class="page-control-btn min-h-9 px-3">
+                {t('auth.logoutAction')}
+              </button>
+            </div>
+          {:else}
+            <p class="text-sm text-slate-500 dark:text-slate-400">{t('settings.accountNotLoggedIn')}</p>
+            <button type="button" on:click={() => push('/auth')} class="page-control-btn ms-auto min-h-9 px-3">
+              {t('auth.loginTab')}
+            </button>
+          {/if}
+        </div>
+
+        <div class="mt-4">
+          <label class="settings-label" for="account-server-url">{t('settings.accountServerLabel')}</label>
+          <div class="mt-1.5 flex items-center gap-2">
+            <input
+              id="account-server-url"
+              bind:value={accountServerUrl}
+              spellcheck="false"
+              placeholder="http://10.37.80.25:4191"
+              class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
+            />
+            <button type="button" on:click={saveAccountServerUrl} class="page-control-btn min-h-9 shrink-0 px-3">
+              {accountServerSaved ? t('settings.saved') : t('settings.save')}
+            </button>
+          </div>
+          <p class="settings-subtle mt-1.5">{t('settings.accountServerHint')}</p>
+        </div>
+      </div>
+
       {#if settingsRuntimePlatform === 'macos'}
         <div class="settings-card settings-top-status-zone">
           <SettingsSystem />

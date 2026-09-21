@@ -215,6 +215,11 @@
   padding-top: 0.6rem;
 }
 
+/* 登录页：隐藏侧栏后独占整行 */
+.app-shell-stage--auth {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .app-shell-sidebar-frame,
 .app-shell-main-frame {
   min-width: 0;
@@ -4658,6 +4663,10 @@
 
 .app-shell.ui-style-c .app-shell-stage--macos {
   padding-top: 0.45rem;
+}
+
+.app-shell.ui-style-c .app-shell-stage--auth {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .app-shell.ui-style-c .app-shell-sidebar-frame,
