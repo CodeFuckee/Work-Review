@@ -202,7 +202,17 @@ nightly-gate:
     - git fetch origin --tags --quiet
     - LATEST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo none)"
     - if [ "$LATEST_TAG" = "none" ]; then echo "仓库尚无任何 tag，直接打包"; exit 0; fi
-    - 'if git diff --quiet "$LATEST_TAG" HEAD; then echo "自 $LATEST_TAG 以来没有新提交，取消夜间打包"; curl -sf --request POST --header "PRIVATE-TOKEN: $GIT_PUSH_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines/$CI_PIPELINE_ID/cancel" > /dev/null || true; sleep 15; exit 0; fi'
+    - |
+      if git diff --quiet "$LATEST_TAG" HEAD; then
+        echo "自 $LATEST_TAG 以来没有新提交，取消夜间打包"
+        # token 经临时 header 文件传给 curl，不进进程 argv（同机进程可读 cmdline）
+        HEADER_FILE="$(mktemp)"
+        trap 'rm -f "$HEADER_FILE"' EXIT
+        printf 'PRIVATE-TOKEN: %s\n' "$GIT_PUSH_TOKEN" > "$HEADER_FILE"
+        curl -sf --request POST --header @"$HEADER_FILE" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines/$CI_PIPELINE_ID/cancel" > /dev/null || true
+        sleep 15
+        exit 0
+      fi
     - echo "自 $LATEST_TAG 以来有新提交，继续夜间打包"
 
 # 注意：覆盖率汇总由 rust-verify-linux 的 llvm-cov 单点产出（GitLab 作业页
@@ -317,6 +327,8 @@ build-release-macos:
 build-release-windows:
   extends: .powershell-toolchain
   stage: compile
+  # default: timeout 在本实例不生效（见 .rust-verify 注释），冷缓存全量编译可超 1h
+  timeout: 3h
   needs: [rust-verify-windows]
   tags: ["$WINDOWS_RUNNER_TAG"]
   rules:
@@ -368,6 +380,8 @@ build-release-windows:
 
 package-daily-windows:
   extends: [.powershell-toolchain, .package-daily]
+  # 同款作业级 timeout：夜间全量打包冷缓存可超 1h（tauri-package-windows 同理）
+  timeout: 3h
   needs: [nightly-gate, rust-verify-windows]
   tags: ["$WINDOWS_RUNNER_TAG"]
   script:
@@ -409,6 +423,7 @@ package-daily-windows:
 
 package-daily-linux-x64:
   extends: [.rust-node, .package-daily]
+  timeout: 3h
   needs: [nightly-gate, rust-verify-linux]
   tags: ["$LINUX_X64_RUNNER_TAG"]
   before_script:
@@ -432,6 +447,7 @@ package-daily-linux-x64:
 
 package-daily-linux-arm64:
   extends: [.rust-node, .package-daily]
+  timeout: 3h
   needs: [nightly-gate]
   tags: ["$LINUX_ARM64_RUNNER_TAG"]
   rules:
@@ -458,6 +474,8 @@ package-daily-linux-arm64:
 
 package-daily-macos-arm64:
   extends: [.rust-node, .package-daily]
+  # mac 冷缓存全量打包可超 1h（runner 另有 1h 运行上限属基础设施问题，无法在此解）
+  timeout: 3h
   needs: [nightly-gate, rust-verify-macos]
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
@@ -487,6 +505,7 @@ package-daily-macos-arm64:
 
 package-daily-macos-x64:
   extends: [.rust-node, .package-daily]
+  timeout: 3h
   needs: [nightly-gate, rust-verify-macos]
   tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
@@ -526,14 +545,23 @@ package-daily-macos-x64:
 version-bump:
   stage: version
   tags: ["$LINUX_X64_RUNNER_TAG"]
+  # 只依赖上游成败、不下载其产物（artifacts: false）：bump 从不消费三平台
+  # 二进制，默认的 artifacts: true 会把数十 MB 构建产物白白下载进本作业
   needs:
-    - frontend
-    - rust-verify-linux
-    - rust-verify-macos
-    - rust-verify-windows
-    - build-release-linux
-    - build-release-macos
-    - build-release-windows
+    - job: frontend
+      artifacts: false
+    - job: rust-verify-linux
+      artifacts: false
+    - job: rust-verify-macos
+      artifacts: false
+    - job: rust-verify-windows
+      artifacts: false
+    - job: build-release-linux
+      artifacts: false
+    - job: build-release-macos
+      artifacts: false
+    - job: build-release-windows
+      artifacts: false
   variables:
     GIT_DEPTH: "0"
   script:
@@ -568,12 +596,20 @@ version-bump:
       git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json Cargo.lock
       git -c user.name="Work Review CI" -c user.email="ci@work-review.local" \
         commit -m "chore(release): bump version to v${NEW_VERSION}"
-      git tag "v${NEW_VERSION}"
+      # -f：runner 工作区跨流水线复用，job 在 tag 创建后、push 前被取消会残留
+      # 本地 vN tag，此后重跑同版本 tag 直接 "already exists" 失败；版本号由内容
+      # 推导，同名即同版本，强移安全
+      git tag -f "v${NEW_VERSION}"
       # Git over HTTPS 不接受 PRIVATE-TOKEN header（那是 API 认证）；用 Basic auth
       # （username=oauth2, password=token）。owner/maintainer 角色 + write_repository scope 即可推。
-      PUSH_AUTH="$(printf 'oauth2:%s' "${GIT_PUSH_TOKEN}" | base64 -w0)"
-      git -c http.extraHeader="Authorization: Basic ${PUSH_AUTH}" \
-        push origin "bump-base:${CI_DEFAULT_BRANCH}" "v${NEW_VERSION}"
+      # 认证走 GIT_CONFIG_* 环境变量而非 -c：-c 的键值对会进 git 进程 argv，
+      # token 可被同机进程经 /proc/<pid>/cmdline 读取；环境变量只有本用户可读。
+      # --atomic：两引用一次推送，避免中途失败只落其一（tag 先落会产生指向
+      # main 之外提交的 tag，触发 preflight 必红的 tag 流水线）
+      export GIT_CONFIG_COUNT=1
+      export GIT_CONFIG_KEY_0="http.extraheader"
+      export GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'oauth2:%s' "${GIT_PUSH_TOKEN}" | base64 -w0)"
+      git push --atomic origin "bump-base:${CI_DEFAULT_BRANCH}" "v${NEW_VERSION}"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - when: never
@@ -749,7 +785,10 @@ tauri-package-macos-x64:
   # 门禁失败时 artifacts(when: always) 仍收集产物便于排查。
   script:
     - |
-      docker run --rm --user "$(id -u):$(id -g)"         -e TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"         -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"         -e HOME=/build         -e CARGO_HOME=/build/.cargo-home         -v "$CI_PROJECT_DIR":/build -w /build         wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh "$TAURI_BUILD_ARGS"
+      # 签名私钥用无值 -e 形式（docker 从作业环境读取变量值）：带值形式会把
+      # base64 私钥整段写进 docker 客户端进程 argv，整个打包期间可被同机进程
+      # 经 /proc/<pid>/cmdline 读取（linux runner 同机还跑着生产 admin 栈）
+      docker run --rm --user "$(id -u):$(id -g)"         -e TAURI_SIGNING_PRIVATE_KEY         -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD         -e HOME=/build         -e CARGO_HOME=/build/.cargo-home         -v "$CI_PROJECT_DIR":/build -w /build         wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh "$TAURI_BUILD_ARGS"
     - >-
       bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Yue_Review
       $(find target -type f \( -path '*/release/bundle/appimage/*.AppImage' -o -path '*/release/bundle/deb/*.deb' -o -path '*/release/bundle/rpm/*.rpm' \) | sort)
@@ -959,12 +998,16 @@ publish-release:
       else
         glab release create "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" --name "Yue-Review $CI_COMMIT_TAG" --notes-file release_notes.md
       fi
+      # 上传认证 header 落临时文件传给 curl（--header @file），token 不进 curl
+      # 进程 argv；与上方 glab 认证同款回退：GIT_PUSH_TOKEN 缺失（标准 GitLab
+      # 实例）时用 CI_JOB_TOKEN，否则空 token 上传一律 401。
+      UPLOAD_TOKEN_HEADER="$(mktemp)"
+      trap 'rm -f "$UPLOAD_TOKEN_HEADER"' EXIT
+      printf 'PRIVATE-TOKEN: %s\n' "${GIT_PUSH_TOKEN:-$CI_JOB_TOKEN}" > "$UPLOAD_TOKEN_HEADER"
       for f in target/**/release/bundle/dmg/*"${VERSION}"*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*"${VERSION}"*.exe target/**/release/bundle/nsis/*"${VERSION}"*.exe.sig                target/**/Yue_Review_portable_*.zip target/**/release/bundle/appimage/*"${VERSION}"*.AppImage                target/**/release/bundle/deb/*"${VERSION}"*.deb target/**/release/bundle/rpm/*"${VERSION}"*.rpm updater.json; do
         [ -f "$f" ] || continue
         name="$(basename "$f")"
-        # 与上方 glab 认证同款回退：GIT_PUSH_TOKEN 缺失（标准 GitLab 实例）时
-        # 用 CI_JOB_TOKEN，否则空 token 上传一律 401。
-        code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           -H "PRIVATE-TOKEN: ${GIT_PUSH_TOKEN:-$CI_JOB_TOKEN}" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
+        code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           --header @"$UPLOAD_TOKEN_HEADER" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
         case "$code" in 200|201) ;; *) echo "package upload failed ($code): $f" >&2; exit 1;; esac
         if glab api "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links" | grep -q "\\\"name\\\":\\\"$name\\\""; then
           echo ">>> link exists, skip: $name"

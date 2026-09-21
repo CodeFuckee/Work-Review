@@ -29,7 +29,12 @@ test('version-bump 应依赖全部 verify 与 compile job 且仅在 push main �
   const yaml = readFileSync(CI_YAML, 'utf8');
   assert.match(yaml, /^version-bump:/m);
   for (const dep of ['frontend', 'rust-verify-linux', 'rust-verify-macos', 'rust-verify-windows', 'build-release-linux', 'build-release-macos', 'build-release-windows']) {
-    assert.match(yaml, new RegExp(`- ${dep}`), `version-bump needs ${dep}`);
+    // 只依赖成败不下载产物：bump 从不消费三平台二进制
+    assert.match(
+      yaml,
+      new RegExp(`- job: ${dep}\\n\\s+artifacts: false`),
+      `version-bump needs ${dep} (artifacts: false)`,
+    );
   }
   assert.match(yaml, /CI_PIPELINE_SOURCE == "push" && \$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH/);
   assert.match(yaml, /when: never/);
@@ -38,7 +43,10 @@ test('version-bump 应依赖全部 verify 与 compile job 且仅在 push main �
 test('version-bump 使用 GIT_PUSH_TOKEN；bump 提交由 workflow 规则排除而非 [skip ci] 防循环', () => {
   const yaml = readFileSync(CI_YAML, 'utf8');
   assert.match(yaml, /GIT_PUSH_TOKEN/);
-  assert.match(yaml, /Authorization: Basic \$\{PUSH_AUTH\}/);
+  // 认证走 GIT_CONFIG_* 环境变量（token 不进 git 进程 argv），且推送带 --atomic
+  assert.match(yaml, /GIT_CONFIG_KEY_0="http\.extraheader"/);
+  assert.match(yaml, /GIT_CONFIG_VALUE_0="Authorization: Basic \$\(printf 'oauth2:%s'/);
+  assert.match(yaml, /git push --atomic origin/);
   assert.match(yaml, /printf 'oauth2:%s'/);
   // bump 提交不用 [skip ci]（会连带跳过 tag 发布流水线），改为 workflow 排除规则
   assert.doesNotMatch(yaml, /commit -m "chore\(release\): bump version to v\$\{NEW_VERSION\} \[skip ci\]"/);

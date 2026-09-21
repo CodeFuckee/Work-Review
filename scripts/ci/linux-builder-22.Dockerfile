@@ -31,8 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xz-utils jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 20（NodeSource）
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# Node.js 22（NodeSource）：对齐 package.json engines >=22 与其余 CI 作业，
+# 保证用户拿到的安装包与 verify 流水线测过的前端构建出自同一工具链
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && node --version
 
