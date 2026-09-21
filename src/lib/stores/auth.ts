@@ -127,7 +127,9 @@ async function postClientAuth(
       userName: inner.userName ?? undefined,
       name: inner.name ?? undefined,
     };
-  } catch {
+  } catch (e) {
+    // 混合内容拦截/CSP/代理等渲染层失败都在这里暴露（如 Failed to fetch），console 保留原始错误便于排查
+    console.warn('客户端认证请求异常:', e);
     return { ok: false, network: true };
   }
 }

@@ -103,7 +103,8 @@
         "transparent": false,
         "alwaysOnTop": false,
         "dragDropEnabled": false,
-        "useHttpsScheme": true
+        "useHttpsScheme": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --allow-running-insecure-content --unsafely-treat-insecure-origin-as-secure=http://10.37.80.25:4191"
       }
     ],
     "security": {

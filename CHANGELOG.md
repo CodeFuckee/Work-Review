@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **打包版登录报「无法连接服务器」（混合内容拦截，P1）**：客户端登录/注册在浏览器里正常、打包应用必失败且 WebView2 连 TCP 都不发起——根因是 Tauri v2 Windows 打包版配置 `useHttpsScheme: true`（页面源为 `https://tauri.localhost`，属安全上下文），从 HTTPS 页面 fetch 纯 IP 的 `http://10.37.80.25:4191` 命中 Chromium 混合内容硬拦截（fetch/XHR 类混合内容直接抛 TypeError，无网络请求；`http://localhost` 因属潜在可信源豁免，故本地 API 不受影响，浏览器预览因源是 http 也不受影响）。修复：主窗口 `additionalBrowserArgs` 在 wry 默认参数之上追加 `--allow-running-insecure-content` 与 `--unsafely-treat-insecure-origin-as-secure=http://10.37.80.25:4191`（CSP `connect-src` 白名单仍然生效兜底）；`auth.ts` 网络异常分支补 console.warn 保留原始错误。UIA 驱动打包应用复现（零 TCP）后修复验证。
 - **第七轮全量代码评审修复（行为保持，Rust 安全批次 + Rust 健壮性批次 + TS/CI 批次，共 21 项）**：
   - **云端日报截图路径可越界读任意文件（P1，安全）**：`analysis/cloud.rs` 对 DB 内 `screenshot_path` 直接 `screenshots_dir.join` 后读文件并 base64 外发 AI 端点——绝对路径整体替换/`..` 越界可把 data_dir 外任意文件发给配置的端点（与第一轮已修的 timeline.rs:124 同族，crates/core 因无 `validated_join` 被漏网）；新增 `safe_screenshot_path` 校验，配平台分组回归测试。
   - **"近N天"超大 N 打崩助手请求（P1，正确性）**：`parse_temporal_range` 对 N 无上限，`chrono::Duration::days` 在超大数值上 panic——问题文本经 orchestrator fast_answer 直达此处，"近99999999天"即可让一次助手请求异常中止；N 夹紧到 [0, 3650]，配回归测试。
