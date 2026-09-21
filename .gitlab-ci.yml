@@ -211,6 +211,10 @@ nightly-gate:
 .rust-verify:
   extends: .rust-node
   stage: verify
+  # 冷缓存时 mac 侧全量 clippy+llvm-cov 可超 1 小时（实测 3600s 整被
+  # server_timeout_running 处决）；default: timeout 需 GitLab 15.1+ 不生效，
+  # 作业级显式声明（同 .release-compile / .tauri-package）
+  timeout: 3h
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
     - npm run build
