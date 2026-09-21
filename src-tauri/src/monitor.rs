@@ -728,6 +728,9 @@ fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWin
     // 无需 PROCESS_VM_READ，对 UAC 保护进程、Store 应用等成功率远高于完整权限
     const PROCESS_QUERY_LIMITED: u32 = 0x1000;
 
+    // SAFETY: 全部为 Win32 只读查询调用（GetForegroundWindow/GetWindowTextW/
+    // GetWindowThreadProcessId/IsIconic/GetWindowRect），不产出需释放的句柄或
+    // 资源；缓冲区为固定 512 u16 长度并在返回长度内切片，无越界写
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.is_null() {
@@ -890,6 +893,9 @@ fn get_process_image_path(pid: u32) -> Option<String> {
     use winapi::um::processthreadsapi::OpenProcess;
     use winapi::um::winbase::QueryFullProcessImageNameW;
 
+    // SAFETY: OpenProcess 以受限权限打开调用方传入的 pid；QueryFullProcessImageNameW
+    // 写入固定 512 u16 缓冲区。句柄在所有路径上都会释放——包括查询失败提前返回
+    // None 的分支（CloseHandle 在该检查之前执行），无泄漏
     unsafe {
         // 只需 PROCESS_QUERY_LIMITED_INFORMATION，对 UAC 保护进程也有效
         let handle = OpenProcess(0x1000, 0, pid);
@@ -1318,6 +1324,7 @@ fn get_window_process_id_windows(hwnd: isize) -> u32 {
     }
 
     let mut pid = 0;
+    // SAFETY: 只读查询，hwnd 来自前台窗口枚举的有效句柄值；pid 出参由 API 写入
     unsafe {
         winapi::um::winuser::GetWindowThreadProcessId(
             hwnd as winapi::shared::windef::HWND,
@@ -1334,6 +1341,7 @@ fn get_raw_window_title_windows(hwnd: isize) -> Option<String> {
     }
 
     let mut title: [u16; 512] = [0; 512];
+    // SAFETY: 只读查询，缓冲区长度以 title.len() 显式传给 API，无越界写
     let len = unsafe {
         winapi::um::winuser::GetWindowTextW(
             hwnd as winapi::shared::windef::HWND,
@@ -2901,10 +2909,10 @@ fn normalize_electron_app_name(process_name: &str, window_title: &str) -> String
         }
     }
 
-    // 如果窗口标题有明确的应用名格式（如 "AppName - Document"）
-    // 尝试提取第一个部分作为应用名
-    if let Some(first_part) = window_title.split(" - ").last() {
-        let trimmed = first_part.trim();
+    // macOS 窗口标题格式是 "Document - AppName"，应用名在最后一段：
+    // 取 split 的 last 提取显示名
+    if let Some(last_part) = window_title.split(" - ").last() {
+        let trimmed = last_part.trim();
         if !trimmed.is_empty() && trimmed.len() < 30 && !trimmed.contains('/') {
             // 检查是否像是应用名（首字母大写或全英文）
             if trimmed

@@ -118,6 +118,8 @@ fn get_idle_seconds() -> u64 {
     use winapi::um::sysinfoapi::GetTickCount;
     use winapi::um::winuser::{GetLastInputInfo, LASTINPUTINFO};
 
+    // SAFETY: GetLastInputInfo 只写入栈上 LASTINPUTINFO（cbSize 已按类型大小
+    // 初始化），GetTickCount 为纯查询，无资源产出
     unsafe {
         let mut lii = LASTINPUTINFO {
             cbSize: size_of::<LASTINPUTINFO>() as u32,

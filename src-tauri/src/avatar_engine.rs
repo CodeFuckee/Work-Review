@@ -28,6 +28,10 @@ const AVATAR_WINDOW_WIDTH: f64 = AVATAR_WINDOW_BASE_WIDTH * AVATAR_SCALE_DEFAULT
 const AVATAR_WINDOW_HEIGHT: f64 = AVATAR_WINDOW_BASE_HEIGHT * AVATAR_SCALE_DEFAULT;
 const AVATAR_WINDOW_MARGIN: f64 = 8.0;
 const AVATAR_INTERACTIVE_REGION_TOLERANCE: f64 = 6.0;
+/// "文档/阅读"细分判定关键词：browser 分支与"资料阅读"分支共用同一组，
+/// 内联两份曾经逐字重复，单边演化即行为漂移
+const DOC_TITLE_KEYWORDS: &[&str] = &["文档", "readme", "docs", "guide", "manual", "wiki"];
+const DOC_URL_KEYWORDS: &[&str] = &["/docs", "readme", "wiki", "developer.", "docs."];
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -240,13 +244,9 @@ pub fn derive_avatar_state_with_rules(
                 "先把这一段逻辑收住，再看下一处。",
             ),
             "browser" => {
-                let (context_label, hint) = if contains_any(
-                    &title_lower,
-                    &["文档", "readme", "docs", "guide", "manual", "wiki"],
-                ) || contains_any(
-                    &url_lower,
-                    &["/docs", "readme", "wiki", "developer.", "docs."],
-                ) {
+                let (context_label, hint) = if contains_any(&title_lower, DOC_TITLE_KEYWORDS)
+                    || contains_any(&url_lower, DOC_URL_KEYWORDS)
+                {
                     ("文档中", "先把文档结构看清，再动手修改。")
                 } else {
                     ("阅读中", "正在吸收内容，先别打断节奏")
@@ -321,13 +321,9 @@ pub fn derive_avatar_state_with_rules(
             avatar_state("video", app_name, context_label, hint)
         }
         "资料阅读" => {
-            let (context_label, hint) = if contains_any(
-                &title_lower,
-                &["文档", "readme", "docs", "guide", "manual", "wiki"],
-            ) || contains_any(
-                &url_lower,
-                &["/docs", "readme", "wiki", "developer.", "docs."],
-            ) {
+            let (context_label, hint) = if contains_any(&title_lower, DOC_TITLE_KEYWORDS)
+                || contains_any(&url_lower, DOC_URL_KEYWORDS)
+            {
                 ("文档中", "先把文档结构看清，再动手修改。")
             } else {
                 ("阅读中", "正在吸收内容，先别打断节奏")

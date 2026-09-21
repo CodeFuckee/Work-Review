@@ -497,6 +497,10 @@ impl ScreenshotService {
             SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
         };
 
+        // SAFETY: GDI 资源在所有路径上成对释放——CreateCompatibleDC 失败即
+        // ReleaseDC(screen_dc)，CreateCompatibleBitmap 失败即 DeleteDC(mem_dc)
+        // + ReleaseDC(screen_dc)，后续各提前返回分支同理先释放再返回，无泄漏；
+        // 位图缓冲区长度均显式传给 API
         unsafe {
             let (source_x, source_y, width, height) = if should_capture_all_displays(&self.config) {
                 (
@@ -1512,6 +1516,8 @@ fn detect_primary_screen_width() -> Option<u32> {
 #[cfg(target_os = "linux")]
 fn detect_primary_screen_width() -> Option<u32> {
     use x11::xlib;
+    // SAFETY: XOpenDisplay(null) 连接默认显示，连接失败（null）提前返回；
+    // 成功路径恰好一次 XCloseDisplay 关闭连接，display 仅传给只读查询
     unsafe {
         let display = xlib::XOpenDisplay(std::ptr::null());
         if display.is_null() {

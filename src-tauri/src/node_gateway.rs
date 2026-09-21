@@ -70,7 +70,17 @@ pub(crate) fn resolve_node_device_name(override_name: Option<&str>, fallback_hos
     default_device_name()
 }
 
+/// ensure 的"读-判-写"必须串行化：三个并发入口（get_localhost_api_status、
+/// 本地 API 设备路由、get_node_gateway_status）首启窗口内可同时触发 ensure，
+/// 各自生成不同身份先后落盘，败方若仍返回自生成的"幽灵" id，调用方之间
+/// device_id 不一致（与 localhost_api 的 token 写锁同族同款）
+static NODE_IDENTITY_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
 pub(crate) fn ensure_node_identity_for_path(path: &Path) -> Result<NodeIdentity> {
+    let _write_guard = NODE_IDENTITY_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     if let Some(existing) = read_node_identity_from_path(path)? {
         return Ok(existing);
     }
@@ -80,7 +90,10 @@ pub(crate) fn ensure_node_identity_for_path(path: &Path) -> Result<NodeIdentity>
         created_at: chrono::Utc::now().timestamp(),
     };
     write_node_identity_to_path(path, &identity)?;
-    Ok(identity)
+    // 以落盘者为准：write 的 rename 冲突回退分支里先落盘者已赢，此时磁盘上
+    // 是对方的身份——不能把本次自生成的身份返回出去（Windows 上 rename 目标
+    // 已存在会失败，这条路径真实可达）
+    Ok(read_node_identity_from_path(path)?.unwrap_or(identity))
 }
 
 fn read_node_identity_from_path(path: &Path) -> Result<Option<NodeIdentity>> {

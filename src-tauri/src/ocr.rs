@@ -713,13 +713,19 @@ try {{
     /// 使用 macOS Vision 框架提取文字
     #[cfg(target_os = "macos")]
     fn extract_with_vision(&self, image_path: &Path) -> Result<Option<OcrResult>> {
+        // AppleScript 双引号字符串转义：路径含 `"` 或 `\`（macOS 文件名均合法）
+        // 时脚本编译失败、OCR 静默降级为 None——与 Windows 侧 PowerShell 转义同口径
+        let escaped_path = image_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
         let script = format!(
             r#"
 use framework "Vision"
 use framework "Foundation"
 use scripting additions
 
-set imagePath to "{}"
+set imagePath to "{escaped_path}"
 set theImage to current application's NSImage's alloc()'s initWithContentsOfFile:imagePath
 
 if theImage is missing value then
@@ -741,8 +747,7 @@ repeat with observation in theResults
 end repeat
 
 return outputText
-            "#,
-            image_path.to_string_lossy()
+            "#
         );
 
         let output = Self::run_command_with_timeout(

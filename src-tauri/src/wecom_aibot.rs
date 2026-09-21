@@ -601,7 +601,7 @@ async fn handle_text_message(
     let (devices, generate_timeout) = match state.lock() {
         Ok(s) => (
             build_device_list(&s.config, &s.data_dir),
-            Duration::from_secs(s.config.report_generation_timeout_secs.max(60)),
+            crate::bot_common::report_generate_timeout(&s.config),
         ),
         Err(e) => {
             log::warn!("企业微信 Bot 获取设备列表失败: {e}");

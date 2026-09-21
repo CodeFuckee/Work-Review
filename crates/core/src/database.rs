@@ -3362,6 +3362,10 @@ impl Database {
         Ok(overview)
     }
 
+    /// 按归一化应用名取全部活动（分类修正 UI 用）。
+    /// 两段式取数：先只取 (id, app_name) 轻量列做精确筛选，再按 id 分块取全列——
+    /// 此前一条无 LIMIT 全列查询会把全历史（含可能多 KB 的 ocr_text）一次性
+    /// 载入内存；结果集与旧实现一致
     pub fn get_activities_by_normalized_app_name(&self, app_name: &str) -> Result<Vec<Activity>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
@@ -3370,26 +3374,25 @@ impl Database {
         let target = crate::categorize::normalize_display_app_name(app_name).to_lowercase();
         // 用 LIKE 做初步过滤，减少加载量；精确匹配仍在 Rust 侧完成
         let like_pattern = format!("%{app_name}%");
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE app_name LIKE ?1
-             ORDER BY timestamp ASC, id ASC"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let activities = stmt
-            .query_map([&like_pattern], activity_from_row)?
+        let mut stmt = conn.prepare(
+            "SELECT id, app_name FROM activities WHERE app_name LIKE ?1 ORDER BY id ASC",
+        )?;
+        let matching_ids: Vec<i64> = stmt
+            .query_map([&like_pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
             .filter_map(|row| row.ok())
-            .filter(|activity| {
-                crate::categorize::normalize_display_app_name(&activity.app_name).to_lowercase()
-                    == target
+            .filter(|(_, name)| {
+                crate::categorize::normalize_display_app_name(name).to_lowercase() == target
             })
+            .map(|(id, _)| id)
             .collect();
 
-        Ok(activities)
+        self.load_activities_by_ids(&conn, &matching_ids)
     }
 
+    /// 按域名取全部带 URL 活动（分类修正 UI 用）。两段式取数，同
+    /// get_activities_by_normalized_app_name
     pub fn get_activities_by_domain(&self, domain: &str) -> Result<Vec<Activity>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
@@ -3399,28 +3402,50 @@ impl Database {
             return Ok(Vec::new());
         };
 
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE browser_url IS NOT NULL AND browser_url != '' AND browser_url LIKE ?1
-             ORDER BY timestamp ASC, id ASC"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
         let like_pattern = format!("%{}%", target);
-        let activities = stmt
-            .query_map([&like_pattern], activity_from_row)?
+        let mut stmt = conn.prepare(
+            "SELECT id, browser_url FROM activities
+             WHERE browser_url IS NOT NULL AND browser_url != '' AND browser_url LIKE ?1
+             ORDER BY id ASC",
+        )?;
+        let matching_ids: Vec<i64> = stmt
+            .query_map([&like_pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
             .filter_map(|row| row.ok())
-            .filter(|activity| {
-                activity
-                    .browser_url
-                    .as_deref()
-                    .and_then(crate::categorize::normalize_domain_rule)
-                    .as_deref()
+            .filter(|(_, url)| {
+                crate::categorize::normalize_domain_rule(url.as_str()).as_deref()
                     == Some(target.as_str())
             })
+            .map(|(id, _)| id)
             .collect();
 
+        self.load_activities_by_ids(&conn, &matching_ids)
+    }
+
+    /// 按 id 集合分块载入完整活动行，id 升序；供上面两段式取数共用
+    fn load_activities_by_ids(
+        &self,
+        conn: &std::sync::MutexGuard<'_, Connection>,
+        ids: &[i64],
+    ) -> Result<Vec<Activity>> {
+        const CHUNK_SIZE: usize = 500;
+        let mut activities = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(CHUNK_SIZE) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT {ACTIVITY_SELECT_COLUMNS} FROM activities
+                 WHERE id IN ({placeholders})
+                 ORDER BY id ASC"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let chunk_params: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt.query_map(chunk_params.as_slice(), activity_from_row)?;
+            for row in rows {
+                activities.push(row?);
+            }
+        }
         Ok(activities)
     }
 

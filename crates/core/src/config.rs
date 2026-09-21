@@ -1599,6 +1599,10 @@ impl AppConfig {
         // 永不满足而逐个删光全部截图目录；与设置页下限(256)对齐做后端钳制，
         // 挡住配置同步/手改配置文件直通入库的 0 值
         self.storage.storage_limit_mb = self.storage.storage_limit_mb.max(256);
+        // 保留天数无上限时，清理路径 `date_naive() - Duration::days(n)` 会越过
+        // NaiveDate::MIN 直接 panic（配置同步/手改配置可写入 u32 任意值）；
+        // 0 = 永久保留语义保留，非 0 钳到 10 年（与 parse_temporal_range 同族的兜底钳制）
+        self.storage.screenshot_retention_days = self.storage.screenshot_retention_days.min(3650);
         self.ui_visual_style = normalize_ui_visual_style(&self.ui_visual_style);
         self.avatar_scale = normalize_avatar_scale(self.avatar_scale);
         self.avatar_opacity = normalize_avatar_opacity(self.avatar_opacity);
@@ -2339,6 +2343,26 @@ mod tests {
         config.storage.storage_limit_mb = 2048;
         config.normalize();
         assert_eq!(config.storage.storage_limit_mb, 2048);
+    }
+
+    #[test]
+    fn 配置规范化应把截图保留天数钳到安全上限() {
+        // 超大值会让清理路径 `date_naive() - Duration::days(n)` 越过 NaiveDate::MIN
+        // panic（配置同步/手改配置可写入 u32 任意值），normalize 必须兜底钳制；
+        // 0 = 永久保留，必须保留原语义
+        let mut config = AppConfig::default();
+        config.storage.screenshot_retention_days = 0;
+        config.normalize();
+        assert_eq!(config.storage.screenshot_retention_days, 0);
+
+        config.storage.screenshot_retention_days = 99999999;
+        config.normalize();
+        assert_eq!(config.storage.screenshot_retention_days, 3650);
+
+        // 合法值不动
+        config.storage.screenshot_retention_days = 7;
+        config.normalize();
+        assert_eq!(config.storage.screenshot_retention_days, 7);
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {

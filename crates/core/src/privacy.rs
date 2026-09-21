@@ -16,7 +16,59 @@ pub enum PrivacyAction {
 /// 隐私过滤器
 pub struct PrivacyFilter {
     config: PrivacyConfig,
-    sensitive_patterns: Vec<Regex>,
+    sensitive_patterns: Vec<SensitivePattern>,
+}
+
+/// 敏感信息模式：regex + 邻位延续判定。
+/// regex 的 `\b` 是 Unicode 词边界——CJK 汉字属词字符，中文与号码/邮箱直接
+/// 相邻（中文窗口标题/OCR 输出极常见）时首尾不构成边界、整条漏配。故数字与
+/// 邮箱模式一律不带 `\b`，匹配后手动校验前后邻位（与 ocr.rs 的 IP/银行卡
+/// 过滤同款），命中面相对旧版只增不减。
+struct SensitivePattern {
+    regex: Regex,
+    /// 邻位字符满足此判定说明匹配只是更长 token 的一部分（如更长数字串），跳过
+    is_continuation: fn(char) -> bool,
+}
+
+/// 更长数字串（订单号/流水号片段）的一部分
+fn digit_continuation(c: char) -> bool {
+    c.is_ascii_digit()
+}
+
+/// ASCII 词字符延续（邮箱粘着在更长英文标识符里）；CJK 不算延续——那正是要修的漏配
+fn word_continuation(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// 密码/密钥类模式无 \b，无需邻位判定
+fn no_continuation(_: char) -> bool {
+    false
+}
+
+/// `\b` 替代款替换：仅当匹配前后邻位都不构成"更长 token"时才替换
+fn replace_all_checked(
+    text: &str,
+    re: &Regex,
+    replacement: &str,
+    is_continuation: fn(char) -> bool,
+) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_end = 0;
+    for m in re.find_iter(text) {
+        let prev_is_continuation = text[..m.start()]
+            .chars()
+            .next_back()
+            .is_some_and(is_continuation);
+        let next_is_continuation = text[m.end()..].chars().next().is_some_and(is_continuation);
+        if prev_is_continuation || next_is_continuation {
+            continue;
+        }
+        out.push_str(&text[last_end..m.start()]);
+        out.push_str(replacement);
+        last_end = m.end();
+    }
+    out.push_str(&text[last_end..]);
+    out
 }
 
 impl PrivacyFilter {
@@ -24,17 +76,35 @@ impl PrivacyFilter {
     pub fn from_config(config: &PrivacyConfig) -> Self {
         let sensitive_patterns = vec![
             // 信用卡号
-            Regex::new(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b").unwrap(),
+            SensitivePattern {
+                regex: Regex::new(r"\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}").unwrap(),
+                is_continuation: digit_continuation,
+            },
             // 手机号
-            Regex::new(r"\b1[3-9]\d{9}\b").unwrap(),
+            SensitivePattern {
+                regex: Regex::new(r"1[3-9]\d{9}").unwrap(),
+                is_continuation: digit_continuation,
+            },
             // 身份证号
-            Regex::new(r"\b\d{17}[\dXx]\b").unwrap(),
+            SensitivePattern {
+                regex: Regex::new(r"\d{17}[\dXx]").unwrap(),
+                is_continuation: digit_continuation,
+            },
             // 邮箱
-            Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap(),
+            SensitivePattern {
+                regex: Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap(),
+                is_continuation: word_continuation,
+            },
             // 密码字段
-            Regex::new(r"(?i)(password|密码|pwd|passwd)[\s:：=]+\S+").unwrap(),
+            SensitivePattern {
+                regex: Regex::new(r"(?i)(password|密码|pwd|passwd)[\s:：=]+\S+").unwrap(),
+                is_continuation: no_continuation,
+            },
             // API Key
-            Regex::new(r"(?i)(api[_-]?key|secret|token)[\s:：=]+\S+").unwrap(),
+            SensitivePattern {
+                regex: Regex::new(r"(?i)(api[_-]?key|secret|token)[\s:：=]+\S+").unwrap(),
+                is_continuation: no_continuation,
+            },
         ];
 
         Self {
@@ -120,7 +190,12 @@ impl PrivacyFilter {
         let mut filtered = text.to_string();
 
         for pattern in &self.sensitive_patterns {
-            filtered = pattern.replace_all(&filtered, "[已过滤]").to_string();
+            filtered = replace_all_checked(
+                &filtered,
+                &pattern.regex,
+                "[已过滤]",
+                pattern.is_continuation,
+            );
         }
 
         filtered
@@ -370,5 +445,29 @@ mod tests {
 
         assert!(filtered.contains("[已过滤]"));
         assert!(!filtered.contains("13812345678"));
+    }
+
+    #[test]
+    fn 中文与号码直接相邻时不应漏配() {
+        // regex 的 \b 是 Unicode 词边界，CJK 属词字符：中文紧邻号码时旧实现整条漏配
+        let config = PrivacyConfig::default();
+        let filter = PrivacyFilter::from_config(&config);
+
+        let filtered = filter.filter_text("手机号13812345678请查收");
+        assert!(!filtered.contains("13812345678"), "{filtered}");
+
+        let filtered = filter.filter_text("卡号6222020200112233到账");
+        assert!(!filtered.contains("6222020200112233"), "{filtered}");
+
+        let filtered = filter.filter_text("邮箱zhang.san@example.com发我");
+        assert!(!filtered.contains("zhang.san@example.com"), "{filtered}");
+
+        // 更长数字串（订单号）不算手机号，保持不误伤
+        let filtered = filter.filter_text("订单号1138123456780请查收");
+        assert!(filtered.contains("1138123456780"), "{filtered}");
+
+        // TLD 后粘着数字（x.com3）属更长 token：与旧 \b 语义一致，不当作邮箱拆掉
+        let filtered = filter.filter_text("contact user@x.com3 now");
+        assert!(filtered.contains("user@x.com3"), "{filtered}");
     }
 }

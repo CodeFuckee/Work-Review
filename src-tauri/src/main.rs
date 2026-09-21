@@ -921,7 +921,22 @@ pub(crate) fn save_data_dir_preference(data_dir: &Path) -> std::io::Result<()> {
     })
     .map_err(std::io::Error::other)?;
 
-    std::fs::write(preference_path, content)?;
+    // 原子写（与 node_gateway 身份文件同款）：直接 truncate+write 中途崩溃会留
+    // 半截 JSON，下次启动解析失败静默回退默认数据目录，用户面对"数据全空"
+    let unique = format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let temp_path = preference_path.with_extension(unique);
+    std::fs::write(&temp_path, content)?;
+    if let Err(e) = std::fs::rename(&temp_path, preference_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -2013,11 +2028,18 @@ async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
             last_avatar_state = Some(next_avatar_state);
             last_window_signature = Some(window_signature);
         } else if window_changed {
-            log::debug!(
-                "🐾 桌宠检测到前台切换，但状态未变: {} | 采集耗时={}ms",
-                window_signature,
-                sampled_at.elapsed().as_millis()
-            );
+            // 与上方状态切换日志同款脱敏：签名含原始标题/URL，不能明文进 debug 日志
+            if log::log_enabled!(log::Level::Debug) {
+                let filtered_signature = {
+                    let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                    state_guard.privacy_filter.filter_text(&window_signature)
+                };
+                log::debug!(
+                    "🐾 桌宠检测到前台切换，但状态未变: {} | 采集耗时={}ms",
+                    filtered_signature,
+                    sampled_at.elapsed().as_millis()
+                );
+            }
             last_window_signature = Some(window_signature);
         }
 
@@ -2290,10 +2312,15 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         // 注意 explorer 特殊处理：有窗口标题时是文件管理器，应该记录
         {
             if should_skip_system_window(&active_window) {
+                // debug 参数惰性求值：默认 info 级时不加锁；开启 debug 时标题须脱敏
                 log::debug!(
                     "跳过系统/桌面窗口: {} (title={}, minimized={})",
                     active_window.app_name,
-                    active_window.window_title,
+                    state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .privacy_filter
+                        .filter_text(&active_window.window_title),
                     active_window.is_minimized
                 );
                 last_app_name = None;
@@ -2322,12 +2349,24 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             },
         ) {
             if last_browser_url.as_deref() != Some(resolved_url.as_str()) {
-                log::debug!(
-                    "浏览器 URL 预探测命中: {} | {} -> {}",
-                    active_window.app_name,
-                    active_window.window_title,
-                    resolved_url
-                );
+                // 标题/URL 落日志前脱敏；热路径，仅 debug 级开启时才加锁过滤
+                if log::log_enabled!(log::Level::Debug) {
+                    let (filtered_title, filtered_url) = {
+                        let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            state_guard
+                                .privacy_filter
+                                .filter_text(&active_window.window_title),
+                            state_guard.privacy_filter.filter_text(&resolved_url),
+                        )
+                    };
+                    log::debug!(
+                        "浏览器 URL 预探测命中: {} | {} -> {}",
+                        active_window.app_name,
+                        filtered_title,
+                        filtered_url
+                    );
+                }
             }
             active_window.browser_url = Some(resolved_url);
         }
@@ -2356,12 +2395,24 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             };
 
             if let Some(recovered_url) = recovered_url {
-                log::debug!(
-                    "恢复浏览器 URL: {} | {} -> {}",
-                    active_window.app_name,
-                    active_window.window_title,
-                    recovered_url
-                );
+                // 标题/URL 落日志前脱敏；热路径，仅 debug 级开启时才加锁过滤
+                if log::log_enabled!(log::Level::Debug) {
+                    let (filtered_title, filtered_url) = {
+                        let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            state_guard
+                                .privacy_filter
+                                .filter_text(&active_window.window_title),
+                            state_guard.privacy_filter.filter_text(&recovered_url),
+                        )
+                    };
+                    log::debug!(
+                        "恢复浏览器 URL: {} | {} -> {}",
+                        active_window.app_name,
+                        filtered_title,
+                        filtered_url
+                    );
+                }
                 active_window.browser_url = Some(recovered_url);
             }
         }
@@ -2490,12 +2541,24 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             },
         ) {
             if active_window.browser_url.as_deref() != Some(resolved_url.as_str()) {
-                log::debug!(
-                    "浏览器 URL 落库前刷新: {} | {} -> {}",
-                    active_window.app_name,
-                    active_window.window_title,
-                    resolved_url
-                );
+                // 标题/URL 落日志前脱敏；热路径，仅 debug 级开启时才加锁过滤
+                if log::log_enabled!(log::Level::Debug) {
+                    let (filtered_title, filtered_url) = {
+                        let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            state_guard
+                                .privacy_filter
+                                .filter_text(&active_window.window_title),
+                            state_guard.privacy_filter.filter_text(&resolved_url),
+                        )
+                    };
+                    log::debug!(
+                        "浏览器 URL 落库前刷新: {} | {} -> {}",
+                        active_window.app_name,
+                        filtered_title,
+                        filtered_url
+                    );
+                }
             }
             active_window.browser_url = Some(resolved_url);
             url_changed = match (&last_browser_url, &active_window.browser_url) {
@@ -3905,6 +3968,28 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
             continue;
         };
 
+        // 整批只扫一次近 14 天浏览器 URL：此前每个 domain 实体各调一次
+        // get_browser_activity_urls（无 LIMIT 全量拉取）且在 AppState 锁内进行，
+        // 一批最多 12 个实体 = 最多 12 次全表扫描持全局锁，会阻塞采集循环与 UI 命令
+        let mut domain_url_ids: std::collections::HashMap<String, Vec<i64>> =
+            std::collections::HashMap::new();
+        if results.iter().any(|(key, _, _)| key.starts_with("domain:")) {
+            let rows = {
+                let guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                guard
+                    .database
+                    .get_browser_activity_urls(now - RETRO_SECS)
+                    .unwrap_or_default()
+            };
+            for (id, url) in rows {
+                let row_domain = work_review_core::config::PrivacyConfig::extract_domain(&url);
+                domain_url_ids
+                    .entry(row_domain.split(':').next().unwrap_or("").to_string())
+                    .or_default()
+                    .push(id);
+            }
+        }
+
         let mut learned = 0usize;
         for (key, base, semantic) in results {
             // 模型对没把握的实体返回 "skip":不学习、不缓存,留待将来有更多上下文再判
@@ -3942,22 +4027,7 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
                     .reclassify_app_activities(app, &base, &semantic, now - RETRO_SECS)
                     .unwrap_or(0)
             } else if let Some(domain) = key.strip_prefix("domain:") {
-                let rows = {
-                    let guard = state.lock().unwrap_or_else(|e| e.into_inner());
-                    guard
-                        .database
-                        .get_browser_activity_urls(now - RETRO_SECS)
-                        .unwrap_or_default()
-                };
-                let ids: Vec<i64> = rows
-                    .into_iter()
-                    .filter(|(_, url)| {
-                        let row_domain =
-                            work_review_core::config::PrivacyConfig::extract_domain(url);
-                        row_domain.split(':').next().unwrap_or("") == domain
-                    })
-                    .map(|(id, _)| id)
-                    .collect();
+                let ids = domain_url_ids.get(domain).cloned().unwrap_or_default();
                 let guard = state.lock().unwrap_or_else(|e| e.into_inner());
                 guard
                     .database

@@ -82,8 +82,10 @@ impl StorageManager {
             return Ok(0);
         }
 
+        // min(3650)：normalize 钳制之外的兜底——配置同步/手改文件可绕过 normalize
+        // 直通入库，超大值会让减法越过 NaiveDate::MIN panic（启动路径 panic 即崩）
         let cutoff_date = Local::now().date_naive()
-            - Duration::days(self.config.screenshot_retention_days as i64);
+            - Duration::days(self.config.screenshot_retention_days.min(3650) as i64);
         let mut deleted_count = 0u32;
 
         // 遍历日期目录
@@ -129,8 +131,9 @@ impl StorageManager {
             return Ok(0);
         }
 
+        // 与 cleanup_old_screenshots 同款 min(3650) 兜底钳制
         let cutoff_date = Local::now().date_naive()
-            - Duration::days(self.config.screenshot_retention_days as i64);
+            - Duration::days(self.config.screenshot_retention_days.min(3650) as i64);
         let mut deleted_count = 0u32;
 
         for entry in fs::read_dir(&ocr_dir)? {

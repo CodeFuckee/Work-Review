@@ -85,6 +85,9 @@ impl ScreenLockMonitor {
             fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
         }
 
+        // SAFETY: CGSessionCopyCurrentDictionary 返回 +1 引用计数的 CFDictionary，
+        // null 提前返回不涉及资源；非空路径只有单一出口且末尾 CFRelease 恰好
+        // 释放一次，value_ref 以 get-rule 包装不取得所有权
         unsafe {
             let dict = CGSessionCopyCurrentDictionary();
             if dict.is_null() {
