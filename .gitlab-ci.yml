@@ -169,7 +169,7 @@ deploy-admin-core-yx:
     # 用最新 commit SHA 作 ref：击穿 docker clone 层缓存，保证镜像源码为 fork 最新
     - ADMIN_CORE_REF=$(git ls-remote "$ADMIN_CORE_REPO" refs/heads/master | cut -c1-40)
     - echo "admin-core master = $ADMIN_CORE_REF"
-    - docker build --build-arg ADMIN_CORE_REPO="$ADMIN_CORE_REPO" --build-arg ADMIN_CORE_REF="$ADMIN_CORE_REF" -t workreview-admin:latest admin-core/
+    - docker build --no-cache --build-arg ADMIN_CORE_REPO="$ADMIN_CORE_REPO" --build-arg ADMIN_CORE_REF="$ADMIN_CORE_REF" -t workreview-admin:latest admin-core/
     # 2. 确保数据面（幂等）：compose 网络 + 生产配置目录
     # （db 由 compose 统一编排，不再使用早期手工创建的 workreview-net/workreview-db）
     - test -f "$HOME/workreview/admin-config/dbconfig.json" || { echo "缺少 ~/workreview/admin-config 生产配置（首次需手动初始化）" >&2; exit 1; }
