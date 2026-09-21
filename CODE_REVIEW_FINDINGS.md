@@ -26,6 +26,163 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 - 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
 - ⚠️ 仓库级：需人工处置的事项
 
+# 第八轮（2026-09-22）
+
+范围：八分片并行复扫（main+commands / monitor+screenshot+ocr / localhost+avatar+杂项 /
+agent+五bot / crates 三库 / 前端纯 TS / 43 个 .svelte 全量 / CI+admin-core+capabilities+Cargo），
+与七轮台账逐条去重。新发现 30 条（2 P1 + 28 P2），另否决分片误报 2 条（admin Dockerfile
+示例漂移——实际已无 cargo 挂载示例；rust-verify-windows 缺 timeout——:285 已有）。
+分三批修复 24 条行为保持项：批次 1 = Rust（13 项）、批次 2 = CI/构建（8 项）、批次 3 = TS（2 项）；
+14 条涉行为语义列待确认；1 条 .svelte 待过目；2 条暂缓。
+
+## 第八轮已修复
+
+### 批次 1（Rust，13 项）
+
+- ✅ [P1] src-tauri/src/storage.rs:86,133 + crates/core/src/config.rs — screenshot_retention_days
+  无上限钳制，超大值（配置同步/手改配置直通 u32）使 `date_naive() - Duration::days` 越过
+  NaiveDate::MIN panic：启动清理路径崩即启动失败，周期清理路径 panic 被吞成 warn 后清理永久失效
+  （"无上限数值→chrono panic"家族第三处，parse_temporal_range/storage_limit_mb 之后）—
+  normalize 钳 [0,3650]（0=永久保留不变）+ 两处使用点 min(3650) 兜底，配回归测试
+- ✅ [P2] crates/core/src/privacy.rs:25-38 — 四个敏感模式（银行卡/手机号/身份证/邮箱）`\b`
+  Unicode 词边界致 CJK 邻接整条漏配；第七轮采集/桌宠日志统一走的就是本 filter_text，脱敏实际
+  失效 — 去 \b + 匹配后 ASCII 邻位手动校验（ocr.rs 已修款），配中文邻接/订单号不误伤回归
+- ✅ [P2] src-tauri/src/main.rs:919 — save_data_dir_preference 对 data-location.json 非原子写，
+  崩溃留半截 JSON 致下次启动静默回退默认数据目录 — 临时文件（pid+纳秒）+rename 原子写
+- ✅ [P2] src-tauri/src/node_gateway.rs:73-126 — 第六轮并发 ensure 修复不完整：rename 冲突
+  回退分支返回 Ok(()) 但调用方仍返回自生成幽灵 device_id（Windows 真实可达），Unix rename 覆盖
+  使读-判-写竞态原样存在 — 进程内 NODE_IDENTITY_WRITE_LOCK 串行化（localhost_api token 写锁
+  同款）+ 落盘后重读返回磁盘身份
+- ✅ [P2] src-tauri/src/main.rs:3944-3961 — entity_classify_task 对批内每个 domain 实体各调一次
+  无 LIMIT 14 天浏览器 URL 全量查询且在 AppState 锁内（一批最多 12 次全表扫描持全局锁，阻塞
+  采集循环与 UI 命令）— 整批一次扫描建 domain→ids 映射复用，回溯修正 id 集合不变
+- ✅ [P2] src-tauri/src/main.rs:2016,2294,2326,2358,2493 — debug 级日志明文记录窗口签名/标题/URL
+  （第七轮只修了 info 级两处）；RUST_LOG=debug 排障时邮件主题/URL 进日志 — 落日志前
+  filter_text 脱敏，热路径 log_enabled 守卫下才加锁
+- ✅ [P2] crates/core/src/database.rs:3365-3425 — get_activities_by_normalized_app_name /
+  get_activities_by_domain 无 LIMIT 全列（含 ocr_text）全量载入+前导通配 LIKE 全表扫描，分类
+  修正 UI 对高频应用触发时载入全历史 — 两段式：轻量 (id, app_name/browser_url) 筛选 + 按 id
+  分块（500）取全列，结果集不变
+- ✅ [P2] src-tauri/src/ocr.rs:745 — macOS Vision OCR AppleScript 路径插值未转义，路径含 `"`/`\`
+  时脚本编译失败 OCR 静默降级（Windows 侧 PowerShell 有转义）— 补 `\\` 与 `\"` 转义
+- ✅ [P2] src-tauri/src/monitor.rs:2904 — 注释写"提取第一个部分"、变量名 first_part，代码实为
+  split(" - ").last()（macOS "Document - AppName" 格式取 last 才对）— 注释与变量名对齐代码
+- ✅ [P2] src-tauri/src/wecom_aibot.rs:604 — 内联 Duration::from_secs(…max(60)) 与 bot_common
+  共享 helper 重复（其余 4 bot 均已调用），floor 调整必漏改本处 — 改调 report_generate_timeout
+- ✅ [P2] src-tauri/src/avatar_engine.rs:243,325 — "文档/阅读"判定 needle 数组两分支逐字重复，
+  单边演化即行为漂移 — 抽 DOC_TITLE_KEYWORDS / DOC_URL_KEYWORDS 共享常量
+- ✅ [P2] monitor.rs:731,896,1327,1343 / screenshot.rs:500,1519 / idle_detector.rs:121 /
+  screen_lock.rs:88 — 平台 FFI unsafe 块无 SAFETY 注释（第三轮已为 commands 侧补齐）— 逐块补
+  SAFETY 注释（含提前返回路径资源释放说明）
+- ✅ [P2] src-tauri/src/lib 辅助 — 上述修复各自配的回归测试（storage 钳制 / privacy 中文邻接）
+
+### 批次 2（CI/构建，8 项）
+
+- ✅ [P1] .gitlab-ci.yml:752 — 更新签名私钥（base64 全文）以 `-e VAR="$VAR"` 进 docker 客户端
+  进程 argv，打包期间（数十分钟）同机进程可经 /proc/<pid>/cmdline 读取（linux runner 同机跑
+  生产 admin 栈）— 改无值 `-e VAR` 形式（docker 从作业环境读值，argv 只留变量名）
+- ✅ [P2] .gitlab-ci.yml:575 — version-bump 认证 `-c http.extraHeader=Basic <token>` 进 git 进程
+  argv — 改 GIT_CONFIG_COUNT/KEY_0/VALUE_0 环境变量（仅本用户可读）
+- ✅ [P2] .gitlab-ci.yml:571 — `git tag` 不幂等：job 在 tag 创建后 push 前被取消即残留本地 tag，
+  同版本重跑恒 "already exists" 失败且需人工上 runner 清理 — 改 `git tag -f`（版本号由内容推导）
+- ✅ [P2] .gitlab-ci.yml:576 — 分支+tag 两次引用一次 push 无原子性，中途失败 tag 先落会产生指向
+  main 之外提交的 tag、触发 preflight 必红的 tag 流水线 — 改 `git push --atomic`
+- ✅ [P2] .gitlab-ci.yml:262-518 — build-release-windows 与五个 package-daily-* 无作业级 timeout
+  （default: timeout 本实例不生效，实测死于 3600s）— 六个 job 补 `timeout: 3h`（同 .rust-verify
+  已修款；rust-verify-windows/.release-compile/.tauri-package 已有，经逐块核验不重加）
+- ✅ [P2] .gitlab-ci.yml:529-536 + scripts/ciVersionFlow.test.ts:31 — version-bump needs 七项默认
+  artifacts: true，把三平台数十 MB 二进制下载进从不消费的 bump 作业 — 全改 `artifacts: false`，
+  契约断言同步为 `- job: X + artifacts: false` 形态（PUSH_AUTH 钉断言同步为 GIT_CONFIG 形态）
+- ✅ [P2] .gitlab-ci.yml:204,967 — nightly-gate 取消 API 与 publish-release 上传循环的 curl
+  `-H "PRIVATE-TOKEN: $…"` 进 curl 进程 argv — 改 mktemp header 文件 + `--header @file` + trap 清理
+- ✅ [P2] scripts/ci/linux-builder-22.Dockerfile:35 + Cargo.toml — builder 镜像 Node 20 与
+  engines>=22/其余作业 Node 22 漂移，改 setup_22.x；workspace release profile 补
+  `[profile.release.build-override] opt-level = 1`（build script/proc-macro 免 O3，缩短三平台
+  release 编译）
+
+### 批次 3（TS 去重，2 项）
+
+- ✅ [P2] src/lib/utils/appDisplay.ts:19,23 — 安装器词表 ['setup','install','installer','uninstall']
+  相邻两函数重复定义 — 抽 INSTALLER_TOKENS 共享
+- ✅ [P2] src/lib/stores/categories.ts + categories.test.ts:54 — 两个 store 四处逐字重复的
+  "订阅即退出"快照读取 — 抽 snapshotStore<T> 助手；契约测试同步改钉 snapshotStore 4 处 + 助手签名
+
+## 第八轮待确认（修复会改对外行为/语义，未经确认不动）
+
+- ⏸ [P2] src-tauri/src/main.rs:1925-1949+797-848 — 两套"频繁切换窗口"提醒机制并存（局部
+  6次/5分钟/冷却30分钟/硬编码中文 vs AvatarNudgeRuntime 8次/3分钟/冷却20分钟/persona 键），
+  前者 emit 绕过 i18n（en/zh-TW 用户气泡恒中文）且同行为可能收两条相似提醒 — 合并为单一
+  runtime（行为变更：提醒频率与非中文文案改变）
+- ⏸ [P2] src-tauri/src/commands/config.rs:234-321 — change_data_dir 迁移全程不暂停录制：复制
+  screenshots 期间新截图落旧目录致迁移后缩略图断链，backup_to 后切换前写旧库的活动行丢失 —
+  迁移前置 is_paused（行为变更：迁移期间录制暂停）
+- ⏸ [P2] src-tauri/src/commands/avatar.rs:74,275 / stats.rs:819 / system.rs:686,714,759 — 命令层
+  平台子进程 .output() 全部无超时（macOS osascript 权限弹窗未决时 get_running_apps 永久挂起）—
+  归既有 ⏸ "平台工具 .output() 无超时"家族同批处理
+- ⏸ [P2] src-tauri/src/commands/ask.rs:2050 + main.rs（SetAppCategory/set_app_locale/托盘开关等
+  五处）— clone 配置→放锁→整体 persist 的丢失更新窗口 — 归既有 ⏸ persist_app_config 收敛家族
+- ⏸ [P2] src-tauri/src/agent/tools.rs:948-957 — search_memory_execute 手写域名过滤与权威
+  filter_activities_by_privacy 口径漂移（按 url+标题 contains，而非 extract_domain+domain_matches）：
+  同一隐私规则两条工具路径结果不一致（当前方向为过滤过宽，安全但语义漂移）— 对齐权威实现
+  （行为变更：工具结果内容）
+- ⏸ [P2] src-tauri/src/agent/events.rs:122-146 — default_tool_label 缺 4 个长期记忆工具映射，
+  步骤卡/确认卡一律显示「处理中」— 补映射（行为变更：UI 文案）
+- ⏸ [P2] src-tauri/src/agent/orchestrator.rs:82,102,364 — 无模型普通聊天问候判定 "hi" 用子串
+  contains："which day is it" 等短问句误入 Direct 回英文问候语 — 改词边界精确比对（行为变更：
+  回复语义）
+- ⏸ [P2] crates/core/src/database.rs:4143 — recall_user_memories 的 Rust to_lowercase（Unicode
+  折叠）与 SQL LOWER（仅 ASCII）不一致，非 ASCII 大写查询召回不到 — 与既有 ⏸
+  search_user_memories 同批定目标语言面（行为变更：召回语义）
+- ⏸ [P2] crates/core/src/analysis/mod.rs:596-599 — generate_activity_timeline 把 window_title
+  原样拼 markdown 表格单元格，`|` 未转义破坏日报"活动时间线"表结构（"标题 | 站名"形态极常见）
+  — 转义后再拼行（行为变更：报告渲染输出；与第四轮 ⏸ GitLab 字段转义同族，可同批决策）
+- ⏸ [P2] crates/mcp-server/src/main.rs:612-627（附注）— filter_activities_by_privacy 的
+  Anonymize 分支除已知 ⏸ 的 ocr_text 外 screenshot_path 也未清空（DB 内为相对路径、本地 MCP
+  客户端无直接读文件面，危害低）— 与 ocr_text ⏸ 同批顺带
+- ⏸ [P2] src-tauri/src/monitor.rs:4372 — get_overlay_windows 前台排除用规范化显示名与 CGWindow
+  原始进程名恒等比较（通用进程名应用前台+有合格浮窗时浮窗被记成独立活动、时长双计）；修复需给
+  ActiveWindow 携带 pid 或传参（跨结构接口面）— 待确认后动
+- ⏸ [P2] .gitlab-ci.yml:158-166 — deploy-admin-core-yx 无 needs，被整条 app 流水线连坐（任一
+  无关 job 失败 admin 部署即不执行、正常路径也要等最慢 mac 编译）— 加 needs: [] 解耦（行为变更：
+  部署时机语义，需确认 admin 是否有意随 app 全绿才部署）
+- ⏸ [P2] .gitlab-ci.yml:172 — docker build --no-cache 使 admin 镜像每次 main push（含 docs-only）
+  全量重建且 image ID 变化触发生产容器重启；但 73b1dc5 加 --no-cache 是为修 BuildKit clone 层
+  缓存致旧代码的真实事故，REF build-arg 是否足以击穿缓存需实测验证 — 待确认后再动
+- ⏸ [P2] src-tauri/tauri.conf.json:107 — additionalBrowserArgs 全窗口关 SmartScreen+混合内容防护
+  （--disable-features=msSmartScreenProtection / --allow-running-insecure-content /
+  --unsafely-treat-insecure-origin-as-secure）为内网 http admin 的刻意取舍（a680887，修打包版
+  登录被混合内容拦截）— 正解是给 admin 上 https/反代证书后移除三个 flag（行为变更/部署语义）
+
+## 第八轮待过目批次（.svelte，按红线待用户过目）
+
+- 💤 [P2] src/routes/settings/components/SettingsAI.svelte:951-979 — 模型下拉无法回显"手动输入"
+  的当前模型：手动配置后点「刷新模型」成功且列表不含该名字时，模板切到 select 而选项无匹配，
+  下拉显示空白/停在 __manual__，与实际配置不一致（配置值本身未丢失）— 渲染 select 前若当前
+  模型不在列表自动置 showManualInput（或注入额外 option）（行为变更）
+
+## 第八轮暂缓（💤）
+
+- 💤 [P2] src/lib/i18n/locales/*.ts（四语言）— i18n 死键清账：memoryPage 全部 20 键、
+  settings.summary 全部 21 键、settingsGeneral.localApi* 约 24 键、nodeGateway* 约 18 键及一批
+  散键在四语言成套零引用（合计 164+ 叶子/语言）；需"全键引用扫描 + 动态键白名单（如
+  report.blockNames.*）"专门批次一次性清，同步叶子数契约（现钉 1_391）与四语言 parity
+- 💤 [P2] .gitlab-ci.yml:379-518 — 三平台 package-daily 的 PowerShell after_script 约 27 行 ×2
+  逐字重复 + macOS 四作业 before_script/variables 模板重复 ×4 — 抽隐藏 job 模板 + !reference；
+  发布关键路径大改 + ciArtifacts/ciUpdateChain 契约同步，单独批次
+
+## 第八轮复核无新问题（抽样说明）
+
+- 前七轮修复面复核完好：safe_screenshot_path、validated_join 全覆盖、token 原子写+写锁、
+  accept 循环容错、Firefox 会话缓存、is_browser_app 门禁、SSRF 护栏与重定向逐跳校验、
+  dingtalk sessionWebhook 白名单、wrapper 三处 wrap_untrusted_content、FIREFOX_SESSION_CACHE
+  等均在位；deadline 贯通所有 await 点；avatar_input 各平台输入线程生命周期无泄漏路径
+- MSSQL 注入面：crates 内 format!/push_str 拼 SQL 仅两处安全点（常量列投影/常量条件拼装）；
+  VACUUM INTO 单引号转义在位；IN 列表为 i64 自拼接
+- 前端 XSS 面：4 处 {@html} 均走 marked→DOMPurify 闭合；无 innerHTML/eval 直通面；
+  定时器/监听器/store 订阅 onDestroy 配对完整；异步竞态 requestId/快照守卫完整
+- 非问题澄清：Claude 请求连续 user 轮次（Anthropic 服务端自动合并，非 bug）；admin Dockerfile
+  头部示例已无 cargo 挂载（分片报告的"示例漂移"不成立）
+
 # 第七轮（2026-09-21）
 
 范围：七分片并行复扫（main+commands / monitor+screenshot+ocr / localhost+avatar+杂项 /

@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **第八轮全量代码评审修复（行为保持，Rust 批次 + CI/构建批次 + TS 去重批次，共 24 项；另有 14 条涉行为语义列待确认、1 条 .svelte 待过目，见 `CODE_REVIEW_FINDINGS.md` 第八轮）**：
+  - **敏感信息过滤正则中文邻接整条漏配（P2，隐私）**：`crates/core/privacy.rs` 四个敏感模式（银行卡/手机号/身份证/邮箱）的 `\b` 是 Unicode 词边界，CJK 汉字属词字符——"手机号13812345678请查收"这类中文紧邻形态整条漏配；而第七轮把采集/桌宠循环日志统一改走的 `filter_text` 正是本函数，脱敏实际失效。改与 ocr.rs 已修款一致：去 `\b` + 匹配后 ASCII 邻位手动校验，命中面只增不减，配中文邻接回归测试。
+  - **截图保留天数无上限使清理路径 panic（P1，正确性）**：`storage.rs` 的 `date_naive() - Duration::days(retention_days)` 对 u32 任意值直通（配置同步/手改配置可绕过 UI 写入），超大值越过 `NaiveDate::MIN` 直接 panic——启动清理路径崩即启动失败，周期清理路径 panic 被吞成 warn 后清理永久失效。normalize 钳到 [0, 3650]（0=永久保留语义不变）+ 两处使用点兜底钳制，配回归测试（与已修 parse_temporal_range/storage_limit_mb 同族第三处）。
+  - **节点身份并发 ensure 修复不完整（P2，正确性）**：第六轮的 rename 冲突回退只保证磁盘以先落盘者为准，但调用方仍返回自生成的"幽灵" device_id（Windows 回退路径真实可达），且三个并发入口的读-判-写本身无锁（Unix 后写覆盖先写）；补进程内写锁（与 localhost_api token 写锁同款）+ 落盘后重读返回。
+  - **数据目录偏好文件非原子写（P2，正确性）**：`data-location.json` 直接 truncate+write，写中途崩溃留半截 JSON，下次启动解析失败静默回退默认数据目录，用户面对"数据全空"；改临时文件（pid+纳秒）+rename 原子写（同 node_gateway 模式）。
+  - **实体自动归类 N+1 全表扫描持全局锁（P2，性能）**：`entity_classify_task` 对一批内每个 domain 实体各调一次无 LIMIT 的 14 天浏览器 URL 全量查询且在 AppState 锁内——大库一批最多 12 次全表扫描持全局锁，阻塞采集循环与全部 UI 命令；改整批一次扫描建 domain→ids 映射复用，行为（回溯修正的 id 集合）不变。
+  - **debug 级日志明文记录标题/URL（P2，隐私）**：采集循环 4 处（跳过系统窗口/URL 预探测命中/恢复浏览器 URL/落库前刷新）与桌宠循环 1 处（前台切换）debug 日志未过隐私过滤——默认 info 级不落盘，但按排障指引开 RUST_LOG=debug 时邮件主题/URL 明文进日志；落日志前经 `privacy_filter.filter_text` 同款脱敏（热路径仅在 debug 级开启时才加锁过滤）。
+  - **分类修正两条查询全列全量载入（P2，性能）**：`get_activities_by_normalized_app_name`/`get_activities_by_domain` 无 LIMIT 全列（含可能多 KB 的 ocr_text）一次性载入；改两段式——先取轻量 (id, app_name/browser_url) 列做精确筛选，再按 id 分块（500/批）取全列，结果集不变。
+  - **macOS Vision OCR 脚本路径未转义（P2，健壮性）**：AppleScript 字符串对含 `"`/`\` 的路径（macOS 文件名均合法）编译失败、OCR 静默降级；补转义（与 Windows 侧 PowerShell 转义同口径）。
+  - **Rust FFI 块 SAFETY 注释补齐（P2，可维护性）**：monitor/screenshot/idle_detector/screen_lock 七处平台 unsafe 块按第三轮 commands 侧同款补 SAFETY 注释（含提前返回路径的资源释放说明）。
+  - **其余行为保持去重/注释修正（P2，可维护性）**：`avatar_engine` 两分支逐字重复的"文档"关键词表抽共享常量；`wecom_aibot` 内联 timeout 表达式改调共享 `report_generate_timeout`（其余 4 bot 均已用）；`monitor.rs` Electron 应用名提取的注释与变量名与代码实际（取 last 段）对齐。
+  - **CI：签名私钥出进程参数（P1，安全）**：linux 容器打包 `docker run -e TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"` 把 base64 私钥整段写进 docker 客户端进程 argv，整个打包期间可被同机进程经 /proc 读取（linux runner 同机跑着生产 admin 栈）；改无值 `-e` 形式（docker 从作业环境读取变量值，argv 只留变量名）。version-bump 的 token `-c http.extraHeader`（进 git 进程 argv）改 `GIT_CONFIG_*` 环境变量；nightly-gate 取消 API 与 publish-release 上传循环的 curl `-H "PRIVATE-TOKEN: ..."` 改临时 header 文件 + `--header @file`。
+  - **CI：version-bump 推送加固（P2，正确性）**：`git tag` 加 `-f`（runner 工作区跨流水线复用，job 在 tag 创建后、push 前被取消即残留本地 tag，此后同版本重跑恒 "already exists" 失败；版本号由内容推导，强移安全）；推送加 `--atomic`（分支与 tag 一次推送，避免中途失败 tag 先落产生指向 main 之外提交的 tag、触发必红的 tag 流水线）。
+  - **CI：六个长作业补作业级 timeout（P2，CI）**：`build-release-windows` 与五个 `package-daily-*` 无作业级 `timeout: 3h`，只能吃本实例不生效的 `default: timeout`（实测死于 3600s）；同 `.rust-verify`/`.tauri-package` 已修款补齐。
+  - **CI：version-bump 不再下载上游产物（P2，性能）**：needs 七项默认 `artifacts: true`，把三平台数十 MB 二进制下载进从不消费它们的 bump 作业；全改 `artifacts: false`，契约测试同步。
+  - **CI：linux 打包容器 Node 20 → 22（P2，CI）**：builder 镜像装 Node 20 而 `engines: >=22`、其余全部 CI 作业用 Node 22——用户拿到的安装包与 verify 流水线测过的构建出自不同工具链；对齐 22。
+  - **CI：release 构建脚本免 O3（P2，性能）**：workspace release profile 补 `[profile.release.build-override] opt-level = 1`，build script/proc-macro 不再按 O3+lto 全力编译，缩短三平台 release 编译时间。
+  - **TS：行为保持去重（P2，可维护性）**：`appDisplay.ts` 相邻两函数重复定义的安装器词表抽共享常量；`categories.ts` 两个 store 四处逐字重复的"订阅即退出"快照读取抽 `snapshotStore` 助手（契约测试同步改钉新形态）。
+
 - **打包版登录报「无法连接服务器」（混合内容拦截，P1）**：客户端登录/注册在浏览器里正常、打包应用必失败且 WebView2 连 TCP 都不发起——根因是 Tauri v2 Windows 打包版配置 `useHttpsScheme: true`（页面源为 `https://tauri.localhost`，属安全上下文），从 HTTPS 页面 fetch 纯 IP 的 `http://10.37.80.25:4191` 命中 Chromium 混合内容硬拦截（fetch/XHR 类混合内容直接抛 TypeError，无网络请求；`http://localhost` 因属潜在可信源豁免，故本地 API 不受影响，浏览器预览因源是 http 也不受影响）。修复：主窗口 `additionalBrowserArgs` 在 wry 默认参数之上追加 `--allow-running-insecure-content` 与 `--unsafely-treat-insecure-origin-as-secure=http://10.37.80.25:4191`（CSP `connect-src` 白名单仍然生效兜底）；`auth.ts` 网络异常分支补 console.warn 保留原始错误。UIA 驱动打包应用复现（零 TCP）后修复验证。
 - **第七轮全量代码评审修复（行为保持，Rust 安全批次 + Rust 健壮性批次 + TS/CI 批次，共 21 项）**：
   - **云端日报截图路径可越界读任意文件（P1，安全）**：`analysis/cloud.rs` 对 DB 内 `screenshot_path` 直接 `screenshots_dir.join` 后读文件并 base64 外发 AI 端点——绝对路径整体替换/`..` 越界可把 data_dir 外任意文件发给配置的端点（与第一轮已修的 timeline.rs:124 同族，crates/core 因无 `validated_join` 被漏网）；新增 `safe_screenshot_path` 校验，配平台分组回归测试。

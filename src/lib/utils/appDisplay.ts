@@ -15,24 +15,27 @@ function normalizeComparable(value: unknown): string {
     .replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, '');
 }
 
+// 安装器词表：isGenericInstallerToken 与 isInstallerLikeName 共用，
+// 内联两份曾逐字重复，增删词项易只改一处
+const INSTALLER_TOKENS = ['setup', 'install', 'installer', 'uninstall'];
+
 function isGenericInstallerToken(value: unknown): boolean {
-  return ['setup', 'install', 'installer', 'uninstall'].includes(normalizeComparable(value));
+  return INSTALLER_TOKENS.includes(normalizeComparable(value));
 }
 
 function isInstallerLikeName(value: unknown): boolean {
-  const installerTokens = ['setup', 'install', 'installer', 'uninstall'];
   const nameWithoutExtension = trimmed(value).replace(/\.(?:exe|msi|pkg|dmg|app)$/i, '');
   const tokens = nameWithoutExtension
     .toLowerCase()
     .split(/[^a-z0-9\u4e00-\u9fa5]+/i)
     .filter(Boolean);
 
-  if (tokens.some((token) => installerTokens.includes(token))) {
+  if (tokens.some((token) => INSTALLER_TOKENS.includes(token))) {
     return true;
   }
 
   const comparable = normalizeComparable(nameWithoutExtension);
-  return installerTokens.some((token) => comparable.endsWith(token));
+  return INSTALLER_TOKENS.some((token) => comparable.endsWith(token));
 }
 
 function isCompactRawToken(value: unknown): boolean {

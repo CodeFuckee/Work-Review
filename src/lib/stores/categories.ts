@@ -40,6 +40,14 @@ export interface SemanticCategoryStore extends Readable<SemanticCategoryInfo[]> 
   getAllSemanticCategories: () => SemanticCategoryInfo[];
 }
 
+/** 同步读取 store 当前快照（订阅即退出的惯用法），两个分类 store 共用 */
+function snapshotStore<T>(subscribe: Readable<T>['subscribe']): T {
+  let value = undefined as T;
+  const unsub = subscribe(v => { value = v; });
+  unsub();
+  return value;
+}
+
 function createCategoryStore(): CategoryStore {
   const { subscribe, set, update } = writable<CategoryInfo[]>([]);
 
@@ -54,9 +62,7 @@ function createCategoryStore(): CategoryStore {
 
   function getCategoryMeta(key: string): CategoryMeta {
     let result: CategoryMeta = { color: 'gray', icon: '📁', name: key, isSystem: false };
-    let cats: CategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
+    const cats = snapshotStore(subscribe);
 
     const found = cats.find(c => c.key === key);
     if (found) {
@@ -75,10 +81,7 @@ function createCategoryStore(): CategoryStore {
   }
 
   function getAllCategories(): CategoryInfo[] {
-    let cats: CategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
-    return cats;
+    return snapshotStore(subscribe);
   }
 
   return { subscribe, set, update, refresh, getCategoryMeta, getAllCategories };
@@ -99,9 +102,7 @@ function createSemanticCategoryStore(): SemanticCategoryStore {
   }
 
   function getSemanticCategoryDisplayName(key: string): string {
-    let cats: SemanticCategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
+    const cats = snapshotStore(subscribe);
 
     const found = cats.find(c => c.key === key);
     if (found) {
@@ -113,10 +114,7 @@ function createSemanticCategoryStore(): SemanticCategoryStore {
   }
 
   function getAllSemanticCategories(): SemanticCategoryInfo[] {
-    let cats: SemanticCategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
-    return cats;
+    return snapshotStore(subscribe);
   }
 
   return { subscribe, set, refresh, getSemanticCategoryDisplayName, getAllSemanticCategories };
