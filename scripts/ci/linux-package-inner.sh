@@ -23,6 +23,8 @@ fetch_tool() {
   local dest="$1"; local github_url="$2"
   local looks_valid=""
   if [ -s "$dest" ] && head -c 4 "$dest" | od -A n -t x1 | grep -q "7f 45 4c 46\|23 21"; then
+    # 历史缓存可能缺执行位（插件脚本/AppRun 必须可执行），兜底恢复
+    chmod +x "$dest" 2>/dev/null || true
     return 0
   fi
   local base
