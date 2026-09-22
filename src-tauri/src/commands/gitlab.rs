@@ -195,11 +195,23 @@ pub struct GitlabCommitSyncResult {
     pub ok: bool,
     /// 本次新写入/更新的提交条数（0 也可能是"远端本来就没有提交"）
     pub synced: usize,
+    /// 涉及项目的仓库头像（data URL；无自定义头像/拉取失败为 None，走默认图标）
+    pub avatars: Vec<GitlabProjectAvatarEntry>,
     pub message: Option<String>,
 }
 
+/// 概览卡片用的仓库头像条目
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabProjectAvatarEntry {
+    /// path_with_namespace
+    pub path: String,
+    /// data:image/...;base64 形式；None = 走默认图标
+    pub data_url: Option<String>,
+}
+
 /// 拉取指定日期（本机时区）的 GitLab 提交并入库，供时间线页打开/切日期时补采。
-/// 作者与项目过滤口径由前端透传（与设置页保存的日报口径一致）；15 秒超时。
+/// 作者与项目过滤口径由前端透传（与设置页保存的日报口径一致）；30 秒超时
+/// （含提交行数统计与仓库头像的补拉预算）。
 #[tauri::command]
 pub async fn gitlab_sync_commits_for_date(
     url: String,
@@ -213,13 +225,14 @@ pub async fn gitlab_sync_commits_for_date(
         return Ok(GitlabCommitSyncResult {
             ok: false,
             synced: 0,
+            avatars: Vec::new(),
             message: Some(String::from("日期格式无效")),
         });
     };
     let client = GitlabClient::new(&url, &token);
     let offset = work_review_core::gitlab::local_offset_now();
     let outcome = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(30),
         client.fetch_today_commits(
             offset,
             date_local,
@@ -233,16 +246,30 @@ pub async fn gitlab_sync_commits_for_date(
         Ok(Ok(result)) => {
             let rows = work_review_core::gitlab::entries_to_rows(&result.entries, &date);
             let synced = rows.len();
+            // 有自定义头像的项目并发补拉字节并转 data URL（webview CSP 不放行远程图片）
+            let avatar_pairs: Vec<(String, i64)> = result
+                .project_avatars
+                .iter()
+                .filter(|p| p.avatar_url.is_some())
+                .map(|p| (p.path.clone(), p.project_id))
+                .collect();
+            let avatars = client.fetch_avatar_data_urls(&avatar_pairs).await;
+
             let db = state.lock().map_err(|e| e.to_string())?;
             match db.database.upsert_gitlab_commits(&rows) {
                 Ok(_) => Ok(GitlabCommitSyncResult {
                     ok: true,
                     synced,
+                    avatars: avatars
+                        .into_iter()
+                        .map(|(path, data_url)| GitlabProjectAvatarEntry { path, data_url })
+                        .collect(),
                     message: None,
                 }),
                 Err(error) => Ok(GitlabCommitSyncResult {
                     ok: false,
                     synced: 0,
+                    avatars: Vec::new(),
                     message: Some(error.to_string()),
                 }),
             }
@@ -250,12 +277,14 @@ pub async fn gitlab_sync_commits_for_date(
         Ok(Err(error)) => Ok(GitlabCommitSyncResult {
             ok: false,
             synced: 0,
+            avatars: Vec::new(),
             message: Some(error.to_string()),
         }),
         Err(_) => Ok(GitlabCommitSyncResult {
             ok: false,
             synced: 0,
-            message: Some(String::from("获取 GitLab 提交超时（15 秒）")),
+            avatars: Vec::new(),
+            message: Some(String::from("获取 GitLab 提交超时（30 秒）")),
         }),
     }
 }

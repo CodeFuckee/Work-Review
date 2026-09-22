@@ -18,6 +18,8 @@ pub const TOTAL_COMMIT_LIMIT: usize = 200;
 pub const COMMIT_STATS_CONCURRENCY: usize = 8;
 /// 补拉提交行数统计的总预算（秒）：超预算的提交保持无统计（概览统计按 0 计）
 pub const COMMIT_STATS_BUDGET_SECS: u64 = 10;
+/// 补拉项目头像的总预算（秒）：超预算的项目走默认图标
+pub const AVATAR_BUDGET_SECS: u64 = 8;
 /// 作者选择器最多扫描的仓库数（未配允许列表时防止全量遍历失控）
 pub const MAX_CONTRIBUTOR_PROJECTS: usize = 200;
 /// 每仓库最多拉取的贡献者条数（按提交数倒序取前 N）
@@ -65,6 +67,9 @@ pub struct GitlabProject {
     pub path_with_namespace: String,
     #[serde(default)]
     pub default_branch: Option<String>,
+    /// 项目头像 URL；未自定义头像时为 None（概览卡片优先用头像，缺失走默认图标）
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 /// 一条聚合后的提交条目（带项目与分支上下文）
@@ -455,6 +460,16 @@ pub struct GitlabFetchResult {
     pub truncated: bool,
     /// 截断前总数
     pub total: usize,
+    /// 本轮涉及的项目（路径 + 头像地址），供命令层补拉头像数据
+    pub project_avatars: Vec<GitlabProjectAvatar>,
+}
+
+/// 项目的头像信息（path + project_id + GitLab avatar_url，未自定义时为 None）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitlabProjectAvatar {
+    pub path: String,
+    pub project_id: i64,
+    pub avatar_url: Option<String>,
 }
 
 impl GitlabFetchResult {
@@ -482,6 +497,33 @@ impl GitlabFetchResult {
             entries: self.entries.clone(),
         }
     }
+}
+
+/// 按魔数判定图片 MIME（GitLab 头像端点返回 octet-stream，需自行识别）
+fn detect_image_mime(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        "image/jpeg"
+    } else if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "image/png"
+    } else if bytes.starts_with(b"GIF8") {
+        "image/gif"
+    } else if bytes.starts_with(b"RIFF") && bytes.len() > 11 && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
+        "image/x-icon"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+/// 图片字节转 data URL（webview CSP img-src 不放行远程地址，data URL 可直接渲染）
+pub fn encode_image_data_url(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    let mime = detect_image_mime(bytes);
+    format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
 }
 
 /// 把提交条目转成时间线入库行。`date` 为本机时区日期（YYYY-MM-DD）；
@@ -846,10 +888,19 @@ impl GitlabClient {
         self.enrich_commit_stats(&project_id_by_path, &mut entries)
             .await;
         let (entries, truncated) = cap_total_entries(entries);
+        let project_avatars = selected
+            .iter()
+            .map(|project| GitlabProjectAvatar {
+                path: project.path_with_namespace.clone(),
+                project_id: project.id,
+                avatar_url: project.avatar_url.clone(),
+            })
+            .collect();
         Ok(GitlabFetchResult {
             entries,
             truncated,
             total,
+            project_avatars,
         })
     }
 
@@ -906,6 +957,80 @@ impl GitlabClient {
                 }
             }
         }
+    }
+
+    /// GET /projects/:id/avatar — 项目头像字节（该端点接受 PRIVATE-TOKEN；
+    /// avatar_url 指向的 web 上传路由对令牌认证一律 401，不能直接 fetch）。
+    /// 项目未自定义头像时 GitLab 返回 404 → Ok(None)；成功时按魔数判定 MIME
+    /// 并转为 data URL（webview CSP img-src 不放行远程地址，data URL 可直接渲染）。
+    pub async fn fetch_avatar_data_url(
+        &self,
+        project_id: i64,
+    ) -> Result<Option<String>, GitlabError> {
+        let resp = self
+            .http
+            .get(self.api_url(&format!("/projects/{project_id}/avatar")))
+            .header(self.auth_header(), &self.token)
+            .send()
+            .await
+            .map_err(GitlabError::Http)?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let bytes = resp.bytes().await.map_err(GitlabError::Http)?;
+        if !status.is_success() {
+            return Err(GitlabError::Api(
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ));
+        }
+        Ok(Some(encode_image_data_url(&bytes)))
+    }
+
+    /// 并发补拉多个项目的头像 data URL（每批 8 个、总预算 8 秒）；
+    /// 无自定义头像或拉取失败的项目返回 None（调用方走默认图标）。
+    pub async fn fetch_avatar_data_urls(
+        &self,
+        projects: &[(String, i64)],
+    ) -> Vec<(String, Option<String>)> {
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(AVATAR_BUDGET_SECS);
+        let mut results: Vec<(String, Option<String>)> = projects
+            .iter()
+            .map(|(path, _)| (path.clone(), None))
+            .collect();
+        for batch in projects.chunks(COMMIT_STATS_CONCURRENCY) {
+            if tokio::time::Instant::now() >= deadline {
+                log::warn!(
+                    "项目头像补拉超预算（{}s），剩余 {} 个走默认图标",
+                    AVATAR_BUDGET_SECS,
+                    batch.len()
+                );
+                break;
+            }
+            let mut handles = Vec::with_capacity(batch.len());
+            for (_path, project_id) in batch {
+                handles.push(tokio::spawn({
+                    let client = self.clone();
+                    let project_id = *project_id;
+                    async move { client.fetch_avatar_data_url(project_id).await }
+                }));
+            }
+            for ((path, _), handle) in batch.iter().zip(handles) {
+                match handle.await {
+                    Ok(Ok(Some(data_url))) => {
+                        if let Some((_, slot)) = results.iter_mut().find(|(p, _)| p == path) {
+                            *slot = Some(data_url);
+                        }
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(e)) => log::warn!("拉取项目 {path} 头像失败: {e}"),
+                    Err(e) => log::warn!("项目头像任务异常: {e}"),
+                }
+            }
+        }
+        results
     }
 }
 
@@ -1292,16 +1417,19 @@ mod tests {
                 id: 1,
                 path_with_namespace: "Group/Web".into(),
                 default_branch: Some("main".into()),
+                avatar_url: None,
             },
             GitlabProject {
                 id: 2,
                 path_with_namespace: "group/mobile".into(),
                 default_branch: None,
+                avatar_url: None,
             },
             GitlabProject {
                 id: 3,
                 path_with_namespace: "other/service".into(),
                 default_branch: None,
+                avatar_url: None,
             },
         ];
         let all = filter_projects_by_allowlist(&projects, &[]);
@@ -1638,6 +1766,7 @@ mod tests {
             entries: vec![entry(c)],
             truncated: false,
             total: 1,
+            project_avatars: Vec::new(),
         };
         let supplement = result.to_supplement(UTC_PLUS_8, AppLocale::ZhCn);
         assert!(supplement.ai_context.is_some());

@@ -152,6 +152,11 @@
     };
   }
 
+  interface GitlabAvatarEntry {
+    path: string;
+    data_url: string | null;
+  }
+
   interface CategoryActiveRange {
     startHour: number;
     endHour: number;
@@ -290,6 +295,28 @@
   let gitlabStats: GitlabProjectStat[] = [];
   let gitlabStatsRequestId = 0;
   let gitlabSyncedDates = new Set<string>();
+  // 仓库头像（path -> data URL），随补采结果更新并落 localStorage 供下次秒出
+  const GITLAB_AVATARS_KEY = 'yue-review-gitlab-avatars';
+  let gitlabAvatars: Record<string, string> = readGitlabAvatarsCache();
+
+  function readGitlabAvatarsCache(): Record<string, string> {
+    try {
+      const raw = localStorage.getItem(GITLAB_AVATARS_KEY);
+      if (!raw) return {};
+      return JSON.parse(raw) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  }
+
+  function saveGitlabAvatarsCache(): void {
+    try {
+      localStorage.setItem(GITLAB_AVATARS_KEY, JSON.stringify(gitlabAvatars));
+    } catch {
+      // 忽略持久化失败（无痕模式等），仅影响下次启动的头像秒出
+    }
+  }
+
   $: gitlabRows = buildGitlabProjectRows(gitlabStats);
   $: gitlabTotals = sumGitlabProjectRows(gitlabRows);
   let lastCheckDate = currentTime.getDate();
@@ -1310,7 +1337,7 @@
       const cfg = await invoke<WorkGoalConfig>('get_config');
       const gitlab = cfg.gitlab;
       if (!gitlab?.report_enabled || !gitlab.url?.trim() || !gitlab.token?.trim()) return;
-      const result = await invoke<{ ok: boolean; message: string | null }>(
+      const result = await invoke<{ ok: boolean; message: string | null; avatars?: GitlabAvatarEntry[] }>(
         'gitlab_sync_commits_for_date',
         {
           url: gitlab.url,
@@ -1321,6 +1348,16 @@
         },
       );
       syncOk = result.ok;
+      if (result.avatars?.length) {
+        let changed = false;
+        for (const entry of result.avatars) {
+          if (entry.data_url && gitlabAvatars[entry.path] !== entry.data_url) {
+            gitlabAvatars[entry.path] = entry.data_url;
+            changed = true;
+          }
+        }
+        if (changed) saveGitlabAvatarsCache();
+      }
       if (!result.ok) {
         console.warn('GitLab 提交补采失败:', result.message);
       }
@@ -1974,11 +2011,15 @@
               <div class="app-usage-chart__row">
                 <span class="app-usage-chart__heading">
                   <span class="app-usage-chart__icon">
-                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" />
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" />
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" />
-                    </svg>
+                    {#if gitlabAvatars[row.project]}
+                      <img src={gitlabAvatars[row.project]} alt="" class="h-5 w-5 rounded-md object-cover" />
+                    {:else}
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" />
+                      </svg>
+                    {/if}
                   </span>
                   <span class="app-usage-chart__copy">
                     <span class="app-usage-chart__name" title={row.project}>{row.shortName}</span>
