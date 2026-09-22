@@ -150,6 +150,54 @@
       work_authors?: string[] | null;
       report_enabled?: boolean;
     };
+    file_monitor?: {
+      enabled?: boolean;
+      folders?: string[] | null;
+    };
+  }
+
+  interface FileMonitorEvent {
+    path: string;
+    event_type: string;
+    size: number | null;
+    occurred_at: number;
+    date: string;
+  }
+
+  // 事件类型徽标（文案 key 与配色）
+  const FILE_EVENT_BADGES: Record<string, { key: string; class: string }> = {
+    created: {
+      key: 'overview.fileEventCreated',
+      class: 'text-emerald-600 dark:text-emerald-400',
+    },
+    modified: {
+      key: 'overview.fileEventModified',
+      class: 'text-blue-600 dark:text-blue-400',
+    },
+    deleted: {
+      key: 'overview.fileEventDeleted',
+      class: 'text-rose-600 dark:text-rose-400',
+    },
+    renamed: {
+      key: 'overview.fileEventRenamed',
+      class: 'text-amber-600 dark:text-amber-400',
+    },
+  };
+
+  function fileEventBadge(eventType: string): { key: string; class: string } {
+    return FILE_EVENT_BADGES[eventType] ?? FILE_EVENT_BADGES.modified;
+  }
+
+  function fileEventName(path: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    const index = normalized.lastIndexOf('/');
+    return index < 0 ? normalized : normalized.slice(index + 1);
+  }
+
+  function fileEventDir(path: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    const index = normalized.lastIndexOf('/');
+    return index < 0 ? '' : normalized.slice(0, index);
   }
 
   interface GitlabAvatarEntry {
@@ -295,6 +343,12 @@
   let gitlabStats: GitlabProjectStat[] = [];
   let gitlabStatsRequestId = 0;
   let gitlabSyncedDates = new Set<string>();
+  // 文件活动（本地文件监控事件）
+  let fileMonitorConfigured = false;
+  let fileEventsTotal = 0;
+  let fileEvents: FileMonitorEvent[] = [];
+  let fileEventsRequestId = 0;
+
   // 仓库头像（path -> data URL），随补采结果更新并落 localStorage 供下次秒出
   const GITLAB_AVATARS_KEY = 'yue-review-gitlab-avatars';
   let gitlabAvatars: Record<string, string> = readGitlabAvatarsCache();
@@ -416,6 +470,16 @@
     if (gitlabConfigured) {
       void refreshGitlabStats();
       void syncTodayGitlabCommits();
+    }
+  }
+
+  // 切换日期区间时刷新文件活动
+  $: {
+    fileMonitorConfigured;
+    selectedDateFrom;
+    selectedDateTo;
+    if (fileMonitorConfigured) {
+      void refreshFileEvents();
     }
   }
 
@@ -1310,6 +1374,28 @@
     return overviewRefreshPromise;
   }
 
+  // 读取指定日期区间的文件活动（监听器持续入库，区间联动 + 定时刷新）
+  async function refreshFileEvents(): Promise<void> {
+    if (!fileMonitorConfigured) return;
+    const requestId = ++fileEventsRequestId;
+    try {
+      const stats = await invoke<{ total: number; events: FileMonitorEvent[] }>(
+        'get_file_monitor_stats',
+        {
+          dateFrom: selectedDateFrom,
+          dateTo: selectedDateTo,
+          limit: 20,
+        },
+      );
+      if (requestId === fileEventsRequestId) {
+        fileEventsTotal = stats.total;
+        fileEvents = stats.events;
+      }
+    } catch (e) {
+      console.warn('读取文件活动失败:', e);
+    }
+  }
+
   // 读取指定日期区间的 GitLab 项目统计（区间随概览日期选择联动）
   async function refreshGitlabStats(): Promise<void> {
     if (!gitlabConfigured) return;
@@ -1415,6 +1501,10 @@
         && cfg.gitlab.url?.trim()
         && cfg.gitlab.token?.trim()
       );
+      fileMonitorConfigured = !!(
+        cfg.file_monitor?.enabled
+        && (cfg.file_monitor.folders ?? []).some((folder) => folder.trim() !== '')
+      );
     } catch (e) {
       workGoalMinutes = null;
     }
@@ -1440,6 +1530,9 @@
       refreshInterval = setInterval(() => {
         if (shouldAutoRefreshOverview()) {
           loadStats();
+        }
+        if (fileMonitorConfigured) {
+          void refreshFileEvents();
         }
       }, 30000);
     }
@@ -1991,6 +2084,47 @@
     </section>
 
     <!-- GitLab 提交统计：按项目聚合提交次数与代码行数变更（配置了 GitLab 才显示），
+    <!-- 文件活动：本地文件监控事件列表（配置了文件监控才显示） -->
+    {#if fileMonitorConfigured}
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">
+        <div class="mb-3 flex items-baseline justify-between gap-3">
+          <h3 class="page-section-title !mb-0">{t('overview.fileEventsTitle')}</h3>
+          <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.fileEventsTotal', { count: fileEventsTotal })}</span>
+        </div>
+        {#if fileEvents.length === 0}
+          <div class="empty-state-compact">
+            <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+              <span class="text-xl">📁</span>
+            </div>
+            <p class="empty-state-copy">{t('overview.fileEventsEmpty')}</p>
+          </div>
+        {:else}
+          <div class="space-y-1">
+            {#each fileEvents as event (event.path + ':' + String(event.occurred_at))}
+              {@const badge = fileEventBadge(event.event_type)}
+              <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-2 py-2">
+                <span class="inline-flex min-w-[2.5rem] justify-center rounded-full border px-2 py-0.5 text-xs font-medium {badge.class}">
+                  {t(badge.key)}
+                </span>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium text-slate-700 dark:text-[#c9d1d9]" title={event.path}>
+                    {fileEventName(event.path)}
+                  </p>
+                  {#if fileEventDir(event.path)}
+                    <p class="truncate font-mono text-xs text-slate-400 dark:text-[#636c76]" title={event.path}>
+                      {fileEventDir(event.path)}
+                    </p>
+                  {/if}
+                </div>
+                <span class="whitespace-nowrap font-mono text-xs tabular-nums text-slate-500 dark:text-[#7d8590]">
+                  {formatLocalizedTime(new Date(event.occurred_at * 1000), { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {/if}
          行布局复用 app-usage-chart 同款网格（名称+次数下标 | 进度条 | 行数变更） -->
     {#if gitlabConfigured}
       <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">

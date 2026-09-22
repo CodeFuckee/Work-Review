@@ -734,6 +734,37 @@ pub struct RemoteStorageConfig {
     pub sync_app_config: bool,
 }
 
+/// 本地文件监控配置
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FileMonitorConfig {
+    /// 是否启用文件监控
+    pub enabled: bool,
+    /// 监听的工作文件夹列表（递归监听）
+    pub folders: Vec<String>,
+    /// 排除规则：目录段名或 `*` 通配文件名（如 .git、node_modules、*.log）
+    pub excludes: Vec<String>,
+}
+
+impl Default for FileMonitorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            folders: Vec::new(),
+            excludes: vec![
+                ".git".to_string(),
+                "node_modules".to_string(),
+                "target".to_string(),
+                "dist".to_string(),
+                "build".to_string(),
+                "__pycache__".to_string(),
+                "*.tmp".to_string(),
+                "~$*".to_string(),
+            ],
+        }
+    }
+}
+
 /// 私有化 GitLab 集成配置（日报补充今日提交）
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct GitlabConfig {
@@ -1306,6 +1337,9 @@ pub struct AppConfig {
     /// GitLab 私有化集成配置（日报补充今日提交）
     #[serde(default)]
     pub gitlab: GitlabConfig,
+    /// 本地文件监控配置（工作文件夹监听，概览页展示）
+    #[serde(default)]
+    pub file_monitor: FileMonitorConfig,
 }
 
 /// 配置加载结果，保留恢复状态和主备文件错误信息。
@@ -1425,6 +1459,7 @@ impl Default for AppConfig {
             remote_storage: RemoteStorageConfig::default(),
             config_synced_at: 0,
             gitlab: GitlabConfig::default(),
+            file_monitor: FileMonitorConfig::default(),
             daily_report_custom_prompt: String::new(),
             daily_report_prompt_presets: Vec::new(),
             daily_report_system_prompt_override: None,

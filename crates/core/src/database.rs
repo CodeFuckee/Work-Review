@@ -204,6 +204,18 @@ pub struct GitlabProjectStatRow {
     pub deletions: i64,
 }
 
+/// 概览页文件活动：一条文件监控事件
+#[derive(Debug, Clone, Serialize)]
+pub struct FileEventRow {
+    pub path: String,
+    /// created / modified / deleted / renamed
+    pub event_type: String,
+    pub size: Option<i64>,
+    /// UTC unix 秒
+    pub occurred_at: i64,
+    pub date: String,
+}
+
 /// 应用使用统计
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppUsage {
@@ -1056,6 +1068,24 @@ impl Database {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_gitlab_commits_date_time
              ON gitlab_commits (date, committed_at)",
+            [],
+        )?;
+
+        // === 文件监控事件（概览页「文件活动」卡片） ===
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                size INTEGER,
+                occurred_at INTEGER NOT NULL,
+                date TEXT NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_events_date_time
+             ON file_events (date, occurred_at)",
             [],
         )?;
 
@@ -2932,6 +2962,78 @@ impl Database {
             stats.push(row?);
         }
         Ok(stats)
+    }
+
+    /// 批量写入文件监控事件（防抖后的一批，按时间升序）
+    pub fn insert_file_events(&self, events: &[FileEventRow]) -> Result<usize> {
+        if events.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let tx = conn.unchecked_transaction()?;
+        for event in events {
+            tx.execute(
+                "INSERT INTO file_events (path, event_type, size, occurred_at, date)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event.path,
+                    event.event_type,
+                    event.size,
+                    event.occurred_at,
+                    event.date
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(events.len())
+    }
+
+    /// 按本地日期区间取最近的文件事件（含两端），按发生时间倒序，最多 limit 条
+    pub fn get_recent_file_events(
+        &self,
+        date_from: &str,
+        date_to: &str,
+        limit: i64,
+    ) -> Result<Vec<FileEventRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT path, event_type, size, occurred_at, date
+             FROM file_events
+             WHERE date >= ?1 AND date <= ?2
+             ORDER BY occurred_at DESC, id DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![date_from, date_to, limit], |row| {
+            Ok(FileEventRow {
+                path: row.get(0)?,
+                event_type: row.get(1)?,
+                size: row.get(2)?,
+                occurred_at: row.get(3)?,
+                date: row.get(4)?,
+            })
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+        Ok(events)
+    }
+
+    /// 按本地日期区间统计文件事件总数（含两端）
+    pub fn count_file_events(&self, date_from: &str, date_to: &str) -> Result<i64> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM file_events WHERE date >= ?1 AND date <= ?2",
+            params![date_from, date_to],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.into())
     }
 
     /// 保存每日报告
@@ -5240,7 +5342,7 @@ mod tests {
     use super::{
         apply_flex_overtime_correction, local_day_bounds, local_hour_bounds,
         local_hour_end_timestamp, safe_local_timestamp, Activity, DailyReport, Database,
-        GitlabCommitRow, HourlySummary, SemanticMemoryIndexState,
+        FileEventRow, GitlabCommitRow, HourlySummary, SemanticMemoryIndexState,
     };
     use chrono::{TimeZone, Timelike};
     use rusqlite::params;
@@ -8211,6 +8313,48 @@ mod tests {
             .get_gitlab_project_stats("2026-01-01", "2026-01-02")
             .expect("聚合失败");
         assert!(empty.is_empty(), "无提交区间应返回空列表");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn 文件事件应按日期区间查询且倒序返回() {
+        let db_path = temp_db_path("file-events");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        let event = |path: &str, occurred_at: i64, date: &str| FileEventRow {
+            path: path.to_string(),
+            event_type: "modified".to_string(),
+            size: Some(1024),
+            occurred_at,
+            date: date.to_string(),
+        };
+
+        db.insert_file_events(&[
+            event("D:/work/a.rs", 1_000, "2026-09-22"),
+            event("D:/work/b.ts", 3_000, "2026-09-22"),
+            event("D:/work/c.md", 2_000, "2026-09-22"),
+            event("D:/work/outside.log", 5_000, "2026-09-20"),
+        ])
+        .expect("写入文件事件失败");
+
+        let count = db
+            .count_file_events("2026-09-22", "2026-09-22")
+            .expect("统计失败");
+        assert_eq!(count, 3, "区间外事件不计入");
+
+        let rows = db
+            .get_recent_file_events("2026-09-22", "2026-09-22", 2)
+            .expect("查询失败");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].path, "D:/work/b.ts", "按发生时间倒序");
+        assert_eq!(rows[1].path, "D:/work/c.md");
+        assert_eq!(rows[0].size, Some(1024));
+
+        // 空区间
+        let none = db
+            .get_recent_file_events("2026-01-01", "2026-01-02", 10)
+            .expect("查询失败");
+        assert!(none.is_empty());
         let _ = std::fs::remove_file(db_path);
     }
 }

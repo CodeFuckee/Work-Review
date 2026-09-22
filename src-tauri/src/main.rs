@@ -18,6 +18,7 @@ mod commands;
 mod config_sync;
 mod dingtalk_bot;
 mod feishu_bot;
+pub mod file_monitor_runtime;
 mod idle_detector;
 mod linux_session;
 mod localhost_api;
@@ -437,6 +438,8 @@ pub struct AppState {
     pub wecom_bot_runtime: wecom_aibot::WecomBotRuntime,
     /// avatar 循环缓存的活动窗口（时间戳 + 窗口信息），供 screenshot 循环复用
     pub cached_active_window: Option<(std::time::Instant, monitor::ActiveWindow)>,
+    /// 本地文件监控运行句柄（设置启用时为 Some）
+    pub file_monitor: Option<file_monitor_runtime::FileMonitorHandle>,
 }
 
 #[derive(Default)]
@@ -4312,6 +4315,7 @@ async fn main() {
         telegram_bot_runtime: telegram_bot::TelegramBotRuntime::default(),
         wecom_bot_runtime: wecom_aibot::WecomBotRuntime::default(),
         cached_active_window: None,
+        file_monitor: None,
     }));
     let app_lifecycle_state = Arc::new(Mutex::new(AppLifecycleState::default()));
 
@@ -4410,6 +4414,22 @@ async fn main() {
             } else {
                 let _ = window.show();
                 let _ = app.emit("main-window-visibility", true);
+            }
+
+            // 启动文件监控（配置已启用且配置了工作文件夹时）
+            {
+                let state_arc = state.inner().clone();
+                let mut state_guard = state_arc.lock().unwrap_or_else(|e| e.into_inner());
+                let fm_config = state_guard.config.file_monitor.clone();
+                let running = crate::file_monitor_runtime::apply_config_locked(
+                    &mut state_guard,
+                    &state_arc,
+                    &fm_config,
+                );
+                log::info!(
+                    "文件监控启动: running={running} folders={:?}",
+                    fm_config.folders
+                );
             }
 
             let state_clone = state.inner().clone();
@@ -4696,6 +4716,8 @@ async fn main() {
             commands::gitlab_sync_commits_for_date,
             commands::get_gitlab_commits_for_date,
             commands::get_gitlab_project_stats,
+            commands::get_file_monitor_stats,
+            commands::file_monitor_status,
             commands::generate_telegram_bot_bind_code,
             commands::generate_text_with_model,
             commands::reveal_localhost_api_token,

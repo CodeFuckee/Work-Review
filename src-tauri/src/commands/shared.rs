@@ -321,6 +321,7 @@ pub(crate) fn persist_app_config(
         previous_lightweight_mode,
         avatar_state,
     ) = {
+        let state_arc = state.clone();
         let mut state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         let previous_config = state.config.clone();
         let previous_embedding_config_fingerprint =
@@ -344,6 +345,12 @@ pub(crate) fn persist_app_config(
         state.config = config.clone();
         state.storage_manager.update_config(config.storage.clone());
         state.screenshot_service.update_config(&config.storage);
+        // 文件监控：按新配置热重载监听器（未启用时停掉）
+        crate::file_monitor_runtime::apply_config_locked(
+            &mut state,
+            &state_arc,
+            &config.file_monitor,
+        );
         state.privacy_filter.update_config(&config.privacy);
         state.avatar_state = crate::avatar_engine::apply_avatar_visual_settings(
             state.avatar_state.clone(),
