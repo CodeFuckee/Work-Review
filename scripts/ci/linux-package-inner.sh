@@ -40,4 +40,7 @@ fetch_tool "$CACHE_DIR/linuxdeploy-plugin-appimage-$TAURI_ARCH.AppImage"   "http
 fetch_tool "$CACHE_DIR/linuxdeploy-plugin-gtk.sh"   "https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
 fetch_tool "$CACHE_DIR/linuxdeploy-plugin-gstreamer.sh"   "https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gstreamer/master/linuxdeploy-plugin-gstreamer.sh"
 
+# 容器无 /dev/fuse，AppImage 形态的 linuxdeploy 及其插件必须走解包运行，
+# 否则 tauri 打包器在 AppImage 步骤报 "failed to run linuxdeploy"（v1.1.86 根因）
+export APPIMAGE_EXTRACT_AND_RUN=1
 npm run tauri build -- $@  # 有意不加引号：TAURI_BUILD_ARGS 需按空格拆分为多个参数
