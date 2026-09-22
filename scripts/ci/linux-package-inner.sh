@@ -31,7 +31,9 @@ fetch_tool() {
       looks_valid=$(head -c 4 "$dest.part" | od -A n -t x1)
       if echo "$looks_valid" | grep -q "7f 45 4c 46\|23 21"; then
         mv "$dest.part" "$dest"
-        case "$dest" in *.AppImage) chmod +x "$dest" ;; esac
+        # 全部工具（含 .sh 插件脚本与 AppRun）都必须可执行：
+        # linuxdeploy 发现插件时要求可执行位，否则报 Could not find plugin
+        chmod +x "$dest"
         echo "已缓存打包工具: $dest"
         return 0
       fi
