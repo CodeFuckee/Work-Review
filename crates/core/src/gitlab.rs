@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 pub const PER_PROJECT_COMMIT_LIMIT: usize = 20;
 /// 全局（全部项目合计）最多展示的提交数
 pub const TOTAL_COMMIT_LIMIT: usize = 200;
+/// 并发补拉提交行数统计的批量大小（详情接口逐条取，批间串行）
+pub const COMMIT_STATS_CONCURRENCY: usize = 8;
+/// 补拉提交行数统计的总预算（秒）：超预算的提交保持无统计（概览统计按 0 计）
+pub const COMMIT_STATS_BUDGET_SECS: u64 = 10;
 /// 作者选择器最多扫描的仓库数（未配允许列表时防止全量遍历失控）
 pub const MAX_CONTRIBUTOR_PROJECTS: usize = 200;
 /// 每仓库最多拉取的贡献者条数（按提交数倒序取前 N）
@@ -654,6 +658,33 @@ impl GitlabClient {
         serde_json::from_slice(&bytes).map_err(GitlabError::Json)
     }
 
+    /// GET /projects/:id/repository/commits/:sha — 单条提交详情。
+    /// GitLab 的列表接口不返回 stats（stats=true 被忽略），行数统计必须逐条取详情；
+    /// merge/空提交等可能没有 stats，解析为 None。
+    pub async fn fetch_commit_stats(
+        &self,
+        project_id: i64,
+        sha: &str,
+    ) -> Result<Option<GitlabCommitStats>, GitlabError> {
+        let resp = self
+            .http
+            .get(self.api_url(&format!("/projects/{project_id}/repository/commits/{sha}")))
+            .header(self.auth_header(), &self.token)
+            .send()
+            .await
+            .map_err(GitlabError::Http)?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(GitlabError::Http)?;
+        if !status.is_success() {
+            return Err(GitlabError::Api(
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ));
+        }
+        let detail: GitlabCommit = serde_json::from_slice(&bytes).map_err(GitlabError::Json)?;
+        Ok(detail.stats)
+    }
+
     /// GET /projects/:id/repository/contributors — 默认分支贡献者
     /// （与日报统计口径一致：日报 commits 接口同样只看默认分支）。
     /// 按提交数倒序取前 `PER_PROJECT_CONTRIBUTOR_LIMIT` 条。
@@ -764,7 +795,11 @@ impl GitlabClient {
         let until_dt: DateTime<Utc> = Utc::now();
 
         let mut entries: Vec<GitlabCommitEntry> = Vec::new();
-        for project in selected {
+        let project_id_by_path: std::collections::HashMap<String, i64> = selected
+            .iter()
+            .map(|project| (project.path_with_namespace.clone(), project.id))
+            .collect();
+        for project in &selected {
             let commits = match self
                 .fetch_project_commits(
                     project.id,
@@ -807,12 +842,70 @@ impl GitlabClient {
             }
         }
         let total = entries.len();
+        // GitLab 列表接口不返回 stats，逐条补拉详情（有总预算，超时保持无统计）
+        self.enrich_commit_stats(&project_id_by_path, &mut entries)
+            .await;
         let (entries, truncated) = cap_total_entries(entries);
         Ok(GitlabFetchResult {
             entries,
             truncated,
             total,
         })
+    }
+
+    /// 并发补拉提交详情的行数统计（列表接口不返回 stats，只有详情接口有）。
+    /// 每批 `COMMIT_STATS_CONCURRENCY` 条；总预算 `COMMIT_STATS_BUDGET_SECS` 秒，
+    /// 超预算或单条失败的提交保持 None（统计按 0 计），不影响其余数据。
+    async fn enrich_commit_stats(
+        &self,
+        project_id_by_path: &std::collections::HashMap<String, i64>,
+        entries: &mut [GitlabCommitEntry],
+    ) {
+        let pending: Vec<(usize, i64, String)> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.commit.stats.is_none())
+            .filter_map(|(index, entry)| {
+                project_id_by_path
+                    .get(&entry.project)
+                    .map(|project_id| (index, *project_id, entry.commit.id.clone()))
+            })
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(COMMIT_STATS_BUDGET_SECS);
+        for batch in pending.chunks(COMMIT_STATS_CONCURRENCY) {
+            if tokio::time::Instant::now() >= deadline {
+                log::warn!(
+                    "提交行数统计补拉超预算（{}s），剩余 {} 条按无统计处理",
+                    COMMIT_STATS_BUDGET_SECS,
+                    batch.len()
+                );
+                break;
+            }
+            let mut handles = Vec::with_capacity(batch.len());
+            for (_, project_id, sha) in batch {
+                handles.push(tokio::spawn({
+                    let client = self.clone();
+                    let project_id = *project_id;
+                    let sha = sha.clone();
+                    async move { client.fetch_commit_stats(project_id, &sha).await }
+                }));
+            }
+            for ((index, _, sha), handle) in batch.iter().zip(handles) {
+                match handle.await {
+                    Ok(Ok(Some(stats))) => {
+                        entries[*index].commit.stats = Some(stats);
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(e)) => log::warn!("拉取提交 {sha} 行数统计失败: {e}"),
+                    Err(e) => log::warn!("提交行数统计任务异常: {e}"),
+                }
+            }
+        }
     }
 }
 

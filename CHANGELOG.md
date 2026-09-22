@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **GitLab 提交行数统计恒为空（P2，服务集成）**：`gitlab_sync_commits_for_date` 拉取提交列表时虽带 `stats=true`，但 GitLab v4 的 commits **列表**接口不返回 stats（该参数被忽略，仅单条详情接口 `/commits/:sha` 返回）——入库的 additions/deletions 全为 NULL，概览统计恒为 0、时间线「+x/-y」从不显示。修复：`fetch_today_commits` 拉完列表后按项目并发（8/批）补拉每条提交详情，总预算 10 秒，超预算或失败的提交保持无统计不影响其余数据（`fetch_commit_stats` 新增；upsert 按 sha 幂等覆盖，重同步即回填）。
 - **客户端登录/注册恒报「账号或密码错误」（匿名请求租户过滤器，P1，服务端）**：Admin.Core `ClientAuthService` 的登录/注册查询受 FreeSql 全局租户过滤器影响——匿名请求没有租户上下文，过滤器生成 `TenantId IS NULL`，任何用户都查不到（注册时的默认租户查询、「OA只读」角色/部门查询同受影响，导致注册的用户租户回退为 1 且角色/部门绑定全部落空）。服务端 ClientAuthService 全部查询补 `DisableGlobalFilter(FilterNames.Tenant)`（fork commit 4251f0e9），部署后重新注册测试账号验证登录通过。
 - **第八轮全量代码评审修复（行为保持，Rust 批次 + CI/构建批次 + TS 去重批次，共 24 项；另有 14 条涉行为语义列待确认、1 条 .svelte 待过目，见 `CODE_REVIEW_FINDINGS.md` 第八轮）**：
   - **敏感信息过滤正则中文邻接整条漏配（P2，隐私）**：`crates/core/privacy.rs` 四个敏感模式（银行卡/手机号/身份证/邮箱）的 `\b` 是 Unicode 词边界，CJK 汉字属词字符——"手机号13812345678请查收"这类中文紧邻形态整条漏配；而第七轮把采集/桌宠循环日志统一改走的 `filter_text` 正是本函数，脱敏实际失效。改与 ocr.rs 已修款一致：去 `\b` + 匹配后 ASCII 邻位手动校验，命中面只增不减，配中文邻接回归测试。
