@@ -35,6 +35,11 @@
     getSemanticCategoryColor,
   } from './overviewDomainPresentation.ts';
   import { buildCategoryCompositionSummary } from './overviewCategoryPresentation.ts';
+  import {
+    buildGitlabProjectRows,
+    sumGitlabProjectRows,
+    type GitlabProjectStat,
+  } from './overviewGitlabPresentation.ts';
 
   interface AppUsage {
     app_name: string;
@@ -132,6 +137,13 @@
 
   interface WorkGoalConfig {
     daily_work_goal_minutes?: number | null;
+    gitlab?: {
+      url?: string | null;
+      token?: string | null;
+      project_filter?: string[] | null;
+      work_authors?: string[] | null;
+      report_enabled?: boolean;
+    };
   }
 
   interface CategoryActiveRange {
@@ -267,6 +279,13 @@
   let overviewRefreshPromise: Promise<void> | null = null;
   let overviewRefreshKey = '';
   let overviewRequestId = 0;
+  // GitLab 提交统计（按项目聚合）：配置了 GitLab 才显示；今天每次会话后台补采一次
+  let gitlabConfigured = false;
+  let gitlabStats: GitlabProjectStat[] = [];
+  let gitlabStatsRequestId = 0;
+  let gitlabSyncedDates = new Set<string>();
+  $: gitlabRows = buildGitlabProjectRows(gitlabStats);
+  $: gitlabTotals = sumGitlabProjectRows(gitlabRows);
   let lastCheckDate = currentTime.getDate();
   let appUsageViewMode: AppUsageViewMode = 'row';
   let domainUsageExpanded = false;
@@ -355,6 +374,17 @@
   }
   // 切换模式/日期时刷新按天投入
   $: { overviewMode; selectedDateFrom; selectedDateTo; loadRangeDailyTotals(); }
+
+  // 切换日期区间时刷新 GitLab 项目统计；配置就绪后顺带触发今天的后台补采
+  $: {
+    gitlabConfigured;
+    selectedDateFrom;
+    selectedDateTo;
+    if (gitlabConfigured) {
+      void refreshGitlabStats();
+      void syncTodayGitlabCommits();
+    }
+  }
 
   // today 模式并行拉取「上周同日」基线；绕过 overview 缓存
   // （cache.setOverview 只保存一份"今天"快照，写入 date 模式数据会互相污染），
@@ -1247,6 +1277,55 @@
     return overviewRefreshPromise;
   }
 
+  // 读取指定日期区间的 GitLab 项目统计（区间随概览日期选择联动）
+  async function refreshGitlabStats(): Promise<void> {
+    if (!gitlabConfigured) return;
+    const requestId = ++gitlabStatsRequestId;
+    try {
+      const rows = await invoke<GitlabProjectStat[]>('get_gitlab_project_stats', {
+        dateFrom: selectedDateFrom,
+        dateTo: selectedDateTo,
+      });
+      if (requestId === gitlabStatsRequestId) {
+        gitlabStats = rows;
+      }
+    } catch (e) {
+      console.warn('读取 GitLab 提交统计失败:', e);
+    }
+  }
+
+  // 今天每次会话后台补采一次（口径与时间线页一致），完成后刷新统计
+  async function syncTodayGitlabCommits(): Promise<void> {
+    const today = getLocalDateString();
+    if (gitlabSyncedDates.has(today)) return;
+    gitlabSyncedDates.add(today);
+    let syncOk = false;
+    try {
+      const cfg = await invoke<WorkGoalConfig>('get_config');
+      const gitlab = cfg.gitlab;
+      if (!gitlab?.report_enabled || !gitlab.url?.trim() || !gitlab.token?.trim()) return;
+      const result = await invoke<{ ok: boolean; message: string | null }>(
+        'gitlab_sync_commits_for_date',
+        {
+          url: gitlab.url,
+          token: gitlab.token,
+          date: today,
+          projectFilter: gitlab.project_filter ?? [],
+          workAuthors: gitlab.work_authors ?? [],
+        },
+      );
+      syncOk = result.ok;
+      if (!result.ok) {
+        console.warn('GitLab 提交补采失败:', result.message);
+      }
+    } catch (e) {
+      console.warn('GitLab 提交补采失败:', e);
+    }
+    if (syncOk) {
+      void refreshGitlabStats();
+    }
+  }
+
   async function loadStats(forceRefresh = false): Promise<void> {
     // today 模式并行补齐「上周同日」基线（有同日期基线时为空操作）
     ensureLastWeekBaseline();
@@ -1288,6 +1367,11 @@
     try {
       const cfg = await invoke<WorkGoalConfig>('get_config');
       workGoalMinutes = cfg.daily_work_goal_minutes ?? null;
+      gitlabConfigured = !!(
+        cfg.gitlab?.report_enabled
+        && cfg.gitlab.url?.trim()
+        && cfg.gitlab.token?.trim()
+      );
     } catch (e) {
       workGoalMinutes = null;
     }
@@ -1862,6 +1946,49 @@
         </div>
       {/if}
     </section>
+
+    <!-- GitLab 提交统计：按项目聚合提交次数与代码行数变更（配置了 GitLab 才显示） -->
+    {#if gitlabConfigured}
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">
+        <div class="mb-3 flex items-baseline justify-between gap-3">
+          <h3 class="page-section-title !mb-0">{t('overview.gitlabTitle')}</h3>
+          <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.gitlabByProject')}</span>
+        </div>
+        {#if gitlabRows.length === 0}
+          <div class="empty-state-compact">
+            <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+              <span class="text-xl">🦊</span>
+            </div>
+            <p class="empty-state-copy">{t('overview.gitlabNoCommits')}</p>
+          </div>
+        {:else}
+          <div class="space-y-1">
+            {#each gitlabRows as row (row.project)}
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-2 py-2.5">
+                <p class="truncate font-mono text-sm text-slate-700 dark:text-[#c9d1d9]" title={row.project}>{row.shortName}</p>
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600 dark:bg-[#21262d] dark:text-[#8b949e]">
+                    {t('overview.gitlabCommitsCount', { count: row.commits })}
+                  </span>
+                  <span class="font-mono font-medium text-emerald-600 dark:text-emerald-400" title={t('overview.gitlabLinesAdded')}>+{row.additions.toLocaleString()}</span>
+                  <span class="font-mono font-medium text-rose-500 dark:text-rose-400" title={t('overview.gitlabLinesDeleted')}>−{row.deletions.toLocaleString()}</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+          <div class="mt-2 flex items-center justify-between gap-3 border-t border-slate-200 px-2 pt-2.5 text-xs dark:border-[#30363d]">
+            <span class="font-medium text-slate-600 dark:text-[#8b949e]">{t('overview.gitlabTotal')}</span>
+            <div class="flex items-center gap-2">
+              <span class="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600 dark:bg-[#21262d] dark:text-[#8b949e]">
+                {t('overview.gitlabCommitsCount', { count: gitlabTotals.commits })}
+              </span>
+              <span class="font-mono font-medium text-emerald-600 dark:text-emerald-400">+{gitlabTotals.additions.toLocaleString()}</span>
+              <span class="font-mono font-medium text-rose-500 dark:text-rose-400">−{gitlabTotals.deletions.toLocaleString()}</span>
+            </div>
+          </div>
+        {/if}
+      </section>
+    {/if}
   </div>
   </div>
 </div>

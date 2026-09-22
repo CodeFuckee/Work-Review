@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  buildGitlabProjectRows,
+  gitlabProjectShortName,
+  sumGitlabProjectRows,
+} from './overviewGitlabPresentation.ts';
+
+test('gitlabProjectShortName 取路径末段，无分隔符时原样返回', () => {
+  assert.equal(gitlabProjectShortName('group/alpha'), 'alpha');
+  assert.equal(gitlabProjectShortName('a/b/c/depth'), 'depth');
+  assert.equal(gitlabProjectShortName('plain-repo'), 'plain-repo');
+  assert.equal(gitlabProjectShortName('  spaced  '), 'spaced');
+  assert.equal(gitlabProjectShortName('trailing/'), 'trailing');
+});
+
+test('buildGitlabProjectRows 保留输入顺序并补全展示字段', () => {
+  const rows = buildGitlabProjectRows([
+    { project: 'group/alpha', commits: 3, additions: 120, deletions: 30 },
+    { project: 'group/beta', commits: 1, additions: 0, deletions: 0 },
+  ]);
+  assert.deepEqual(
+    rows.map((row) => [row.shortName, row.commits, row.additions, row.deletions]),
+    [
+      ['alpha', 3, 120, 30],
+      ['beta', 1, 0, 0],
+    ],
+  );
+  assert.equal(rows[0].project, 'group/alpha', '完整路径应保留供 tooltip');
+});
+
+test('sumGitlabProjectRows 汇总提交次数与行数变更', () => {
+  const totals = sumGitlabProjectRows([
+    { project: 'a', shortName: 'a', commits: 3, additions: 120, deletions: 30 },
+    { project: 'b', shortName: 'b', commits: 2, additions: 7, deletions: 90 },
+  ]);
+  assert.deepEqual(totals, { commits: 5, additions: 127, deletions: 120 });
+  assert.deepEqual(sumGitlabProjectRows([]), { commits: 0, additions: 0, deletions: 0 });
+});

@@ -4695,6 +4695,7 @@ async fn main() {
             commands::gitlab_list_authors,
             commands::gitlab_sync_commits_for_date,
             commands::get_gitlab_commits_for_date,
+            commands::get_gitlab_project_stats,
             commands::generate_telegram_bot_bind_code,
             commands::generate_text_with_model,
             commands::reveal_localhost_api_token,

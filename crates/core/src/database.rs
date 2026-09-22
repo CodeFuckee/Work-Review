@@ -195,6 +195,15 @@ fn default_report_locale() -> String {
     "zh-CN".to_string()
 }
 
+/// 概览页 GitLab 提交统计：按项目聚合的提交次数与代码行数变更。
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabProjectStatRow {
+    pub project: String,
+    pub commits: i64,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
 /// 应用使用统计
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppUsage {
@@ -2889,6 +2898,42 @@ impl Database {
         Ok(commits)
     }
 
+    /// 按本地日期区间（YYYY-MM-DD，含两端）聚合 GitLab 提交：
+    /// 每个项目一行（提交次数、新增/删除行数合计），提交次数倒序、项目路径升序。
+    /// additions/deletions 为 NULL（API 未返回统计）的提交按 0 计入。
+    pub fn get_gitlab_project_stats(
+        &self,
+        date_from: &str,
+        date_to: &str,
+    ) -> Result<Vec<GitlabProjectStatRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT project,
+                    COUNT(*) AS commits,
+                    COALESCE(SUM(additions), 0) AS additions,
+                    COALESCE(SUM(deletions), 0) AS deletions
+             FROM gitlab_commits
+             WHERE date >= ?1 AND date <= ?2
+             GROUP BY project
+             ORDER BY commits DESC, project ASC",
+        )?;
+        let rows = stmt.query_map(params![date_from, date_to], |row| {
+            Ok(GitlabProjectStatRow {
+                project: row.get(0)?,
+                commits: row.get(1)?,
+                additions: row.get(2)?,
+                deletions: row.get(3)?,
+            })
+        })?;
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push(row?);
+        }
+        Ok(stats)
+    }
+
     /// 保存每日报告
     pub fn save_report(&self, report: &DailyReport) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| {
@@ -5195,7 +5240,7 @@ mod tests {
     use super::{
         apply_flex_overtime_correction, local_day_bounds, local_hour_bounds,
         local_hour_end_timestamp, safe_local_timestamp, Activity, DailyReport, Database,
-        HourlySummary, SemanticMemoryIndexState,
+        GitlabCommitRow, HourlySummary, SemanticMemoryIndexState,
     };
     use chrono::{TimeZone, Timelike};
     use rusqlite::params;
@@ -8098,6 +8143,74 @@ mod tests {
         assert_eq!(current.status, "ready");
         assert!(!current.rebuild_required);
         assert_eq!(current.total_activities, 1);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn gitlab项目统计应按区间聚合并处理空行数统计() {
+        let db_path = temp_db_path("gitlab-project-stats");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        let row = |sha: &str,
+                   date: &str,
+                   project: &str,
+                   additions: Option<i64>,
+                   deletions: Option<i64>| GitlabCommitRow {
+            sha: sha.to_string(),
+            date: date.to_string(),
+            committed_at: 1_758_000_000,
+            project: project.to_string(),
+            branch: "main".to_string(),
+            short_id: sha[..8].to_string(),
+            title: "commit".to_string(),
+            additions,
+            deletions,
+            author_name: "a".to_string(),
+            author_email: "a@example.com".to_string(),
+        };
+
+        db.upsert_gitlab_commits(&[
+            row(
+                "aaaaaaaa1",
+                "2026-09-21",
+                "group/alpha",
+                Some(120),
+                Some(30),
+            ),
+            row("bbbbbbbb2", "2026-09-21", "group/alpha", Some(10), Some(5)),
+            row("cccccccc3", "2026-09-21", "group/beta", Some(7), Some(90)),
+            row("dddddddd4", "2026-09-22", "group/beta", None, None),
+            row(
+                "eeeeeeee5",
+                "2026-09-19",
+                "group/out-of-range",
+                Some(999),
+                Some(999),
+            ),
+        ])
+        .expect("写入提交失败");
+
+        let stats = db
+            .get_gitlab_project_stats("2026-09-21", "2026-09-22")
+            .expect("聚合失败");
+
+        assert_eq!(stats.len(), 2, "区间外项目不应计入");
+        // 提交次数倒序；alpha 2 次提交在前
+        assert_eq!(stats[0].project, "group/alpha");
+        assert_eq!(stats[0].commits, 2);
+        assert_eq!(stats[0].additions, 130);
+        assert_eq!(stats[0].deletions, 35);
+        assert_eq!(stats[1].project, "group/beta");
+        assert_eq!(stats[1].commits, 2);
+        // NULL 统计按 0 计入
+        assert_eq!(stats[1].additions, 7);
+        assert_eq!(stats[1].deletions, 90);
+
+        // 空区间返回空列表
+        let empty = db
+            .get_gitlab_project_stats("2026-01-01", "2026-01-02")
+            .expect("聚合失败");
+        assert!(empty.is_empty(), "无提交区间应返回空列表");
         let _ = std::fs::remove_file(db_path);
     }
 }

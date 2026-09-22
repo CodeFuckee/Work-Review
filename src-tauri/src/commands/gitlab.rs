@@ -272,6 +272,20 @@ pub fn get_gitlab_commits_for_date(
         .map_err(|e| e.to_string())
 }
 
+/// 按本地日期区间（含两端）聚合已入库的 GitLab 提交：每项目一行
+/// （提交次数、新增/删除行数合计，提交次数倒序），概览页统计卡片用。
+#[tauri::command]
+pub fn get_gitlab_project_stats(
+    date_from: String,
+    date_to: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<work_review_core::database::GitlabProjectStatRow>, String> {
+    let db = state.lock().map_err(|e| e.to_string())?;
+    db.database
+        .get_gitlab_project_stats(&date_from, &date_to)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
