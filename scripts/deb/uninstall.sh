@@ -12,7 +12,8 @@
 set -euo pipefail
 
 EXT_DIR="$HOME/.local/share/gnome-shell/extensions/focused-window-dbus@flexagoon.com"
-DATA_DIR="$HOME/.local/share/work-review"
+DATA_DIR="$HOME/.local/share/yue-review"
+LEGACY_DATA_DIR="$HOME/.local/share/work-review"
 
 PURGE=0
 DRY=0
@@ -39,27 +40,29 @@ do_rm() {
 }
 
 # ---- 0. stop running processes ------------------------------------------
-log "0/4 stop running Work_Review processes"
-if pgrep -x "Work_Review" >/dev/null; then
-    if [ "$DRY" -eq 1 ]; then log "  would: pkill -x Work_Review"
+log "0/4 stop running Work_Review/Yue_Review processes"
+# 双名探测：旧版二进制 Work_Review，改名后 Yue_Review
+for proc in Work_Review Yue_Review; do
+if pgrep -x "$proc" >/dev/null; then
+    if [ "$DRY" -eq 1 ]; then log "  would: pkill -x $proc"
     else
-        pkill -x "Work_Review" || true
+        pkill -x "$proc" || true
         sleep 1
-        pkill -9 -x "Work_Review" 2>/dev/null || true
+        pkill -9 -x "$proc" 2>/dev/null || true
         log "  stopped"
     fi
-else
-    log "  not running"
 fi
+done
 
 # ---- 1. apt package ------------------------------------------------------
-log "1/4 apt package work-review"
-if dpkg -s work-review >/dev/null 2>&1; then
+log "1/4 apt packages (yue-review / legacy work-review)"
+if dpkg -s work-review >/dev/null 2>&1 || dpkg -s yue-review >/dev/null 2>&1; then
     if [ "$DRY" -eq 1 ]; then
-        log "  would: sudo apt-get remove -y work-review"
+        log "  would: sudo apt-get remove -y (installed: yue-review and/or work-review)"
     else
         log "  sudo apt remove (may prompt for password)"
-        sudo apt-get remove -y work-review
+        dpkg -s yue-review >/dev/null 2>&1 && sudo apt-get remove -y yue-review || true
+        dpkg -s work-review >/dev/null 2>&1 && sudo apt-get remove -y work-review || true
     fi
 else
     log "  not installed"

@@ -1,7 +1,8 @@
 #!/bin/bash
-# Full-reset installer: remove every trace of a previous Work Review install
-# (AppImage-based, deb-based, or both), then cleanly reinstall via the official
-# .deb. User data (~/.local/share/work-review/) is preserved by default.
+# Full-reset installer: remove every trace of a previous install (Work Review
+# 旧名 / Yue Review 新名; AppImage-based, deb-based, or both), then cleanly
+# reinstall via the official .deb. User data (~/.local/share/yue-review/,
+# legacy ~/.local/share/work-review/) is preserved by default.
 #
 # Usage:
 #   bash scripts/deb/reinstall.sh                 # full wipe + reinstall, user data kept
@@ -10,7 +11,8 @@
 #   WR_DEB=/path/to/foo.deb bash .../reinstall.sh     # use a specific local .deb
 #   WR_DEB_URL=https://.../foo.deb bash .../reinstall.sh   # use a specific URL
 #
-# Local-deb lookup: only scans $PWD for Work_Review_*.deb (any version).
+# Local-deb lookup: only scans $PWD for Yue_Review_*.deb / Yue-Review_*.deb
+# (any version; legacy Work_Review_*.deb still matched).
 # If nothing is found and no env override is given, the latest release is
 # resolved from the GitHub API.
 #
@@ -18,7 +20,8 @@ set -euo pipefail
 
 EXPLICIT_URL="${WR_DEB_URL:-}"
 EXT_DIR="$HOME/.local/share/gnome-shell/extensions/focused-window-dbus@flexagoon.com"
-DATA_DIR="$HOME/.local/share/work-review"
+DATA_DIR="$HOME/.local/share/yue-review"
+LEGACY_DATA_DIR="$HOME/.local/share/work-review"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DRY=0
@@ -81,20 +84,31 @@ do_rm() {
 log "phase 1/5: detect existing install state"
 
 HAS_DEB=0
-dpkg -s work-review >/dev/null 2>&1 && HAS_DEB=1
+DEB_PKGS=()
+# 新 productName "Yue-Review" 的 deb 包名为 yue-review（Debian 强制小写）；
+# 旧版安装的包名是 work-review，双探测保证旧装升级也能被识别并移除
+for pkg in yue-review work-review; do
+    if dpkg -s "$pkg" >/dev/null 2>&1; then
+        HAS_DEB=1
+        DEB_PKGS+=("$pkg")
+    fi
+done
 
 APPIMAGE_HITS=()
 shopt -s nullglob
-for ai in "$HOME/Applications"/Work_Review_*.AppImage; do
+for ai in "$HOME/Applications"/Yue_Review_*.AppImage \
+          "$HOME/Applications"/Yue-Review_*.AppImage \
+          "$HOME/Applications"/Work_Review_*.AppImage; do
     APPIMAGE_HITS+=("$ai")
 done
 shopt -u nullglob
 
 HAS_USER_DESKTOP=0
 [ -f "$HOME/.local/share/applications/work-review.desktop" ] && HAS_USER_DESKTOP=1
+[ -f "$HOME/.local/share/applications/yue-review.desktop" ] && HAS_USER_DESKTOP=1
 
 HAS_SHIMS=0
-for s in gdbus gnome-screenshot grim spectacle tesseract work-review; do
+for s in gdbus gnome-screenshot grim spectacle tesseract work-review yue-review; do
     if [ -f "$HOME/bin/$s" ] && grep -q "AppImage.*LD_LIBRARY_PATH\|Launcher for Work Review" "$HOME/bin/$s" 2>/dev/null; then
         HAS_SHIMS=1; break
     fi
@@ -104,7 +118,7 @@ HAS_EXT=0
 [ -d "$EXT_DIR" ] && HAS_EXT=1
 
 HAS_RUNNING=0
-pgrep -f "Work_Review" >/dev/null 2>&1 && HAS_RUNNING=1
+pgrep -f "Work_Review|Yue_Review" >/dev/null 2>&1 && HAS_RUNNING=1
 
 log "  .deb installed        : $([ $HAS_DEB -eq 1 ] && echo yes || echo no)"
 log "  AppImage files        : ${#APPIMAGE_HITS[@]} found"
@@ -113,7 +127,7 @@ log "  user .desktop entry   : $([ $HAS_USER_DESKTOP -eq 1 ] && echo yes || echo
 log "  AppImage shims in ~/bin: $([ $HAS_SHIMS -eq 1 ] && echo yes || echo no)"
 log "  GNOME extension       : $([ $HAS_EXT -eq 1 ] && echo yes || echo no)"
 log "  currently running     : $([ $HAS_RUNNING -eq 1 ] && echo yes || echo no)"
-log "  user data (kept)      : $([ -d "$DATA_DIR" ] && du -sh "$DATA_DIR" 2>/dev/null | cut -f1 || echo none)"
+log "  user data (kept)      : $(du -sh "$DATA_DIR" "$LEGACY_DATA_DIR" 2>/dev/null | cut -f1 | tr '\n' ' ' || echo none)"
 
 # =========================================================================
 # PHASE 2 — stop and fully remove old install(s)
@@ -121,16 +135,18 @@ log "  user data (kept)      : $([ -d "$DATA_DIR" ] && du -sh "$DATA_DIR" 2>/dev
 log "phase 2/5: remove old install(s) [user data preserved]"
 
 if [ "$HAS_RUNNING" -eq 1 ]; then
-    log "  stopping running Work_Review processes"
-    run "pkill -f Work_Review || true"
+    log "  stopping running Work_Review/Yue_Review processes"
+    run "pkill -f 'Work_Review|Yue_Review' || true"
     run "sleep 1"
-    run "pkill -9 -f Work_Review 2>/dev/null || true"
+    run "pkill -9 -f 'Work_Review|Yue_Review' 2>/dev/null || true"
 fi
 
 # 2a. apt .deb
 if [ "$HAS_DEB" -eq 1 ]; then
-    log "  sudo apt remove work-review"
-    run "sudo apt-get remove -y work-review"
+    log "  sudo apt remove: ${DEB_PKGS[*]}"
+    for pkg in "${DEB_PKGS[@]}"; do
+        run "sudo apt-get remove -y $pkg"
+    done
 fi
 
 # 2b. AppImage files
@@ -142,8 +158,10 @@ done
 # 2c. user-level desktop entry, icon, shims, launcher (the AppImage scheme)
 log "  removing user-scope AppImage-scheme artefacts"
 do_rm "$HOME/.local/share/applications/work-review.desktop"
+do_rm "$HOME/.local/share/applications/yue-review.desktop"
 do_rm "$HOME/.local/share/icons/hicolor/256x256/apps/Work_Review.png"
-for f in work-review gdbus gnome-screenshot grim spectacle tesseract; do
+do_rm "$HOME/.local/share/icons/hicolor/256x256/apps/Yue_Review.png"
+for f in work-review yue-review gdbus gnome-screenshot grim spectacle tesseract; do
     # Only nuke our shims, not random user scripts that happen to share names
     if [ -f "$HOME/bin/$f" ] && grep -qE "AppImage|Launcher for Work Review|bundled LD_LIBRARY_PATH" "$HOME/bin/$f" 2>/dev/null; then
         do_rm "$HOME/bin/$f"
@@ -155,10 +173,11 @@ done
 
 # 2d. Optional user-data purge
 if [ "$PURGE_DATA" -eq 1 ]; then
-    log "  --purge-data: removing $DATA_DIR"
+    log "  --purge-data: removing $DATA_DIR (and legacy $LEGACY_DATA_DIR if present)"
     do_rm "$DATA_DIR"
+    do_rm "$LEGACY_DATA_DIR"
 else
-    log "  preserving user data at $DATA_DIR"
+    log "  preserving user data at $DATA_DIR (legacy: $LEGACY_DATA_DIR)"
 fi
 
 # 2e. Refresh caches so stale .desktop / icons disappear from Activities
@@ -178,7 +197,9 @@ if [ -n "${WR_DEB:-}" ] && [ -f "$WR_DEB" ]; then
 else
     # Only scan the current working directory; pick any version match.
     shopt -s nullglob
-    for candidate in "$PWD"/Work_Review_*.deb; do
+    # 新产物按 productName 命名（Yue-Review / Yue_Review 两种形态都见过）；
+    # 旧名 glob 保留兜底
+    for candidate in "$PWD"/Yue-Review_*.deb "$PWD"/Yue_Review_*.deb "$PWD"/Work_Review_*.deb; do
         DEB="$candidate"; break
     done
     shopt -u nullglob
@@ -396,8 +417,8 @@ cat <<NOTES
 =========================================================================
 Done.
 
-  .deb        : /usr/bin/Work_Review  (apt package 'work-review')
-  .desktop    : /usr/share/applications/Work Review.desktop
+  .deb        : /usr/bin/Yue_Review  (apt package 'yue-review')
+  .desktop    : /usr/share/applications/Yue Review.desktop
   Extension   : $EXT_DIR
   User data   : $([ -d "$DATA_DIR" ] && echo "$DATA_DIR (kept)" || echo "(none)")
 
@@ -432,6 +453,6 @@ fi
 cat <<NOTES
 
 Verify after a minute of real use:
-  sqlite3 \$HOME/.local/share/work-review/workreview.db 'SELECT COUNT(*) FROM activities;'
+  sqlite3 \$HOME/.local/share/yue-review/workreview.db 'SELECT COUNT(*) FROM activities;'
 
 NOTES

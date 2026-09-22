@@ -11,10 +11,11 @@
 # 使用（.gitlab-ci.yml 的 .tauri-package-linux）：
 #   docker run --rm --user "$(id -u):$(id -g)" \
 #     -e TAURI_SIGNING_PRIVATE_KEY -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
+#     -e HOME=/build -e CARGO_HOME=/build/.cargo-home \
 #     -v "$CI_PROJECT_DIR":/build -w /build \
-#     -v /home/mdc/workreview/ci-caches/linux22/cargo:/usr/local/cargo \
-#     -v /home/mdc/workreview/ci-caches/linux22/rustup:/usr/local/rustup \
-#     wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh
+#     wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh "$TAURI_BUILD_ARGS"
+# （525df65 起不再挂载宿主 cargo/rustup 缓存卷，工具链用镜像内置；
+#   HOME 指向 /build 让 tauri 打包工具缓存在 GIT_CLEAN_FLAGS 排除的 .cache 下持久）
 # =============================================================================
 
 # docker.io 对该服务器限流，基镜像走 daocloud 镜像源
@@ -37,9 +38,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && node --version
 
-# Rust 工具链（与 CI 钉版一致 1.97.1）；cargo/rustup 目录在运行时挂载持久缓存
+# Rust 工具链（与 CI 钉版一致 1.97.1）；不再挂载宿主缓存，容器内自含
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:/usr/local/node/bin:$PATH
+    PATH=/usr/local/cargo/bin:$PATH
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1 --profile minimal \
     && rustc --version

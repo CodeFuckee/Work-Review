@@ -60,13 +60,24 @@ SRC=""
 if [ -n "${WR_APPIMAGE:-}" ] && [ -f "$WR_APPIMAGE" ]; then
     SRC="$WR_APPIMAGE"
 else
+    # 双名发现：新产物按 productName（Yue_Review / Yue-Review），旧名兜底
     for candidate in \
+        "$APPS_DIR"/Yue_Review_*.AppImage \
+        "$APPS_DIR"/Yue-Review_*.AppImage \
         "$APPS_DIR"/Work_Review_*.AppImage \
+        "$SCRIPT_DIR/../.."/Yue_Review_*.AppImage \
+        "$SCRIPT_DIR/../.."/Yue-Review_*.AppImage \
         "$SCRIPT_DIR/../.."/Work_Review_*.AppImage; do
         [ -f "$candidate" ] && { SRC="$candidate"; break; }
     done
 fi
-[ -n "$SRC" ] || die "no Work_Review_*.AppImage found. Place one in $APPS_DIR or set WR_APPIMAGE=/path/to/it."
+[ -n "$SRC" ] || die "no Yue_Review_*/Yue-Review_*/Work_Review_*.AppImage found. Place one in $APPS_DIR or set WR_APPIMAGE=/path/to/it."
+
+# 从产物名推导标识（Work_Review → work-review 等）：启动器/desktop/图标/日志目录
+# 全部跟随，安装新版后不再引用旧名资产
+BASE="$(basename "$SRC")"; BASE="${BASE%%_*}"
+LAUNCH_ID="$(printf '%s' "$BASE" | tr 'A-Z_' 'a-z-')"
+APP_DISPLAY="$(printf '%s' "$BASE" | tr '_' ' ')"
 
 TARGET="$APPS_DIR/$(basename "$SRC")"
 if [ "$(readlink -f "$SRC")" != "$(readlink -f "$TARGET")" ]; then
@@ -80,16 +91,22 @@ APPIMAGE="$TARGET"
 
 # ---- 4. extract icon ------------------------------------------------------
 log "4/6 extract icon"
-if [ -f "$ICON_DIR/Work_Review.png" ]; then
-    log "  already present at $ICON_DIR/Work_Review.png"
+# 内部图标名跟随 productName（新版可能是 "Yue Review.png"/"Yue-Review.png" 等），
+# 动态发现而不是钉死旧名；ICON_BASE 在 already-present 分支也要有值供后续引用
+ICON_BASE="$BASE"
+if [ -f "$ICON_DIR/$BASE.png" ]; then
+    log "  already present at $ICON_DIR/$BASE.png"
 else
     TMP_EXTRACT=$(mktemp -d)
     (cd "$TMP_EXTRACT" && "$APPIMAGE" --appimage-extract >/dev/null)
+    ICON_SRC="$(find "$TMP_EXTRACT/squashfs-root" -maxdepth 1 -name '*.png' ! -name '.DirIcon' | head -1)"
+    [ -n "$ICON_SRC" ] || die "could not find a png icon inside the AppImage"
+    ICON_BASE="$(basename "$ICON_SRC" .png)"
     mkdir -p "$ICON_DIR"
-    cp "$TMP_EXTRACT/squashfs-root/Work_Review.png" "$ICON_DIR/Work_Review.png"
+    cp "$ICON_SRC" "$ICON_DIR/$ICON_BASE.png"
     rm -rf "$TMP_EXTRACT"
     gtk-update-icon-cache "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-    log "  installed to $ICON_DIR/Work_Review.png"
+    log "  installed to $ICON_DIR/$ICON_BASE.png"
 fi
 
 # ---- 5. shims, launcher, .desktop ----------------------------------------
@@ -106,30 +123,30 @@ EOF
 chmod +x "$BIN_DIR/$cmd"
 done
 
-cat > "$BIN_DIR/work-review" <<EOF
+cat > "$BIN_DIR/$LAUNCH_ID" <<EOF
 #!/bin/bash
-# Launcher for Work Review AppImage on Ubuntu 24.04 / GNOME 46 / Wayland.
+# Launcher for $APP_DISPLAY AppImage on Ubuntu 24.04 / GNOME 46 / Wayland.
 set -u
 APPIMAGE="\${WR_APPIMAGE:-$APPIMAGE}"
-LOGDIR="\$HOME/.local/share/work-review"
+LOGDIR="\$HOME/.local/share/$LAUNCH_ID"
 mkdir -p "\$LOGDIR"
 export GIO_MODULE_DIR=/nonexistent
 export PATH="\$HOME/bin:/usr/bin:/usr/local/bin:\$PATH"
 export RUST_LOG="\${RUST_LOG:-work_review=info,work_review_core=info}"
 exec "\$APPIMAGE" --no-sandbox "\$@" >>"\$LOGDIR/run.log" 2>&1
 EOF
-chmod +x "$BIN_DIR/work-review"
+chmod +x "$BIN_DIR/$LAUNCH_ID"
 
-cat > "$DESKTOP_DIR/work-review.desktop" <<EOF
+cat > "$DESKTOP_DIR/$LAUNCH_ID.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Work Review
+Name=$APP_DISPLAY
 Comment=工作回顾与AI日报助手
-Exec=$BIN_DIR/work-review %U
-Icon=Work_Review
+Exec=$BIN_DIR/$LAUNCH_ID %U
+Icon=$ICON_BASE
 Terminal=false
 Categories=Office;
-StartupWMClass=Work_Review
+StartupWMClass=$BASE
 EOF
 update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 
@@ -139,9 +156,9 @@ cat <<NOTES
 
 Installed:
   AppImage   : $APPIMAGE
-  Launcher   : $BIN_DIR/work-review
-  Desktop    : $DESKTOP_DIR/work-review.desktop
-  Icon       : $ICON_DIR/Work_Review.png
+  Launcher   : $BIN_DIR/$LAUNCH_ID
+  Desktop    : $DESKTOP_DIR/$LAUNCH_ID.desktop
+  Icon       : $ICON_DIR/$BASE.png
   Shims      : $BIN_DIR/{gdbus,gnome-screenshot,grim,spectacle,tesseract}
   Extension  : $EXT_DIR
 

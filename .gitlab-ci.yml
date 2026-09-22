@@ -412,6 +412,10 @@ package-daily-windows:
       ) | Set-Content -Path $readme -Encoding utf8
       $archive = Join-Path $exe.DirectoryName "Yue_Review_portable_x64.zip"
       Compress-Archive -Path $exe.FullName, $readme -DestinationPath $archive -Force
+      # 作业收尾清理 stage-tauri-key.ps1 暂存的签名私钥：after_script 后
+      # LocalSystem 的 %TEMP% 无人清理，tauri-signing-key-<pid>.key 在常驻
+      # runner 上按次累积（打包已消费完，删除不影响本作业产物）
+      Remove-Item (Join-Path ([System.IO.Path]::GetTempPath()) 'tauri-signing-key-*.key') -ErrorAction SilentlyContinue
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
     when: always
@@ -545,6 +549,11 @@ package-daily-macos-x64:
 version-bump:
   stage: version
   tags: ["$LINUX_X64_RUNNER_TAG"]
+  # 跨流水线串行：快速连续推送的两条 main 流水线都全绿并发进入 version 阶段时，
+  # 双方基于同一 origin/main 推导出同一版本号，后推送方 push --atomic 因 main
+  # 非 fast-forward 整体失败——自动发版丢失、作业假红需人工重跑。串行后后到方
+  # 重取 main，按 has-code-changes/版本推导自然跳过或递增。
+  resource_group: version-bump
   # 只依赖上游成败、不下载其产物（artifacts: false）：bump 从不消费三平台
   # 二进制，默认的 artifacts: true 会把数十 MB 构建产物白白下载进本作业
   needs:
@@ -578,10 +587,12 @@ version-bump:
       # frontend 版本一致性测试假通过）。reset --hard + clean 保证基准绝对干净。
       git checkout -B bump-base "origin/$CI_DEFAULT_BRANCH"
       git reset --hard "origin/$CI_DEFAULT_BRANCH"
-      # 排除 target/.cargo/.npm：本作业与 verify/package 共享 linux-x64 runner
-      # 构建目录，全量 clean（-x 含 ignored）会把 GIT_CLEAN_FLAGS 特意保留的
-      # 增量编译缓存抹掉，随后每条流水线三平台全量冷启动
-      git clean -ffdx -e target -e .cargo -e .npm
+      # 排除 target/.cargo/.npm/.cache：本作业与 verify/package 共享 linux-x64
+      # runner 构建目录，全量 clean（-x 含 ignored）会把 GIT_CLEAN_FLAGS 特意
+      # 保留的增量编译缓存抹掉，随后每条流水线三平台全量冷启动；.cache 是
+      # .tauri-package 预种的 tauri 打包工具缓存，漏排会把每次发版刚白回
+      # gh-proxy 全量下载的老问题请回来
+      git clean -ffdx -e target -e .cargo -e .npm -e .cache
       echo "bump-base state: $(git rev-parse --short HEAD) $(git log -1 --oneline) $(node -p "require('./package.json').version")"
       # docs-only 跳过：无程序代码变更（src/、src-tauri/、crates/ 均未变）时不递增
       # 版本、不打 tag、不触发三平台打包（省 30–60 分钟）；构建计数 = tag 以来提交数。
@@ -853,6 +864,10 @@ tauri-package-windows:
         -Path $exe.FullName, $readme `
         -DestinationPath $archive `
         -Force
+      # 作业收尾清理 stage-tauri-key.ps1 暂存的签名私钥：after_script 后
+      # LocalSystem 的 %TEMP% 无人清理，tauri-signing-key-<pid>.key 在常驻
+      # runner 上按次累积（打包已消费完，删除不影响本作业产物）
+      Remove-Item (Join-Path ([System.IO.Path]::GetTempPath()) 'tauri-signing-key-*.key') -ErrorAction SilentlyContinue
   artifacts:
     name: "$CI_COMMIT_TAG-$CI_JOB_NAME"
     when: always
