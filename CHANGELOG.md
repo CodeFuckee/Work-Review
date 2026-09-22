@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **第九轮全量代码评审修复（第二/三批：CI/构建 7 项 + 前端 TS 8 项，行为保持）**：
+  - **CI：version-bump 并发推送丢失发版（P2）**：两条 main 流水线全绿并发进入 version 阶段时基于同一 origin/main 推导同一版本号，后推送方 `git push --atomic` 因非 fast-forward 整体失败——自动发版丢失、作业假红需人工重跑；加 `resource_group: version-bump` 跨流水线串行。
+  - **CI：version-bump 的 git clean 漏排 `.cache`（P2）**：与全局 GIT_CLEAN_FLAGS 不同步，每次发版把 linux-x64 runner 的 .cache/tauri 打包工具缓存删光，下个 tag 流水线重新经 gh-proxy 全量下载（v1.1.84/86 两次发版失败根因复现路径）；补 `-e .cache`。
+  - **CI：Windows 打包暂存的签名私钥不清理（P2，安全）**：`%TEMP%\tauri-signing-key-<pid>.key`（LocalSystem）在常驻 runner 上按次累积；两个打包作业 after_script 末尾清理。
+  - **CSP connect-src 三个零消费主机（P2，安全）**：tauri.conf.json 白名单里的 api.github.com/gh-proxy.cn/gh-proxy.com 更新源切换后已无任何引用，徒然放大渲染进程失陷后的出网面；删除。
+  - **Linux 安装/卸载脚本全链旧名失配（P2）**：产品改名 Yue_Review/Yue-Review 后，reinstall.sh 本地 deb 扫描永不命中（静默落入失效的 GitHub 回退装回陈旧版）、pgrep/pkill 不再命中运行中进程（full reset 期间不停机）、dpkg/apt 对新包名失明；uninstall.sh 同族；appimage/install.sh 的 AppImage 发现/图标/launcher/desktop/WMClass 改为按检出产物名参数化——全部改双名兼容（yue-review 新名 + work-review 旧名兜底）。
+  - **删除死脚本 patch-info-plist.sh（P2）**：全仓无引用且按旧名 find 永不命中，权限描述已由 tauri infoPlist 原生覆盖；linux-builder-22.Dockerfile 头部使用示例仍指导挂载已废弃的宿主缓存卷、PATH 含不存在的 node 目录——对齐现行调用方式。
+  - **登录凭证缓存形状校验缺失（P2，正确性）**：`getAuth` 对 localStorage 的合法 JSON 不做形状校验，缺字段/错型的半损坏条目让 `isTokenExpired` 算出 number > undefined 恒 false，坏凭证被判成 allow 直接放行进主界面（admin 同步全挂）；不满足形状一律按无凭证走登录门。
+  - **登录/注册请求无超时（P2）**：admin 服务挂起（建连不响应）时按钮永久 pending；fetch 加 15 秒 AbortSignal 超时走既有 network 分支。`setAuth`/`setAdminUrl` 的 localStorage 写入补 try-catch（配额满/隐私模式下不再让登录成功后的流程崩成未处理 rejection）。
+  - **分类 store 刷新竞态（P2）**：categoryStore/semanticCategoryStore 的 refresh 无请求序号守卫，并发刷新时旧数据慢响应后到覆盖新响应（UI 显示已删/已改名分类）；补 seq 快照守卫（Ask/Timeline 同款）。
+  - **TS 行为保持去重（P2，可维护性）**：`avatarToggle.ts` 三份逐字同构的「改字段→保存→失败回滚」抽 `applyConfigFieldsWithRollback`；`updater.ts` 11 段状态消息正则样板表驱动化（命中顺序不变）；`appVisuals.ts` 精确名 Map 与子串长条件列表两处维护同一批应用名（yue 家族只在一侧）合并为单一有序规则表。
 - **第九轮全量代码评审修复（第一批：Rust 行为保持，22 项；完整问题清单与处置见 `CODE_REVIEW_FINDINGS.md` 第九轮）**：
   - **助手会话追加消息无事务（P2，正确性）**：INSERT 消息与 UPDATE 会话 `updated_at` 不包事务，UPDATE 失败/崩溃后消息已落库但会话排序键停留旧值——新消息会话沉底并可能提前落入「保留最近 100 个」清理被连消息一起删；补 `unchecked_transaction`（同表 create/delete 同款口径）。
   - **建库迁移吞掉全部 ALTER 错误（P2，正确性）**：`init_tables` 8 处 `ALTER TABLE ADD COLUMN` 用 `let _ =` 吞错，磁盘满/只读库时列静默缺失、后续对这些列的读写以晦涩错误失败且启动日志零痕迹；新增 `add_column_if_missing` 只忽略 duplicate column，其余错误照常传播。

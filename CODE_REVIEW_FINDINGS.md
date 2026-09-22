@@ -26,6 +26,292 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 - 💤 暂缓：真实问题但属大规模重构/需专门批次，本任务不冒险
 - ⚠️ 仓库级：需人工处置的事项
 
+# 第九轮（2026-09-23）
+
+范围：十分片并行复扫（main+storage+采集 / localhost+网关+上传+桌宠输入 / agent+五bot /
+commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-server+skills-engine /
+前端 stores+utils+i18n / 12 组件 / 路由页 28k 行 / CI+构建+打包+admin-core+capabilities），
+与八轮台账逐条去重。新发现 44 条（全部 P2——P0/P1 已被前八轮清完），否决/降级分片上报
+若干（ocr 测试内锁、deb 包名未经实机核实的断言等收进待确认）。分三批修复 37 处行为保持项：
+批次 1 = Rust（22 项，commit 0ab38a4）、批次 2 = CI/构建（7 项）、批次 3 = 前端 TS（8 项）；
+12 条涉行为语义/需产品决策列待确认；7 条 .svelte 待过目；linux 打包供应链 pin+sha256
+列暂缓。
+
+## 第九轮已修复
+
+### 批次 1（Rust，22 项，commit 0ab38a4）
+
+- ✅ [P2] crates/core/src/database.rs:4047 — append_assistant_message 的 INSERT 消息与
+  UPDATE 会话 updated_at 未包事务：UPDATE 失败/崩溃后消息已落库但会话排序键停留旧值，
+  新消息会话沉底并可能提前落入「保留最近 100 个」清理被连删（第七轮台账「append 已有事务」
+  系笔误）— unchecked_transaction 包裹（同表 create/delete 口径）
+- ✅ [P2] crates/core/src/database.rs:866,905-919,1017 — init_tables 8 处 ALTER TABLE
+  ADD COLUMN 用 `let _ =` 吞掉一切错误：磁盘满/只读库时列静默缺失、后续读写以晦涩错误
+  失败且启动日志零痕迹 — 新增 add_column_if_missing 只忽略 duplicate column，其余传播
+- ✅ [P2] crates/core/src/database.rs:3818,3858,3882 — search_memory 三个 FTS 通道
+  `if let Ok` 吞掉全部错误（FTS 损坏/rebuild 中间态无从排查）— 失败分支补 log::warn
+- ✅ [P2] crates/core/src/database.rs:5188 — search_memory_fallback 的
+  `(?1 IS NULL OR timestamp >= ?1)` 参数不可下推为索引范围约束，带旧日期区间时 DESC
+  扫描先跳过全部新行 — 按 get_activities_in_range:2799 已修款拼确定性 WHERE
+- ✅ [P2] crates/core/src/database.rs:2013,2204 / 2522,2738 — 两个统计聚合函数数据物化
+  后仍持连接锁做纯内存聚合（逐活动小时桶切分/逐小时去重），阻塞采集热路径 insert_activity
+  — drop(conn) 上移到物化完成处（get_hourly_app_breakdown_range_filtered 净省 220 行持锁）
+- ✅ [P2] crates/core/src/database.rs:4807 — upsert_memory_chunk 注释称「内容变化时清空
+  embedding」，实现是仅 LENGTH(excluded) > LENGTH 才更新（第四轮 upsert_gitlab_commits
+  注释矛盾同族）— 注释对齐实现
+- ✅ [P2] crates/core/src/database.rs:3245 — get_hourly_activities 的 `(hour as u32).min(23)`
+  把负数回绕成巨大 u32 再收成 23（hour=-1 查 23 点）— 先 clamp(0,23) 再 cast
+- ✅ [P2] crates/core/src/database.rs:5352+ — 测试清理 49 处只删 db 主文件：WAL 模式下
+  -wal/-shm 任何平台都不在清理范围、Windows 上连接存活时主文件删除静默失败，CI 临时目录
+  持续累积 — drop(db) 后 remove_db_files 统一删三文件
+- ✅ [P2] crates/core/src/database.rs:64 — matches_ignored_app_for_stats 与
+  privacy::matches_ignored_app 逐字重复（双份实现单边演化风险）— 委托 privacy 版本
+- ✅ [P2] crates/core/src/privacy.rs:138 — debug 日志恰在窗口标题命中敏感关键词时把标题
+  整条明文落盘（第八轮修的是 src-tauri 侧五处，本处是 core 侧残留；RUST_LOG=debug 排障时
+  最敏感的标题恰是唯一进日志的标题）— 只记「命中+长度」
+- ✅ [P2] crates/mcp-server/src/main.rs:693,668 — search_activities/query_timeline 的
+  limit 直通 DB LIMIT（FTS 回退路径内部放大 12 倍行数），失控客户端可全量载入 —
+  钳 [1,200]
+- ✅ [P2] src-tauri/src/storage.rs:53-61,166 — cleanup() 单次执行 2-3 遍全量递归扫描 +
+  全路径物化（超限判断/内部重算/末尾重统计），数万文件时每次周期清理白付 1-2 遍 —
+  首次统计传入 cleanup_oldest_until_under_limit 复用，末尾仅在发生过删除时重统计
+- ✅ [P2] src-tauri/src/main.rs:2997,3192,3234,4021,4358 + file_monitor_runtime.rs:33 —
+  6 处 `if let Ok(lock)`/`.lock().ok()` 把 Mutex 中毒吞成静默跳过：合并/新建路径 OCR 写库、
+  远程截图 URL 回写、实体分类内存缓存、轻量模式关窗、文件事件入库在某次持锁 panic 后从此
+  失效无日志（4358 还会翻转关窗行为）— 统一 unwrap_or_else(into_inner)（第五轮同款）
+- ✅ [P2] src-tauri/src/remote_upload.rs:296-305,384 — ENSURED_WEBDAV_DIRS 只增不失效：
+  远端目录被外部删除后 MKCOL 永不再发、PUT 恒 409（send_with_one_retry 只覆盖 5xx/网络
+  错误），补传机制走同一缓存同样失败——上传进程内永久失效且注释声称的兜底兜不住 — PUT
+  命中 409/404 时失效本次涉及各级目录缓存、重建后重试一次
+- ✅ [P2] src-tauri/src/avatar_input.rs:1555 — macOS 全局监听部分注册失败提前 return：
+  非 nil 的 monitor 不发 removeMonitor: 泄漏在系统侧，STARTED 复位后的重试再注册一份
+  （事件重复派发）— 部分失败先成对 removeMonitor 再返回
+- ✅ [P2] src-tauri/src/avatar_input.rs:1503,1526 — transmute 未校验 usize 到 fieldless
+  enum NSEventType（非合法判别式即时 UB，契约全靠 mask 巧合）— 改按枚举判别式 usize
+  直接比较（语义不变），mouse_group_from_event_type 换 *_raw 版本
+- ✅ [P2] src-tauri/src/avatar_input.rs:893,925,967,1422 — 4 处 unsafe 块无 SAFETY 注释
+  （第三/八轮同款补注漏网面：LL 钩子不阻塞约束、X11 per-thread Display、主线程要求）—
+  逐块补注
+- ✅ [P2] src-tauri/src/localhost_api.rs:384,523,717 — base_url/apiEndpoint/日志 用
+  `http://{host}:{port}` 拼接，host 为 IPv6 字面量时产出 `http://::47831` 畸形串（UI 监听
+  地址是自由文本、单测显式放行 "::"）— 新增 http_base_url 对含冒号 host 包方括号，
+  配回归测试
+- ✅ [P2] src-tauri/src/wecom_aibot.rs:416-435 — 重连退避计数只增从不复位（对照 telegram
+  成功后清零）：任何一次失败后即使长连接健康运行数小时，下次断线仍按累计次数吃满 60s
+  封顶退避 — 健康会话结束（Ok 分支）退避重新计
+- ✅ [P2] src-tauri/src/agent/tools.rs:407 — 行动工具确认摘要对 create_todo/set_app_category
+  的模型参数原文回显：无长度上限、无控制字符清洗，换行/伪系统文案可污染确认卡片（同文件
+  user_memory 预览已按「模型参数不可信」加固，同一边界修了一半）— 剥控制字符 +
+  truncate_chars(80)
+- ✅ [P2] src-tauri/src/agent/executor.rs:448 — trusted_event_tool_metadata 每个工具调用
+  整表重序列化注册表（14-18 个工具含完整 JSON Schema）再线性查找 — canonical_tool_labels
+  整响应预构建一次，trusted_event_tool_metadata_from 表内精确匹配（含注入名拒绝语义不变）
+- ✅ [P2] src-tauri/src/agent/executor.rs:410 — Stop 终态 content.unwrap_or_default()：
+  模型返回 Stop 且正文为空（中转网关截断）时用户收到空气泡（其余三条终态路径均有兜底，
+  唯独主路径没有）— 空正文回退固定提示语
+- ✅ [P2] src-tauri/src/feishu_bot.rs:118 — TOKEN_CACHE 写路径仍 `if let Ok`（读路径第五轮
+  已修）：任一次持锁 panic 后缓存永久写不进，每条飞书消息多打一次 tenant_access_token API
+  — 写路径同款恢复
+- ✅ [P2] src-tauri/src/agent/model.rs:261,478 — OpenAI/Claude 非流式错误路径把完整响应
+  body 拼进 AppError（网关大 HTML 错误页整页进错误串并经 warn 落日志；Gemini :617 与流式
+  :953 均已截 300，同文件口径不一）— 两处补 chars().take(300)
+- ✅ [P2] src-tauri/src/agent/orchestrator.rs:575 — fast_answer 对 search_memory 用
+  unwrap_or_default() 吞 DB 错误且无日志：FTS/库故障时「相关记录」小节静默消失无从排查 —
+  Err 分支补 log::warn 后再取默认
+- ✅ [P2] src-tauri/src/commands/timeline.rs:25 — get_timeline_inner 以 info 级打印完整
+  ignored_apps/excluded_domains 清单：哪些应用/域名被隐藏本身是隐私配置，每次打开时间线/
+  每次 localhost /v1/timeline 调用都明文进持久日志 — 只记条数
+- ✅ [P2] src-tauri/src/commands/assistant_history.rs:27 — list_assistant_conversations 的
+  limit 无上限直通 SQL LIMIT（同仓 user_memory clamp 1..500、file_monitor clamp 1..200
+  均已钳）— clamp(1,200)
+
+### 批次 2（CI/构建，7 项）
+
+- ✅ [P2] .gitlab-ci.yml:545 — version-bump 无 resource_group：两条 main 流水线全绿并发
+  进入 version 阶段时基于同一 origin/main 推导同一版本号，后推送方 push --atomic 因非
+  fast-forward 整体失败——自动发版丢失、作业假红 — 加 resource_group: version-bump
+  （后到方重取 main 自然跳过/递增）
+- ✅ [P2] .gitlab-ci.yml:589 — version-bump 的 `git clean -ffdx` 排除清单漏 `.cache`
+  （与 :51 GIT_CLEAN_FLAGS 不同步）：每次发版把 linux-x64 runner 的 .cache/tauri 打包工具
+  缓存删光，下个 tag 流水线重新走 gh-proxy 全量下载（v1.1.84/86 两次发版失败根因）— 补
+  `-e .cache`
+- ✅ [P2] .gitlab-ci.yml:393,827 — Windows 两个打包作业的 after_script 不清理暂存私钥：
+  `%TEMP%\tauri-signing-key-<pid>.key`（LocalSystem）在常驻 runner 上按次累积 —
+  after_script 末尾 Remove-Item 清理（打包已消费完）
+- ✅ [P2] src-tauri/tauri.conf.json:111 — CSP connect-src 含 api.github.com / gh-proxy.cn /
+  gh-proxy.com 三个零消费主机（更新源已切自建 GitLab，全仓无引用）：渲染进程失陷后的出网
+  白名单被无谓放大 — 删除三项
+- ✅ [P2] scripts/deb/reinstall.sh — 全链按旧名 Work_Review 匹配：本地 `Work_Review_*.deb`
+  扫描永不命中→静默落入已知失效的 GitHub latest 回退装回陈旧版；pgrep/pkill -f Work_Review
+  不再命中运行中的 Yue_Review（full reset 期间进程不停止）；dpkg -s work-review 对新包
+  失明 — 全部改 yue-review/Yue_Review/Yue-Review 与旧名双探测双清理（含用户级
+  desktop/图标/数据目录双路径）
+- ✅ [P2] scripts/deb/uninstall.sh:43-62 + scripts/appimage/install.sh:64-151 — 同族旧名
+  失配 — 双名探测；install.sh 的 AppImage 发现/内部图标/launcher/desktop/WMClass 改为
+  按检出产物名参数化（Work_Review/Yue_Review/Yue-Review 全兼容）
+- ✅ [P2] src-tauri/scripts/patch-info-plist.sh — 死脚本（全仓无引用）且按旧名 find 永不
+  命中静默 exit 0，其注入的两条权限描述已由 tauri.conf infoPlist 原生覆盖 — 删除
+- ✅ [P2] scripts/ci/linux-builder-22.Dockerfile:13-17,43 — 头部使用示例仍指导挂载已废弃的
+  宿主 cargo/rustup 缓存卷（525df65 起废弃）；PATH 含不存在的 /usr/local/node/bin
+  （NodeSource 装于 /usr/bin）— 注释对齐现行调用方式、删死 PATH 项
+
+### 批次 3（前端 TS，8 项）
+
+- ✅ [P2] src/lib/stores/auth.ts:39 — getAuth 的 JSON.parse 只 try-catch 不做形状校验：
+  localStorage 存了合法 JSON 但缺字段/错型的条目（如 {"token":"x"} 无 expiresAt）时
+  isTokenExpired 算出 number > undefined = false，resolveAuthGateFromStorage 把坏凭证判成
+  allow 直接放行进主界面（admin 同步全挂）— 校验 token 非空 string + expiresAt 有限
+  number，不满足一律走登录门
+- ✅ [P2] src/lib/stores/auth.ts:106 — postClientAuth 的 fetch 无超时：admin 服务挂起
+  （建连但不响应）时登录/注册按钮永久 pending — AbortSignal.timeout(15s)，超时走既有
+  network 分支
+- ✅ [P2] src/lib/stores/auth.ts:46,77 — setAuth/setAdminUrl 的 localStorage.setItem 无
+  try-catch：配额满/隐私模式抛错发生在登录成功之后，变未处理 rejection、用户看到「登录
+  失败」但服务端已发 token — 捕获后 warn 照常返回
+- ✅ [P2] src/lib/stores/categories.ts:54-61,95-102 — 两个分类 store 的 refresh 无请求序号
+  守卫：编辑后的 refresh 与其他组件 onMount 的 refresh 并发时，旧数据慢响应后到覆盖新响应
+  （Ask/Timeline/SettingsAI 均已用 requestId 守卫，此处漏网）— 模块级 seq 快照守卫
+- ✅ [P2] src/lib/utils/avatarToggle.ts — toggleAvatarSetting/updateAvatarScaleSetting/
+  updateAvatarOpacitySetting 三份逐字同构的「改字段→save→catch 回滚再 rethrow」模板 —
+  抽 applyConfigFieldsWithRollback 泛型助手
+- ✅ [P2] src/lib/utils/updater.ts:88-151 — localizeRuntimeStatusMessage 11 段
+  match+if-return 样板 — 表驱动 RUNTIME_STATUS_PATTERNS（顺序敏感保持原命中顺序）
+- ✅ [P2] src/lib/utils/appVisuals.ts — fallbackIconMap 精确键与 getFallbackAppIcon 的
+  includes 长条件列表两处维护同一批应用名（yue 家族只存在于子串侧，增名漏一处即漂移）—
+  合并 FALLBACK_ICON_RULES 有序表（exact 组整体在前保持原两阶段语义）
+
+## 第九轮待确认（修复会改对外行为/语义或需产品决策，未经确认不动）
+
+- ⏸ [P2] src-tauri/src/main.rs:1721 — 桌宠循环 IdleDetector 硬编码 3 分钟空闲阈值，不读
+  配置：用户在设置里改「空闲阈值」只对采集循环生效，桌宠 idle 展示/休息提醒计时重置/
+  主动开口 is_idle 全部固定按 3 分钟，与采集循环口径永久漂移 — 修法是经 setter 热更新；
+  对阈值≠3 的用户提醒频率与状态切换时点可观察变化
+- ⏸ [P2] src-tauri/src/main.rs:3634 — 崩溃日志写 default_data_dir().join("crashes") 而非
+  实际数据目录：自定义数据目录的用户按注释指引去自己目录找不到崩溃日志 — 修法是
+  resolve 后存 OnceCell；落盘位置变化可观察
+- ⏸ [P2] src-tauri/src/commands/memory.rs:22 — synthesize_insights_inner 用无隐私过滤的
+  get_daily_stats_with_segments（命令层其余统计面全走 _filtered + ignored_apps）：
+  被隐藏应用的时长会汇入「高峰时段/娱乐占比/办公时长」洞察落库展示 — 改过滤口径后新生成
+  洞察数字会变（main.rs:1867/2133 有同款无过滤调用）
+- ⏸ [P2] src-tauri/src/commands/stats.rs:765 — get_hourly_app_breakdown_inner 对
+  date_from/date_to 无天数上限，底层单条 SQL 无 LIMIT 全列载入（含 ocr_text），持 AppState
+  锁放大：传 10 年区间一次载入全部活动 OCR 进内存 — 加 31/62 天上限会使超大区间从慢速
+  返回变报错（归既有 ⏸ stats.rs:589 同批决策；SELECT 收窄可与上限解耦后做）
+- ⏸ [P2] src-tauri/src/commands/timeline.rs:49 — get_activity 按 id 直读单条活动（含完整
+  ocr_text）无隐私过滤：列表面过滤 Ignored 应用/排除域名、详情面不过滤，IPC 面可按 id
+  穷举读被隐藏应用 OCR（UI 只用已过滤列表 id、localhost 未暴露，实际可达性低）— 补过滤
+  会改 IPC 返回契约，需先确认「详情信任列表」是否有意契约
+- ⏸ [P2] src-tauri/src/commands/system.rs:272 — open_permission_settings 的 macOS
+  `open` spawn 不 wait 不 reap：每次点击残留僵尸进程至退出（归既有 ⏸ config.rs:405
+  open_data_dir 同批补后台 reap）
+- ⏸ [P2] src-tauri/src/telegram_bot.rs:595-633 — handle_bind_command 走「clone 配置→持
+  AppState 锁内同步落盘→整体替换」：clone 与替换之间其他配置修改被覆盖（丢失更新窗口），
+  磁盘写在全局大锁内 — 归既有 ⏸ persist_app_config 收敛族
+- ⏸ [P2] src-tauri/src/agent/model.rs:1259 — ClaudeStreamAssembler 的 BTreeMap 按未校验
+  content-block index 无界扩容：与已知 ⏸ model.rs:986（OpenAI partial_calls 极大 index）
+  同根因同威胁模型，台账只登记了 OpenAI 侧 — 随该 ⏸ 同批定案
+- ⏸ [P2] src-tauri/src/agent/executor.rs:442 — 单次模型响应可携带任意多条 tool_calls 全部
+  串行执行：deadline/取消只在每轮开始检查，一轮内 N 个联网工具（各 15-20s）可远超 120s
+  总预算 — 是否给单响应工具数设上限属行为变更
+- ⏸ [P2] src-tauri/src/agent/tools.rs:1409 — ensure_public_http_url 放行单标签主机名
+  （http://nas/ 经 search suffix 可达内网）：注释声明的豁免范围是「DNS 解析到内网 IP」，
+  单标签内网名是否算已豁免范畴需定口径
+- ⏸ [P2] crates/core/src/privacy.rs:100,105 — 密码/API-Key 两个敏感模式要求
+  `[\s:：=]+` 分隔符，中文 OCR 粘连形态（"密码abc123"）整条漏配（第八轮修的 \b 漏配、
+  第一轮修的管道符笔误之外的第三种漏配形态）— 分隔符放宽为可选会扩大脱敏命中面
+  （"token"/"secret" 后紧跟任意非空白即被吞），误伤容忍度需确认
+- ⏸ [P2] crates/core/src/config.rs:637 — metadata_retention_days 是死配置：注释宣称超过
+  后删除数据库记录，全仓无任何消费者（用户以为有 30 天元数据保留实为永不清）— 补实现
+  （涉删除语义）还是删字段（改配置面+Settings.svelte）需产品意图确认
+- ⏸ [P2] crates/core/src/analysis/mod.rs:136 + local.rs:77 + cloud.rs:81 —
+  create_analyzer 只把 generation_timeout 传给 SummaryAnalyzer，Local 硬编码 120s、Cloud
+  硬编码 60s，report_generation_timeout_secs 配置对这两个模式完全不生效（Cloud 全流程
+  可达 360s 与外层超时口径脱节）— 修后超时语义随配置伸缩，可观察
+- ⏸ [P2] src-tauri/src/localhost_api.rs:1062 — /v1/activities 的 limit 查询参数无上限钳制
+  （默认 10000，任意 usize 直通；/v1/reports 有 .min(100) 先例）— 放大有限（单日+token
+  门禁），是否统一钳制待定案（需确认返回行是否含 ocr_text 大列）
+- ⏸ [P2] src-tauri/src/commands/avatar.rs:104,150 + category.rs:104,150 — 生产代码 expect
+  （DB 主键恒非 NULL，实践不可达）— 按「宁缺毋滥」是否豁免请定口径
+- ⏸ [P2] telegram_bot.rs:92,220 / wecom_aibot.rs:84,496 — 轮询/长连接任务 panic 无哨兵：
+  JoinHandle 从不 await，任务 panic 后 shared.running 恒 true，状态面板显示「运行中」实际
+  已死 — 未找到现高概率 panic 路径，若修属 spawn 包装层加固
+- ⏸ [P2] scripts/ci/linux-package-inner.sh:31 — 发布链打包工具经第三方 gh-proxy 镜像下载、
+  校验仅头 4 字节魔数、插件钉 master/continuous 移动目标：镜像或上游 continuous 产物被
+  投毒时恶意 ELF 通过头部检查，在持有签名私钥的发版 runner 上执行 — 正解是钉版本 +
+  sha256 白名单（需定各工具版本并接受校验失败即发版失败的语义，见暂缓说明）
+- ⏸ [P2] .gitlab-ci.yml:1024 — publish-release 端到端自检只传 windows-x86_64 与
+  darwin-aarch64：启用 PACKAGE_MACOS_X64 后 darwin-x86_64 清单项的远端 SHA/签名一致性
+  永不在自检范围（第七轮 ⏸ x64 通用名互覆盖之外的同域盲区）— 启用该开关前需补第三个
+  --platform
+- ⏸ [P2] admin-core/Dockerfile:82 — 运行阶段无 USER 指令，容器以 root 运行且持 LAN 可达
+  端口与生产凭据挂载 — 加 USER $APP_UID 属部署语义变更：挂载目录属主/读权限需同步调整
+  （现网首启可能需手动 chown 一次），需与部署窗口协调
+- ⏸ [P2] scripts/deb/reinstall.sh:194 — 本地 deb 未命中时的回退是 GitHub latest API
+  （第二轮 ⏸ 已知失效链），会 die 或装回陈旧版 — 改指 GitLab 包仓库/制品链接还是删除，
+  需定回退目标
+- ⏸ [P2] scripts/stage-tauri-key.sh — 疑似 no-op：stage-tauri-key.ps1 头注（tauri-cli
+  v2 自行 base64 解码环境变量值、文件路径与原始内容皆可）暗示 bash 侧暂存文件可能从未被
+  消费；确认后可从各 before_script 移除（纯降噪，不改行为）
+- ⏸ [P2] src/lib/stores/auth.ts:54 — 默认 admin URL 硬编码内网 IP `http://10.37.80.25:4191`：
+  分发出去的客户端未配置时会把登录密码 POST 到该内网地址（若确为内部部署默认值可接受，
+  否则应改空串强制填写；修复改变全新安装默认行为）
+- ⏸ [P2] src-tauri/src/avatar_input.rs:1419 — macOS current_cursor_ratio 遍历 NSScreen 只取
+  联合包围盒未逐屏 clamp：多屏负坐标排列下是否产生可感知画布偏移需 macOS 实机验证
+
+## 第九轮待过目批次（.svelte，按红线待用户过目，本轮未动）
+
+- [P2] src/routes/ask/Ask.svelte:703,712,725 — 双击/双回车重复提交：防重守卫读 `sending`
+  （store），beginSending 在首个 await（ensureConversation IPC 往返）之后才调用，新会话
+  首条消息在途期间再按发送可产生双份 user 消息与两次并发 chat_work_assistant — 首个
+  await 前同步置 submitting 标志
+- [P2] src/routes/settings/components/SettingsAppearance.svelte:404,411 — 背景显示强度/
+  模糊滑块 on:input 每个输入事件全量 saveConfigQuietly 落盘（拖拽一次几十次并发 IPC），
+  同文件桌宠缩放/透明度已有 120ms 防抖先例 — 复用防抖
+- [P2] src/routes/Overview.svelte:1563-1567 — visibilitychange 恢复可见时重建的 30s 定时器
+  丢了初建版的 refreshFileEvents 分支（复制粘贴漂移）：隐藏→恢复一次后文件活动卡片停止
+  自动刷新 — 两处合并同一 startIntervals()
+- [P2] src/routes/about/About.svelte:64-70 — checkForUpdates 的 runUpdateFlow 无
+  try/finally：reject 一次 isCheckingUpdate 永久 true，「检查更新」按钮锁死到重进页面
+- [P2] src/routes/report/Report.svelte:309-311 — 生成成功但 get_saved_report 返回 null 时
+  伪造 {content:'', created_at:now} 空壳报告渲染并写乐观缓存，且后台刷新仅在 savedReport
+  非空时覆盖——空壳会话内长期滞留 — 置 null 走空态不落缓存（后端是否真可达需核实）
+- [P2] src/routes/settings/components/SettingsFileMonitor.svelte:46,60-65,118 —
+  `fileMonitor().folders = …` 深层赋值不触发 Svelte 失效：所选目录不回显、继续手输会以旧
+  文本覆盖刚选列表（第二轮 SettingsGitlab.svelte:101 编译实证同族新实例）— 局部变量后
+  整体重赋值 config.file_monitor
+- [P2] src/routes/settings/components/AssistantMemoryManager.svelte:196,216 — 删除/清空
+  记忆用裸 window.confirm，绕过全局 ConfirmDialog 模态层级与暗色样式 — 改 stores/confirm
+- 重构机会（待过目）：Report.svelte:824-905 与 Overview 的 computePeakWindow/
+  formatSignedCompactDuration 逐字重复可抽共享 .ts；设置页 clamp+Number||fallback 模式
+  三文件十余处可抽 clampNumberInput；密钥可见性切换块五份可抽 SecretInput 组件；
+  Ask.svelte:128,1204 modelSelectEl 死绑定可删；Ask:361-379 与 Report:511-514 各自实现的
+  marked+DOMPurify 渲染可抽共享工具（与已知 ⏸ marked 单例互污染一并设计）；
+  AvatarCanvas.svelte:511-686 四个热点渲染块同构 SVG 模板约 175 行可合并；
+  AvatarFollowupCard.svelte:91-117 三个按钮 class 串逐字相同可 each 消除；
+  AppUsageChart.svelte:33 注释「前 8」与 DEFAULT_COUNT=6 矛盾（历轮同类按可修 P2 处理，
+  本条随过目批次走）；AvatarCanvas.svelte:342-343 两条响应式语句表达式逐字相同可合一
+
+## 第九轮暂缓（💤）
+
+- 💤 database.rs 连接锁错误映射 86 处逐字重复 — 抽 lock_conn() 助手：纯机械但面广，
+  建议与 init_tables 按域拆分同批做
+- 💤 get_daily_stats_with_segments_filtered（1913-2361 约 450 行）与浏览器 page_hint 推导
+  双份逐字重复（2034-2076 vs 2609-2643）— 拆三段子函数 + derive_browser_page 共享 helper
+- 💤 summary.rs build_ai_prompt override 注入把同一组统计字段序列复制 8 处、分类关键词
+  三份松同步清单 — 归既有 💤 四语言/分类清单战役
+- 💤 gitlab.rs enrich_commit_stats 与 fetch_avatar_data_urls 的「分批 spawn(8)+预算+收割」
+  框架逐字同构 — 抽 batched_with_budget 助手（低频发版路径，收益/风险比一般）
+- 💤 Timeline(3556 行)/Overview(2597 行)/Report(1746 行) 巨型组件拆分 — 已知条目行号
+  持续增长，建议尽快排期专门批次
+- 💤 updater.ts 中文散文正则反解后端状态消息 — 长期方向是后端改发结构化 stage 码
+  （涉 Tauri 事件契约变更）
+
+## 第九轮测试与流水线
+
+- 批次 1（Rust）：cargo +1.97.1 fmt/check(0 warning)/clippy(0 warning)/test 全绿
+  （519+236+21+30=806 通过），npm run test:frontend 833 通过（Rust 改动可能波及的前端
+  契约测试全过），流水线 <链接见 git log 0ab38a4 对应 pipeline>
+- 批次 2/3：npm run check(0 错误)/test:frontend(833)/build 全绿 + bash -n 三个改动脚本
 # 第八轮（2026-09-22）
 
 范围：八分片并行复扫（main+commands / monitor+screenshot+ocr / localhost+avatar+杂项 /
