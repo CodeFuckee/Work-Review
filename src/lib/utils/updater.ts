@@ -76,6 +76,63 @@ export interface UpdateFlowDependencies {
   error: (message: string, error: unknown) => void;
 }
 
+/** 后端状态消息 → i18n 键的匹配表（顺序敏感：先到的先命中）。
+ * 后端改任一文案（含标点/空格）即静默降级为通用 inProgress 文案——
+ * 表驱动让增删映射只改一处，长期方向是后端改发结构化 stage 码。 */
+const RUNTIME_STATUS_PATTERNS: ReadonlyArray<{
+  pattern: RegExp;
+  key: string;
+  params?: (matched: RegExpMatchArray) => Record<string, string>;
+}> = [
+  {
+    pattern: /^正在检查更新源\s+(.+)\.\.\.$/,
+    key: 'updater.checkingSource',
+    params: matched => ({ sourceLabel: matched[1] }),
+  },
+  {
+    pattern: /^发现新版本\s+(.+?)，准备从\s+(.+)\s+下载\.\.\.$/,
+    key: 'updater.preparingDownload',
+    params: matched => ({ version: matched[1], sourceLabel: matched[2] }),
+  },
+  {
+    pattern: /^更新安装完成，来源\s+(.+)$/,
+    key: 'updater.installedFromSource',
+    params: matched => ({ sourceLabel: matched[1] }),
+  },
+  {
+    pattern: /^未找到可用于版本\s+(.+)\s+的在线更新源$/,
+    key: 'updater.noSourceForVersion',
+    params: matched => ({ version: matched[1] }),
+  },
+  {
+    pattern: /^在线更新失败，已尝试全部更新源：(.+)$/,
+    key: 'updater.failedWithDetails',
+    params: matched => ({ details: matched[1] }),
+  },
+  { pattern: /^在线更新已完成$/, key: 'updater.completed' },
+  { pattern: /^当前未发现可安装的在线更新$/, key: 'updater.noInstallAvailable' },
+  {
+    pattern: /^正在下载更新\s+(\d+)%（(.+)）$/,
+    key: 'updater.downloadingPercent',
+    params: matched => ({ percent: matched[1], sourceLabel: matched[2] }),
+  },
+  {
+    pattern: /^正在下载更新\s+([\d.]+)\s*MB（(.+)）$/,
+    key: 'updater.downloadingSize',
+    params: matched => ({ size: matched[1], sourceLabel: matched[2] }),
+  },
+  {
+    pattern: /^下载完成，正在安装（(.+)）\.\.\.$/,
+    key: 'updater.installingFromSource',
+    params: matched => ({ sourceLabel: matched[1] }),
+  },
+  {
+    pattern: /^源\s+(.+)\s+更新失败，准备尝试下一个源\.\.\.$/,
+    key: 'updater.sourceFailedRetrying',
+    params: matched => ({ sourceLabel: matched[1] }),
+  },
+];
+
 function localizeRuntimeStatusMessage(
   message: unknown,
   translate: UpdateFlowDependencies['translate'],
@@ -85,66 +142,11 @@ function localizeRuntimeStatusMessage(
     return '';
   }
 
-  let matched = text.match(/^正在检查更新源\s+(.+)\.\.\.$/);
-  if (matched) {
-    return translate('updater.checkingSource', { sourceLabel: matched[1] });
-  }
-
-  matched = text.match(/^发现新版本\s+(.+?)，准备从\s+(.+)\s+下载\.\.\.$/);
-  if (matched) {
-    return translate('updater.preparingDownload', {
-      version: matched[1],
-      sourceLabel: matched[2],
-    });
-  }
-
-  matched = text.match(/^更新安装完成，来源\s+(.+)$/);
-  if (matched) {
-    return translate('updater.installedFromSource', { sourceLabel: matched[1] });
-  }
-
-  matched = text.match(/^未找到可用于版本\s+(.+)\s+的在线更新源$/);
-  if (matched) {
-    return translate('updater.noSourceForVersion', { version: matched[1] });
-  }
-
-  matched = text.match(/^在线更新失败，已尝试全部更新源：(.+)$/);
-  if (matched) {
-    return translate('updater.failedWithDetails', { details: matched[1] });
-  }
-
-  if (text === '在线更新已完成') {
-    return translate('updater.completed');
-  }
-
-  if (text === '当前未发现可安装的在线更新') {
-    return translate('updater.noInstallAvailable');
-  }
-
-  matched = text.match(/^正在下载更新\s+(\d+)%（(.+)）$/);
-  if (matched) {
-    return translate('updater.downloadingPercent', {
-      percent: matched[1],
-      sourceLabel: matched[2],
-    });
-  }
-
-  matched = text.match(/^正在下载更新\s+([\d.]+)\s*MB（(.+)）$/);
-  if (matched) {
-    return translate('updater.downloadingSize', {
-      size: matched[1],
-      sourceLabel: matched[2],
-    });
-  }
-
-  matched = text.match(/^下载完成，正在安装（(.+)）\.\.\.$/);
-  if (matched) {
-    return translate('updater.installingFromSource', { sourceLabel: matched[1] });
-  }
-
-  matched = text.match(/^源\s+(.+)\s+更新失败，准备尝试下一个源\.\.\.$/);
-  if (matched) {
-    return translate('updater.sourceFailedRetrying', { sourceLabel: matched[1] });
+  for (const entry of RUNTIME_STATUS_PATTERNS) {
+    const matched = text.match(entry.pattern);
+    if (matched) {
+      return translate(entry.key, entry.params?.(matched));
+    }
   }
 
   // 未识别的后端状态不能直接透出，避免在非中文界面泄漏中文消息。

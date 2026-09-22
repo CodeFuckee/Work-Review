@@ -37,21 +37,41 @@ const authSvg = encodeSvg(
   </svg>`
 );
 
-const fallbackIconMap = new Map<string, string>([
-  ['work review', '/icons/256x256.png'],
-  ['work-review', '/icons/256x256.png'],
-  ['work_review', '/icons/256x256.png'],
-  ['daily report', '/icons/256x256.png'],
-  ['daily-report', '/icons/256x256.png'],
-  ['daily_report', '/icons/256x256.png'],
-  ['electron', electronSvg],
-  ['electron helper', electronSvg],
-  ['discover', discoverSvg],
-  ['mail', mailSvg],
-  ['邮件', mailSvg],
-  ['system authentication', authSvg],
-  ['coreautha', authSvg],
-]);
+/** 兜底图标匹配表。exact=规范化后整名相等，includes=包含子串。
+ * 精确名（原 fallbackIconMap）与子串名（原 getFallbackAppIcon 长条件列表）
+ * 原本分散两处各自维护同一批应用（yue 家族就只存在于子串侧），合到一张表
+ * 防单边漂移。顺序敏感：exact 组整体在前（保持原两阶段语义），组内保序。 */
+const FALLBACK_ICON_RULES: ReadonlyArray<{
+  kind: 'exact' | 'includes';
+  needle: string;
+  icon: string;
+}> = [
+  { kind: 'exact', needle: 'work review', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'work-review', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'work_review', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'daily report', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'daily-report', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'daily_report', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'electron', icon: electronSvg },
+  { kind: 'exact', needle: 'electron helper', icon: electronSvg },
+  { kind: 'exact', needle: 'discover', icon: discoverSvg },
+  { kind: 'exact', needle: 'mail', icon: mailSvg },
+  { kind: 'exact', needle: '邮件', icon: mailSvg },
+  { kind: 'exact', needle: 'system authentication', icon: authSvg },
+  { kind: 'exact', needle: 'coreautha', icon: authSvg },
+  { kind: 'includes', needle: 'work review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'work-review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'work_review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'daily report', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'daily-report', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'daily_report', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue-review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue_review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue复盘', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue復盤', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'electron', icon: electronSvg },
+];
 
 function normalizeName(appName: unknown): string {
   return typeof appName === 'string' ? appName.trim().toLowerCase() : '';
@@ -99,21 +119,9 @@ export function getFallbackAppIcon(appName: unknown): string | null {
   const normalized = normalizeName(appName);
   if (!normalized) return null;
 
-  if (fallbackIconMap.has(normalized)) {
-    return fallbackIconMap.get(normalized)!;
-  }
-
-  if (
-    normalized.includes('work review') || normalized.includes('work-review') || normalized.includes('work_review')
-    || normalized.includes('daily report') || normalized.includes('daily-report') || normalized.includes('daily_report')
-    || normalized.includes('yue review') || normalized.includes('yue-review') || normalized.includes('yue_review')
-    || normalized.includes('yue复盘') || normalized.includes('yue復盤')
-  ) {
-    return '/icons/256x256.png';
-  }
-
-  if (normalized.includes('electron')) {
-    return electronSvg;
+  for (const { kind, needle, icon } of FALLBACK_ICON_RULES) {
+    const hit = kind === 'exact' ? normalized === needle : normalized.includes(needle);
+    if (hit) return icon;
   }
 
   return buildMonogramIcon(appName);

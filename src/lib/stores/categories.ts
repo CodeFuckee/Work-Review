@@ -50,10 +50,15 @@ function snapshotStore<T>(subscribe: Readable<T>['subscribe']): T {
 
 function createCategoryStore(): CategoryStore {
   const { subscribe, set, update } = writable<CategoryInfo[]>([]);
+  // 请求序号守卫：编辑后的 refresh 与其他组件 onMount 的 refresh 并发时，
+  // 旧数据的慢响应后到不能再覆盖新响应（Ask/Timeline 同款 requestId 守卫）
+  let refreshSeq = 0;
 
   async function refresh(): Promise<void> {
+    const mySeq = ++refreshSeq;
     try {
       const categories = await invoke<CategoryInfo[]>('get_categories');
+      if (mySeq !== refreshSeq) return;
       set(categories);
     } catch (e) {
       console.error('获取分类列表失败:', e);
@@ -91,10 +96,14 @@ export const categoryStore: CategoryStore = createCategoryStore();
 
 function createSemanticCategoryStore(): SemanticCategoryStore {
   const { subscribe, set } = writable<SemanticCategoryInfo[]>([]);
+  // 同 createCategoryStore：丢弃过期响应
+  let refreshSeq = 0;
 
   async function refresh(): Promise<void> {
+    const mySeq = ++refreshSeq;
     try {
       const categories = await invoke<SemanticCategoryInfo[]>('get_semantic_categories');
+      if (mySeq !== refreshSeq) return;
       set(categories);
     } catch (e) {
       console.error('获取语义分类列表失败:', e);

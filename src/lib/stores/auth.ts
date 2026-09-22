@@ -36,14 +36,34 @@ export function getAuth(): AuthState | null {
   try {
     const raw = localStorage.getItem(AUTH_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as AuthState;
+    const parsed = JSON.parse(raw) as Partial<AuthState> | null;
+    // 形状校验：合法 JSON 但缺字段/错型（旧版或半损坏条目）时，
+    // isTokenExpired 算出 number > undefined 恒为 false，坏凭证会被判成
+    // allow 直接放行进主界面（admin 同步全挂）——不满足一律按无凭证走登录门
+    if (
+      !parsed ||
+      typeof parsed.token !== 'string' ||
+      parsed.token === '' ||
+      typeof parsed.expiresAt !== 'number' ||
+      !Number.isFinite(parsed.expiresAt)
+    ) {
+      return null;
+    }
+    return parsed as AuthState;
   } catch {
     return null;
   }
 }
 
 export function setAuth(state: AuthState): void {
-  localStorage.setItem(AUTH_KEY, JSON.stringify(state));
+  // 配额满/隐私模式下 setItem 可能抛错；此刻服务端已发放 token，
+  // 缓存失败不应让登录流程崩成未处理 rejection——warn 后照常返回
+  //（本次会话内内存状态仍可用，下次启动走重新登录）
+  try {
+    localStorage.setItem(AUTH_KEY, JSON.stringify(state));
+  } catch (e) {
+    console.warn('认证凭证写入 localStorage 失败（配额满/隐私模式）:', e);
+  }
 }
 
 export function clearAuth(): void {
@@ -55,7 +75,11 @@ export function getAdminUrl(): string {
 }
 
 export function setAdminUrl(url: string): void {
-  localStorage.setItem(ADMIN_URL_KEY, url.trim().replace(/\/+$/, ''));
+  try {
+    localStorage.setItem(ADMIN_URL_KEY, url.trim().replace(/\/+$/, ''));
+  } catch (e) {
+    console.warn('admin 地址写入 localStorage 失败:', e);
+  }
 }
 
 export function isTokenExpired(state: AuthState): boolean {
@@ -107,6 +131,9 @@ async function postClientAuth(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      // admin 服务挂起（建连但不响应）时 15 秒超时落入下方 network 分支，
+      // 登录/注册按钮不再永久 pending
+      signal: AbortSignal.timeout(15_000),
     });
     if (!resp.ok) {
       return { ok: false, message: `HTTP ${resp.status}` };

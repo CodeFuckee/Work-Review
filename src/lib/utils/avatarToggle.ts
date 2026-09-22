@@ -45,6 +45,35 @@ export function getAvatarToggleUiState(
   };
 }
 
+interface ConfigFieldChange<TConfig extends AvatarSettingsConfig> {
+  field: keyof AvatarSettingsConfig & keyof TConfig;
+  previous: unknown;
+  next: unknown;
+}
+
+/** 改字段 → 保存 → 失败时回滚全部改动字段再 rethrow 的共用模板
+ *（toggleAvatarSetting / updateAvatarScaleSetting / updateAvatarOpacitySetting
+ * 三处逐字同构，抽单点防止单边演化漂移）。 */
+async function applyConfigFieldsWithRollback<TConfig extends AvatarSettingsConfig, TResult>(
+  config: TConfig,
+  saveConfig: AvatarConfigSaver<TConfig>,
+  changes: ReadonlyArray<ConfigFieldChange<TConfig>>,
+  makeResult: () => TResult,
+): Promise<TResult> {
+  for (const { field, next } of changes) {
+    (config as Record<string, unknown>)[field as string] = next;
+  }
+  try {
+    await saveConfig(config);
+    return makeResult();
+  } catch (error) {
+    for (const { field, previous } of changes) {
+      (config as Record<string, unknown>)[field as string] = previous;
+    }
+    throw error;
+  }
+}
+
 export async function toggleAvatarSetting<TConfig extends AvatarSettingsConfig>(
   config: TConfig,
   saveConfig: AvatarConfigSaver<TConfig>,
@@ -53,19 +82,18 @@ export async function toggleAvatarSetting<TConfig extends AvatarSettingsConfig>(
   const previousBreakReminderEnabled = Boolean(config.break_reminder_enabled);
   const nextEnabled = !previousEnabled;
 
-  config.avatar_enabled = nextEnabled;
+  const changes: Array<ConfigFieldChange<TConfig>> = [
+    { field: 'avatar_enabled', previous: previousEnabled, next: nextEnabled },
+  ];
   if (!nextEnabled) {
-    config.break_reminder_enabled = false;
+    changes.push({
+      field: 'break_reminder_enabled',
+      previous: previousBreakReminderEnabled,
+      next: false,
+    });
   }
 
-  try {
-    await saveConfig(config);
-    return nextEnabled;
-  } catch (error) {
-    config.avatar_enabled = previousEnabled;
-    config.break_reminder_enabled = previousBreakReminderEnabled;
-    throw error;
-  }
+  return applyConfigFieldsWithRollback(config, saveConfig, changes, () => nextEnabled);
 }
 
 export function clampAvatarScale(value: unknown): number {
@@ -89,15 +117,12 @@ export async function updateAvatarScaleSetting<TConfig extends AvatarSettingsCon
   const previousScale = clampAvatarScale(config.avatar_scale);
   const clampedScale = clampAvatarScale(nextScale);
 
-  config.avatar_scale = clampedScale;
-
-  try {
-    await saveConfig(config);
-    return clampedScale;
-  } catch (error) {
-    config.avatar_scale = previousScale;
-    throw error;
-  }
+  return applyConfigFieldsWithRollback(
+    config,
+    saveConfig,
+    [{ field: 'avatar_scale', previous: previousScale, next: clampedScale }],
+    () => clampedScale,
+  );
 }
 
 export function clampAvatarOpacity(value: unknown): number {
@@ -121,13 +146,10 @@ export async function updateAvatarOpacitySetting<TConfig extends AvatarSettingsC
   const previousOpacity = clampAvatarOpacity(config.avatar_opacity);
   const clampedOpacity = clampAvatarOpacity(nextOpacity);
 
-  config.avatar_opacity = clampedOpacity;
-
-  try {
-    await saveConfig(config);
-    return clampedOpacity;
-  } catch (error) {
-    config.avatar_opacity = previousOpacity;
-    throw error;
-  }
+  return applyConfigFieldsWithRollback(
+    config,
+    saveConfig,
+    [{ field: 'avatar_opacity', previous: previousOpacity, next: clampedOpacity }],
+    () => clampedOpacity,
+  );
 }
