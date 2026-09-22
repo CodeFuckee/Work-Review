@@ -16,6 +16,8 @@ export interface GitlabProjectRow {
   commits: number;
   additions: number;
   deletions: number;
+  /** 进度条宽度百分比（以提交数最多的项目为满格，最低 2% 可见） */
+  barPercent: number;
 }
 
 export interface GitlabProjectTotals {
@@ -35,13 +37,20 @@ export function gitlabProjectShortName(project: string): string {
 export function buildGitlabProjectRows(
   stats: readonly GitlabProjectStat[],
 ): GitlabProjectRow[] {
-  return stats.map((stat) => ({
+  const rows: GitlabProjectRow[] = stats.map((stat) => ({
     project: stat.project,
     shortName: gitlabProjectShortName(stat.project),
     commits: stat.commits,
     additions: stat.additions,
     deletions: stat.deletions,
+    barPercent: 0,
   }));
+  // 进度条以提交数最多的项目为满格（与时间线/应用使用的柱宽口径一致），最低 2% 可见
+  const maxCommits = Math.max(0, ...rows.map((row) => row.commits));
+  for (const row of rows) {
+    row.barPercent = maxCommits > 0 ? Math.max((row.commits / maxCommits) * 100, 2) : 0;
+  }
+  return rows;
 }
 
 export function sumGitlabProjectRows(

@@ -41,6 +41,12 @@
     type GitlabProjectStat,
   } from './overviewGitlabPresentation.ts';
 
+  // GitLab 项目进度条配色（与 AppUsageChart 的柱色保持一致）
+  const GITLAB_BAR_COLORS = [
+    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+  ];
+
   interface AppUsage {
     app_name: string;
     duration: number;
@@ -1947,7 +1953,8 @@
       {/if}
     </section>
 
-    <!-- GitLab 提交统计：按项目聚合提交次数与代码行数变更（配置了 GitLab 才显示） -->
+    <!-- GitLab 提交统计：按项目聚合提交次数与代码行数变更（配置了 GitLab 才显示），
+         行布局复用 app-usage-chart 同款网格（名称+次数下标 | 进度条 | 行数变更） -->
     {#if gitlabConfigured}
       <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">
         <div class="mb-3 flex items-baseline justify-between gap-3">
@@ -1962,17 +1969,32 @@
             <p class="empty-state-copy">{t('overview.gitlabNoCommits')}</p>
           </div>
         {:else}
-          <div class="space-y-1">
-            {#each gitlabRows as row (row.project)}
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-2 py-2.5">
-                <p class="truncate font-mono text-sm text-slate-700 dark:text-[#c9d1d9]" title={row.project}>{row.shortName}</p>
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600 dark:bg-[#21262d] dark:text-[#8b949e]">
-                    {t('overview.gitlabCommitsCount', { count: row.commits })}
+          <div class="app-usage-chart__rows">
+            {#each gitlabRows as row, i (row.project)}
+              <div class="app-usage-chart__row">
+                <span class="app-usage-chart__heading">
+                  <span class="app-usage-chart__icon">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" />
+                    </svg>
                   </span>
-                  <span class="font-mono font-medium text-emerald-600 dark:text-emerald-400" title={t('overview.gitlabLinesAdded')}>+{row.additions.toLocaleString()}</span>
-                  <span class="font-mono font-medium text-rose-500 dark:text-rose-400" title={t('overview.gitlabLinesDeleted')}>−{row.deletions.toLocaleString()}</span>
-                </div>
+                  <span class="app-usage-chart__copy">
+                    <span class="app-usage-chart__name" title={row.project}>{row.shortName}</span>
+                    <span class="app-usage-chart__meta">{t('overview.gitlabCommitsCount', { count: row.commits })}</span>
+                  </span>
+                </span>
+                <span class="app-usage-chart__track">
+                  <span
+                    class="app-usage-chart__bar"
+                    style="width: {row.barPercent}%; background-color: {GITLAB_BAR_COLORS[i % GITLAB_BAR_COLORS.length]}; opacity: 0.8"
+                  ></span>
+                </span>
+                <span class="app-usage-chart__duration">
+                  <span class="text-emerald-600 dark:text-emerald-400" title={t('overview.gitlabLinesAdded')}>+{row.additions.toLocaleString()}</span>
+                  <span class="text-rose-500 dark:text-rose-400" title={t('overview.gitlabLinesDeleted')}>−{row.deletions.toLocaleString()}</span>
+                </span>
               </div>
             {/each}
           </div>
