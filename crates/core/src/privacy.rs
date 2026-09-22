@@ -135,7 +135,12 @@ impl PrivacyFilter {
 
         // 2. 检查窗口标题关键词（匹配时使用脱敏模式）
         if self.config.should_anonymize_by_keyword(window_title) {
-            log::debug!("窗口标题 {window_title} 匹配敏感关键词，使用脱敏模式");
+            // 不回显标题本身：命中敏感关键词的标题恰是最敏感的内容，
+            // debug 排障日志里只记「命中」事实即可（同第八轮采集日志脱敏口径）
+            log::debug!(
+                "窗口标题命中敏感关键词（长度 {}），使用脱敏模式",
+                window_title.chars().count()
+            );
             return PrivacyAction::Anonymize;
         }
 

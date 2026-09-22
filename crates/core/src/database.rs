@@ -61,19 +61,9 @@ fn category_counts_toward_work_time(category: &str) -> bool {
 }
 
 fn matches_ignored_app_for_stats(app_name: &str, ignored_apps: &[String]) -> bool {
-    let app_lower = crate::categorize::normalize_display_app_name(app_name)
-        .to_lowercase()
-        .trim()
-        .to_string();
-    if app_lower.is_empty() {
-        return false;
-    }
-
-    // 单向小写子串匹配，与 privacy::matches_ignored_app 保持一致：
-    // 不做反向包含，避免忽略 "Google Chrome Canary" 时误伤 "Google Chrome"。
-    ignored_apps
-        .iter()
-        .any(|ignored| !ignored.is_empty() && app_lower.contains(ignored))
+    // 直接委托 privacy 版本：单向小写子串匹配的口径由一处定义，
+    // 避免 stats 侧与隐私过滤侧漂移（历史上两份逐字重复实现）。
+    crate::privacy::matches_ignored_app(app_name, ignored_apps)
 }
 
 fn merged_domain_matches_excluded(domain: &str, excluded_domain: &str) -> bool {
@@ -799,6 +789,21 @@ impl Database {
         Ok(())
     }
 
+    /// 兼容旧数据库的加列迁移：列已存在（duplicate column）时静默跳过，
+    /// 其余错误（磁盘满/只读库/库损坏）照常传播——不能整条吞掉，否则列静默缺失，
+    /// 后续对这些列的 INSERT/SELECT 以晦涩错误失败且启动日志零痕迹。
+    fn add_column_if_missing(conn: &Connection, sql: &str) -> Result<()> {
+        match conn.execute(sql, []) {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(_, Some(msg)))
+                if msg.contains("duplicate column name") =>
+            {
+                Ok(())
+            }
+            Err(e) => Err(AppError::Database(e)),
+        }
+    }
+
     /// 初始化数据库表
     fn init_tables(&self) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| {
@@ -863,14 +868,14 @@ impl Database {
             [],
         )?;
 
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE daily_reports ADD COLUMN fallback_reason TEXT",
-            [],
-        );
-        let _ = conn.execute(
+        )?;
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE daily_reports_localized ADD COLUMN fallback_reason TEXT",
-            [],
-        );
+        )?;
 
         conn.execute(
             "INSERT OR IGNORE INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at)
@@ -902,21 +907,27 @@ impl Database {
         )?;
 
         // 迁移：添加 browser_url 列（如果不存在）
-        let _ = conn.execute("ALTER TABLE activities ADD COLUMN browser_url TEXT", []);
+        Self::add_column_if_missing(&conn, "ALTER TABLE activities ADD COLUMN browser_url TEXT")?;
         // 迁移：添加 executable_path 列（如果不存在）
-        let _ = conn.execute("ALTER TABLE activities ADD COLUMN executable_path TEXT", []);
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN executable_path TEXT",
+        )?;
         // 迁移：添加 semantic_category 列（如果不存在）
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE activities ADD COLUMN semantic_category TEXT",
-            [],
-        );
+        )?;
         // 迁移：添加 semantic_confidence 列（如果不存在）
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE activities ADD COLUMN semantic_confidence INTEGER",
-            [],
-        );
+        )?;
         // 迁移：添加 screenshot_url 列（远程存储 URL）
-        let _ = conn.execute("ALTER TABLE activities ADD COLUMN screenshot_url TEXT", []);
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN screenshot_url TEXT",
+        )?;
 
         // AI 实体分类缓存：后台任务对未知应用/域名做一次性归类,此后采集直接查表,
         // 无需用户手动加规则。entity_key 形如 "app:xxx" / "domain:yyy"。
@@ -1013,10 +1024,10 @@ impl Database {
             [],
         )?;
         // 兼容旧数据库：首次升级时补充重建代际列；重复执行时忽略 duplicate column。
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE semantic_memory_state ADD COLUMN build_id TEXT NOT NULL DEFAULT ''",
-            [],
-        );
+        )?;
         conn.execute(
             "INSERT OR IGNORE INTO semantic_memory_state (singleton_id, updated_at) VALUES (1, ?1)",
             params![chrono::Utc::now().timestamp()],
@@ -2012,6 +2023,9 @@ impl Database {
 
         let activity_rows: Vec<_> = activity_rows.collect::<std::result::Result<Vec<_>, _>>()?;
         drop(stmt);
+        // 数据已全部物化，聚合是纯内存计算——立即释放连接锁，
+        // 不让逐活动的小时桶切分阻塞采集热路径的 insert_activity
+        drop(conn);
 
         for (
             timestamp,
@@ -2200,8 +2214,6 @@ impl Database {
                 }
             }
         }
-
-        drop(conn);
 
         let mut app_usage: Vec<AppUsage> = app_usage_map
             .into_iter()
@@ -2565,6 +2577,11 @@ impl Database {
             })?
             .filter_map(|r| r.ok())
             .collect();
+
+        // 行已全部物化，后续分段构建与逐小时聚合是纯内存计算——
+        // 立即释放连接锁，多日大区间时不阻塞采集热路径
+        drop(stmt);
+        drop(conn);
 
         #[derive(Clone)]
         struct HourlySegment {
@@ -3231,7 +3248,9 @@ impl Database {
 
         let date_parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .map_err(|e| AppError::Config(e.to_string()))?;
-        let h = (hour as u32).min(23);
+        // 先 clamp 再 cast：`(hour as u32).min(23)` 会把负数回绕成巨大 u32 后收成 23
+        // （hour=-1 查的是 23 点），与 local_hour_end_timestamp 的钳制口径一致
+        let h = hour.clamp(0, 23) as u32;
         let (start_ts, end_ts) = local_hour_bounds(date_parsed, h)?;
 
         let sql = format!(
@@ -3852,6 +3871,8 @@ impl Database {
                     score,
                 });
             }
+        } else {
+            log::warn!("search_memory: FTS activities 通道查询失败，跳过该通道");
         }
 
         // === FTS5 检索小时摘要 ===
@@ -3876,6 +3897,8 @@ impl Database {
                     score: 180,
                 });
             }
+        } else {
+            log::warn!("search_memory: FTS 小时摘要通道查询失败，跳过该通道");
         }
 
         // === FTS5 检索日报 ===
@@ -3899,6 +3922,8 @@ impl Database {
                     score: 160,
                 });
             }
+        } else {
+            log::warn!("search_memory: FTS 日报通道查询失败，跳过该通道");
         }
 
         // === FTS 无结果时回退到关键词匹配 ===
@@ -4044,16 +4069,21 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
         let now = chrono::Utc::now().timestamp();
-        conn.execute(
+        // 两条语句包事务：UPDATE 失败/中途崩溃时不留 updated_at 停留旧值的会话
+        // （会话列表按 updated_at 排序，半写会让新消息会话沉底并提前落入清理范围）
+        // （同 create/delete_assistant_conversation 的事务口径）
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO assistant_messages (conversation_id, role, content, tool_digest, model_name, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![conversation_id, role, content, tool_digest, model_name, now],
         )?;
-        let id = conn.last_insert_rowid();
-        conn.execute(
+        let id = tx.last_insert_rowid();
+        tx.execute(
             "UPDATE assistant_conversations SET updated_at = ?1 WHERE id = ?2",
             params![now, conversation_id],
         )?;
+        tx.commit()?;
         Ok(id)
     }
 
@@ -4796,7 +4826,8 @@ impl Database {
         Ok(exists != 0)
     }
 
-    /// 写入/更新记忆块。内容变化时清空 embedding（待重嵌入）。
+    /// 写入/更新记忆块。仅当新内容更长时更新内容并清空 embedding（待重嵌入）；
+    /// 等长/变短的更新保留旧内容与旧嵌入（upsert 以 chunk_key 幂等）。
     #[allow(clippy::too_many_arguments)]
     pub fn upsert_memory_chunk(
         &self,
@@ -5154,14 +5185,34 @@ impl Database {
         let mut items = Vec::new();
 
         // 回退：activities
-        let mut stmt = conn.prepare(
+        // WHERE (?1 IS NULL OR timestamp >= ?1) 让 SQLite 无法把参数下推为索引
+        // 范围约束，带旧日期区间时 DESC 扫描要先跳过全部更新的行；按实参拼出
+        // 确定性条件保持同结果的同时让 timestamp 索引可走范围扫描
+        // （同 get_activities_in_range 的已修款）
+        let mut conditions: Vec<&'static str> = Vec::with_capacity(2);
+        let mut args: Vec<i64> = Vec::with_capacity(3);
+        if let Some(start) = start_ts {
+            conditions.push("timestamp >= ?");
+            args.push(start);
+        }
+        if let Some(end) = end_ts {
+            conditions.push("timestamp < ?");
+            args.push(end);
+        }
+        args.push(fetch_limit);
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
             "SELECT id, timestamp, app_name, window_title, ocr_text, browser_url, duration
              FROM activities
-             WHERE (?1 IS NULL OR timestamp >= ?1)
-               AND (?2 IS NULL OR timestamp < ?2)
+             {where_clause}
              ORDER BY timestamp DESC
-             LIMIT ?3",
-        )?;
+             LIMIT ?"
+        );
+        let mut stmt = conn.prepare(&sql)?;
 
         let rows: Vec<(
             i64,
@@ -5172,7 +5223,7 @@ impl Database {
             Option<String>,
             i64,
         )> = stmt
-            .query_map(params![start_ts, end_ts, fetch_limit], |row| {
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, i64>(1)?,
@@ -5357,6 +5408,15 @@ mod tests {
         std::env::temp_dir().join(format!("work-review-{name}-{unique}.db"))
     }
 
+    /// 测试收尾统一清理：删库文件并连带 WAL 模式的 -wal/-shm 伴生文件。
+    /// 调用前必须先 drop 数据库连接——连接存活时 Windows 上文件被句柄锁定、
+    /// 删除静默失败，CI runner 与开发机临时目录会持续累积。
+    fn remove_db_files(db_path: &std::path::Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", db_path.display(), suffix));
+        }
+    }
+
     fn local_ts(date: &str, hour: u32, minute: u32) -> i64 {
         let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").expect("解析日期失败");
         let ndt = date.and_hms_opt(hour, minute, 0).expect("构造本地时间失败");
@@ -5499,7 +5559,8 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].1, "screenshots/a.jpg");
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5596,7 +5657,8 @@ mod tests {
             Some("https://cdn.example.com/workreview/shot-b.jpg")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5635,7 +5697,8 @@ mod tests {
         assert_eq!(merged.timestamp, now);
         assert_eq!(merged.ocr_text.as_deref(), Some("old\n---\nnew"));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5694,7 +5757,8 @@ mod tests {
             Some("https://cdn.example.com/new.jpg")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5781,7 +5845,8 @@ mod tests {
         );
         assert_eq!(stats.app_usage.len(), 2);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5848,7 +5913,8 @@ mod tests {
                 }
             }));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5921,7 +5987,8 @@ mod tests {
             .flat_map(|browser| browser.domains.iter())
             .all(|domain| domain.domain != "linux.dolatest"));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5982,7 +6049,8 @@ mod tests {
             Some("/Applications/Mail.app/Contents/MacOS/Mail")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6034,7 +6102,8 @@ mod tests {
 
         assert_eq!(stats.hourly_activity_distribution[10].duration, 55 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6110,7 +6179,8 @@ mod tests {
             .iter()
             .all(|bucket| bucket.total_duration <= 60 * 60));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6195,7 +6265,8 @@ mod tests {
         assert_eq!(stats.browser_duration, 0);
         assert!(stats.domain_usage.is_empty());
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6230,7 +6301,8 @@ mod tests {
         assert_eq!(stats.domain_usage.len(), 12);
         assert_eq!(stats.domain_total_count, 12);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6276,7 +6348,8 @@ mod tests {
             "自定义分类的时长不应被算到 other"
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6313,7 +6386,8 @@ mod tests {
         assert_eq!(buckets[11].apps[0].app_name, "VS Code");
         assert_eq!(buckets[11].apps[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6349,7 +6423,8 @@ mod tests {
         assert_eq!(buckets[10].apps[0].app_name, "Cursor");
         assert_eq!(buckets[10].apps[0].duration, 20 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6451,7 +6526,8 @@ mod tests {
             Some(10 * 60)
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6524,7 +6600,8 @@ mod tests {
         assert_eq!(buckets[10].apps[0].app_name, "Google Chrome");
         assert_eq!(buckets[10].apps[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6582,7 +6659,8 @@ mod tests {
             stats.hourly_activity_distribution[10].duration
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6621,7 +6699,8 @@ mod tests {
         assert_eq!(hour11.len(), 1);
         assert_eq!(hour11[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6655,7 +6734,8 @@ mod tests {
         assert_eq!(stats.total_duration, 10 * 60);
         assert_eq!(stats.app_usage[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6689,7 +6769,8 @@ mod tests {
         assert_eq!(stats.total_duration, 10 * 60);
         assert_eq!(stats.app_usage[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6723,7 +6804,8 @@ mod tests {
         assert_eq!(stats.total_duration, 20 * 60);
         assert_eq!(stats.work_time_duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6812,7 +6894,8 @@ mod tests {
         assert_eq!(flex_stats.work_time_duration, 90 * 60);
         assert_eq!(flex_stats.overtime_duration, 60 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6894,7 +6977,8 @@ mod tests {
         assert_eq!(stats.total_duration, 240 * 60);
         assert_eq!(stats.work_time_duration, 210 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6947,7 +7031,8 @@ mod tests {
         assert_eq!(stats.total_duration, 45 * 60);
         assert_eq!(stats.work_time_duration, 15 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7010,7 +7095,8 @@ mod tests {
             Some(r"D:\Portable\Code\Code.exe")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7045,7 +7131,8 @@ mod tests {
         assert_eq!(latest.semantic_category.as_deref(), Some("资料阅读"));
         assert_eq!(latest.semantic_confidence, Some(86));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7120,7 +7207,8 @@ mod tests {
             .iter()
             .all(|activity| activity.semantic_confidence == Some(88)));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7193,7 +7281,8 @@ mod tests {
                 .contains("github.com/")
         }));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7242,7 +7331,8 @@ mod tests {
         );
         assert_eq!(en_report.fallback_reason, None);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7547,7 +7637,8 @@ mod tests {
             .expect("读取已删除记忆失败")
             .is_none());
         assert_eq!(db.clear_user_memories().expect("清空长期记忆失败"), 3);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7609,7 +7700,8 @@ mod tests {
             )
             .expect("Unicode 字母数字及安全分隔符应可用");
         assert_eq!(valid.memory_key, "回答风格.v2");
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7679,7 +7771,8 @@ mod tests {
         assert_eq!(chunk_count, 1);
         assert_eq!(summary_count, 3);
         drop(conn);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7718,7 +7811,8 @@ mod tests {
         assert_eq!(stats.total_chunks, 1);
         assert_eq!(stats.embedded_chunks, 0);
         assert_eq!(stats.last_indexed_activity_id, 20);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7758,7 +7852,8 @@ mod tests {
         assert_eq!(hits[0].title, "chunk-top");
         assert_eq!(hits[1].title, "chunk-mid");
         assert!(hits[0].score > hits[1].score);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7830,7 +7925,8 @@ mod tests {
                 .1,
             "新内容"
         );
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7860,7 +7956,8 @@ mod tests {
         assert!(state.rebuild_required);
         assert_eq!(state.total_activities, 1);
         assert!(state.build_id.is_empty(), "失效后必须撤销旧构建代际");
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7917,7 +8014,8 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM memory_chunks", [], |row| row.get(0))
             .expect("查询语义块失败");
         assert_eq!(chunk_count, 0);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7937,7 +8035,8 @@ mod tests {
         assert_eq!(current.build_id, "build-b");
         assert_eq!(current.status, "building");
         assert_eq!(current.last_error, None);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7980,7 +8079,8 @@ mod tests {
             .expect("读取失效后的语义状态失败");
         assert_eq!(current.status, "idle");
         assert!(current.rebuild_required);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8012,7 +8112,8 @@ mod tests {
         assert_eq!(current.status, "building");
         assert!(current.rebuild_required);
         assert_eq!(current.total_activities, 1);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8058,7 +8159,8 @@ mod tests {
                 .status,
             "building"
         );
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8085,7 +8187,8 @@ mod tests {
             .expect("读取完成后的语义状态失败");
         assert_eq!(current.status, "ready");
         assert_eq!(current.total_activities, 0);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8127,7 +8230,8 @@ mod tests {
                 .expect("查询语义块数量失败"),
             0
         );
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8165,7 +8269,8 @@ mod tests {
             )
             .expect("旧任务读取待嵌入块失败");
         assert!(stale_pending.is_empty());
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8183,7 +8288,8 @@ mod tests {
         assert_eq!(current.status, "failed");
         assert!(current.rebuild_required);
         assert_eq!(current.last_error.as_deref(), Some("模型探测失败"));
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8245,7 +8351,8 @@ mod tests {
         assert_eq!(current.status, "ready");
         assert!(!current.rebuild_required);
         assert_eq!(current.total_activities, 1);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8313,7 +8420,8 @@ mod tests {
             .get_gitlab_project_stats("2026-01-01", "2026-01-02")
             .expect("聚合失败");
         assert!(empty.is_empty(), "无提交区间应返回空列表");
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -8355,6 +8463,7 @@ mod tests {
             .get_recent_file_events("2026-01-01", "2026-01-02", 10)
             .expect("查询失败");
         assert!(none.is_empty());
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 }

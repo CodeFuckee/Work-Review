@@ -52,13 +52,18 @@ impl StorageManager {
         // 3. 检查存储空间是否超限
         let current_size = self.calculate_storage_size()?;
 
-        // 如果超过限制，继续删除最旧的数据
+        // 如果超过限制，继续删除最旧的数据（复用首次统计结果，不再重扫一遍）
         if current_size > (self.config.storage_limit_mb as u64 * 1024 * 1024) {
-            screenshots_deleted += self.cleanup_oldest_until_under_limit()?;
+            screenshots_deleted += self.cleanup_oldest_until_under_limit(current_size)?;
         }
 
-        // 清理完成后重新统计占用，确保日志与返回结果反映清理后的实际大小
-        let total_size_mb = self.calculate_storage_size()? as f64 / 1024.0 / 1024.0;
+        // 只有实际发生过删除才重新统计；未删除时首次统计仍准确——
+        // 数万文件的目录每次周期清理少付一遍全量扫描
+        let total_size_mb = if screenshots_deleted > 0 || ocr_logs_deleted > 0 {
+            self.calculate_storage_size()? as f64 / 1024.0 / 1024.0
+        } else {
+            current_size as f64 / 1024.0 / 1024.0
+        };
 
         log::info!(
             "存储清理完成: 删除 {screenshots_deleted} 个截图目录, {ocr_logs_deleted} 个 OCR 日志, 当前占用 {total_size_mb:.1} MB"
@@ -162,15 +167,15 @@ impl StorageManager {
         Ok(deleted_count)
     }
 
-    /// 当存储超限时，删除最旧的数据直到低于限制
-    fn cleanup_oldest_until_under_limit(&self) -> Result<u32> {
+    /// 当存储超限时，删除最旧的数据直到低于限制。
+    /// current_size 由调用方传入（cleanup 刚统计过），避免重复全目录扫描。
+    fn cleanup_oldest_until_under_limit(&self, mut current_size: u64) -> Result<u32> {
         let screenshots_dir = self.data_dir.join("screenshots");
         if !screenshots_dir.exists() {
             return Ok(0);
         }
 
         let limit_bytes = self.config.storage_limit_mb as u64 * 1024 * 1024;
-        let mut current_size = self.calculate_storage_size()?;
         let mut deleted_count = 0u32;
 
         // 收集所有日期目录并排序

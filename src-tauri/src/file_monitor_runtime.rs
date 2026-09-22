@@ -30,12 +30,12 @@ pub fn apply_config_locked(
 
     let state_for_events = state_arc.clone();
     match FileMonitorHandle::start(&config.folders, &config.excludes, move |rows| {
-        if let Ok(state) = state_for_events.lock() {
-            let count = rows.len();
-            match state.database.insert_file_events(rows.as_slice()) {
-                Ok(_) => log::info!("文件监控写入 {count} 条事件"),
-                Err(e) => log::warn!("文件监控事件入库失败: {e}"),
-            }
+        // 锁中毒也恢复而非静默丢事件（与全仓 unwrap_or_else(into_inner) 口径一致）
+        let state = state_for_events.lock().unwrap_or_else(|e| e.into_inner());
+        let count = rows.len();
+        match state.database.insert_file_events(rows.as_slice()) {
+            Ok(_) => log::info!("文件监控写入 {count} 条事件"),
+            Err(e) => log::warn!("文件监控事件入库失败: {e}"),
         }
     }) {
         Ok(handle) => {

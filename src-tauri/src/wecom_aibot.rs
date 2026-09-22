@@ -417,7 +417,10 @@ async fn run(
     loop {
         match connect_and_serve(&state, &bot_id, &secret, &shared).await {
             Ok(SessionEnd::Kicked) => {
-                consecutive_errors += 1;
+                // 走到 Ok 分支说明订阅已成功、会话是健康的：退避计数重新计，
+                // 否则历史失败会让之后每次断线都吃满 60s 封顶退避（重连恒慢）。
+                // 被踢分支的重试等待是固定值，不依赖该计数。
+                consecutive_errors = 0;
                 let wait = KICKED_RETRY_SECONDS;
                 let msg = format!(
                     "长连接被其他实例占用，{wait} 秒后重试（同一机器人只能保持一条长连接）"
@@ -431,7 +434,8 @@ async fn run(
                 tokio::time::sleep(Duration::from_secs(wait)).await;
             }
             Ok(SessionEnd::Closed) => {
-                consecutive_errors += 1;
+                // 同上：健康会话结束后从基础退避重新起步，连续快速断开仍会递增
+                consecutive_errors = 1;
                 let wait = reconnect_backoff_seconds(consecutive_errors);
                 let msg = format!("长连接已断开，{wait} 秒后重连");
                 log::warn!("企业微信 Bot {msg}");

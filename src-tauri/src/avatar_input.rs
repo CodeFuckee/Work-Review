@@ -776,14 +776,17 @@ pub fn current_linux_avatar_input_support() -> LinuxAvatarInputSupport {
     LinuxAvatarInputSupport::none()
 }
 
+/// 同鼠标事件分组映射，但吃 msg_send 拿到的原始判别值：
+/// 不对未校验整数 transmute 成 fieldless enum（非合法判别式是即时 UB），
+/// 用枚举判别式的 usize 值直接比较，语义与枚举 match 完全一致。
 #[cfg(target_os = "macos")]
-fn mouse_group_from_event_type(event_type: cocoa::appkit::NSEventType) -> u8 {
+fn mouse_group_from_event_type_raw(event_type_raw: usize) -> u8 {
     use cocoa::appkit::NSEventType;
 
-    match event_type {
-        NSEventType::NSLeftMouseDown => MOUSE_GROUP_LEFT,
-        NSEventType::NSRightMouseDown => MOUSE_GROUP_RIGHT,
-        NSEventType::NSOtherMouseDown => MOUSE_GROUP_SIDE,
+    match event_type_raw {
+        r if r == NSEventType::NSLeftMouseDown as usize => MOUSE_GROUP_LEFT,
+        r if r == NSEventType::NSRightMouseDown as usize => MOUSE_GROUP_RIGHT,
+        r if r == NSEventType::NSOtherMouseDown as usize => MOUSE_GROUP_SIDE,
         _ => MOUSE_GROUP_MOVE,
     }
 }
@@ -886,6 +889,9 @@ fn cursor_ratio_from_virtual_screen(point_x: i32, point_y: i32) -> (f64, f64) {
     (x_ratio, y_ratio)
 }
 
+// SAFETY: 低级键盘钩子回调（WH_KEYBOARD_LL），系统在装有钩子的线程上调用；
+// 回调内不得阻塞——KEYBOARD_STATE 锁临界区仅做内存操作、无 IO/等待；
+// l_param 按 KBDLLHOOKSTRUCT 解释仅在 WM_KEY*/WM_SYSKEY* 分支解引用。
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn windows_keyboard_hook_proc(
     code: i32,
@@ -918,6 +924,9 @@ unsafe extern "system" fn windows_keyboard_hook_proc(
     CallNextHookEx(ptr::null_mut(), code, w_param, l_param)
 }
 
+// SAFETY: 低级鼠标钩子回调（WH_MOUSE_LL），系统在装有钩子的线程上调用；
+// 回调内不得阻塞（仅内存读取与坐标换算）；l_param 按 MSLLHOOKSTRUCT
+// 解释仅在其分支解引用，异常 code 值直接转交 CallNextHookEx。
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn windows_mouse_hook_proc(
     code: i32,
@@ -960,6 +969,9 @@ unsafe extern "system" fn windows_mouse_hook_proc(
     CallNextHookEx(ptr::null_mut(), code, w_param, l_param)
 }
 
+// SAFETY: display 必须是本线程已 XInitThreads 后打开的合法 X11 Display，
+// root_window/screen 须取自同一 display（调用方持独占线程连接）；
+// 函数仅做 XQueryPointer 只读查询，不释放任何资源。
 #[cfg(target_os = "linux")]
 unsafe fn linux_query_cursor_ratio(
     display: *mut x11::xlib::Display,
@@ -1416,6 +1428,8 @@ pub fn start_avatar_input_monitor(app: &AppHandle) {
     use cocoa::base::{id, nil};
     use cocoa::foundation::{NSPoint, NSRect};
 
+    // SAFETY: 须在主线程调用（Tauri run_on_main_thread 已保证）；
+    // NSScreenscreens/count/frame 为只读属性查询，返回对象未跨调用持有。
     unsafe fn current_cursor_ratio() -> (f64, f64) {
         let screens: id = msg_send![class!(NSScreen), screens];
         let count: usize = msg_send![screens, count];
@@ -1500,11 +1514,12 @@ pub fn start_avatar_input_monitor(app: &AppHandle) {
             let event_class = class!(NSEvent);
             let keyboard_handler = ConcreteBlock::new(|event: id| {
                 let event_type_raw: usize = msg_send![event, type];
-                let event_type = std::mem::transmute::<usize, NSEventType>(event_type_raw);
                 let key_code: u16 = msg_send![event, keyCode];
-                match event_type {
-                    NSEventType::NSKeyUp => release_keyboard_input(key_code),
-                    NSEventType::NSFlagsChanged => {
+                // 不对未校验整数 transmute 成 NSEventType（非合法判别式即 UB）：
+                // 用枚举判别式的 usize 值直接比较，语义与原枚举 match 完全一致
+                match event_type_raw {
+                    r if r == NSEventType::NSKeyUp as usize => release_keyboard_input(key_code),
+                    r if r == NSEventType::NSFlagsChanged as usize => {
                         if is_macos_modifier_key_pressed(event, key_code).unwrap_or(true) {
                             record_keyboard_input(
                                 standard_keyboard_group_from_key_code(key_code),
@@ -1523,8 +1538,7 @@ pub fn start_avatar_input_monitor(app: &AppHandle) {
             .copy();
             let mouse_handler = ConcreteBlock::new(|event: id| {
                 let event_type_raw: usize = msg_send![event, type];
-                let event_type = std::mem::transmute::<usize, NSEventType>(event_type_raw);
-                record_mouse_input(mouse_group_from_event_type(event_type));
+                record_mouse_input(mouse_group_from_event_type_raw(event_type_raw));
                 let (cursor_ratio_x, cursor_ratio_y) = current_cursor_ratio();
                 record_cursor_ratio(cursor_ratio_x, cursor_ratio_y);
             })
@@ -1553,6 +1567,14 @@ pub fn start_avatar_input_monitor(app: &AppHandle) {
             ];
 
             if keyboard_monitor == nil || mouse_monitor == nil {
+                // 部分注册成功时必须撤掉已成功的那个监听再返回：句柄不入 slot
+                // 即泄漏在系统侧，且 STARTED 复位后的重试会再注册一份（事件重复派发）
+                if keyboard_monitor != nil {
+                    let _: () = msg_send![event_class, removeMonitor: keyboard_monitor];
+                }
+                if mouse_monitor != nil {
+                    let _: () = msg_send![event_class, removeMonitor: mouse_monitor];
+                }
                 INPUT_MONITOR_STARTED.store(false, Ordering::SeqCst);
                 log::warn!("桌宠输入联动注册失败：系统未返回有效的全局监听句柄");
                 return;

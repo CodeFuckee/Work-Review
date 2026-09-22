@@ -115,13 +115,16 @@ async fn get_tenant_token(client: &Client, app_id: &str, app_secret: &str) -> Op
     let token = data.get("tenant_access_token")?.as_str()?.to_string();
     let expire = data.get("expire").and_then(|v| v.as_u64()).unwrap_or(7200);
     let cache_ttl = expire.saturating_sub(60);
-    if let Ok(mut cache) = TOKEN_CACHE.lock() {
-        *cache = Some((
-            app_id.to_string(),
-            token.clone(),
-            Instant::now() + Duration::from_secs(cache_ttl.max(60)),
-        ));
-    }
+    // 写路径与读路径同款中毒恢复：吞掉 PoisonError 会让缓存此后永远写不进去，
+    // 每条消息都多打一次 tenant_access_token API
+    let mut cache = TOKEN_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *cache = Some((
+        app_id.to_string(),
+        token.clone(),
+        Instant::now() + Duration::from_secs(cache_ttl.max(60)),
+    ));
     Some(token)
 }
 

@@ -2994,17 +2994,20 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                         if !ocr_result.text.is_empty() {
                                             let filtered_text =
                                                 ocr::filter_sensitive_text(&ocr_result.text);
-                                            if let Ok(state_guard) = state_clone.lock() {
-                                                let _ = state_guard.database.update_activity_ocr(
-                                                    latest_id,
-                                                    Some(filtered_text),
-                                                );
-                                                log::info!(
-                                                    "OCR 完成(合并): 活动 {} 识别到 {} 个字符",
-                                                    latest_id,
-                                                    ocr_result.text.len()
-                                                );
-                                            }
+                                            // 锁中毒也恢复而非静默跳过（与全仓
+                                            // unwrap_or_else(into_inner) 口径一致）
+                                            let state_guard = state_clone
+                                                .lock()
+                                                .unwrap_or_else(|e| e.into_inner());
+                                            let _ = state_guard.database.update_activity_ocr(
+                                                latest_id,
+                                                Some(filtered_text),
+                                            );
+                                            log::info!(
+                                                "OCR 完成(合并): 活动 {} 识别到 {} 个字符",
+                                                latest_id,
+                                                ocr_result.text.len()
+                                            );
                                         }
                                     }
                                     Ok(_) => {}
@@ -3189,20 +3192,21 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                                             ocr::filter_sensitive_text(
                                                                 &ocr_result.text,
                                                             );
-                                                        if let Ok(state_guard) = state_clone.lock()
-                                                        {
-                                                            let _ = state_guard
-                                                                .database
-                                                                .update_activity_ocr(
-                                                                    activity_id,
-                                                                    Some(filtered_text),
-                                                                );
-                                                            log::info!(
-                                                        "OCR 完成(新建): 活动 {} 识别到 {} 个字符",
-                                                        activity_id,
-                                                        ocr_result.text.len()
-                                                    );
-                                                        }
+                                                        // 锁中毒也恢复而非静默跳过
+                                                        let state_guard = state_clone
+                                                            .lock()
+                                                            .unwrap_or_else(|e| e.into_inner());
+                                                        let _ = state_guard
+                                                            .database
+                                                            .update_activity_ocr(
+                                                                activity_id,
+                                                                Some(filtered_text),
+                                                            );
+                                                        log::info!(
+                                                            "OCR 完成(新建): 活动 {} 识别到 {} 个字符",
+                                                            activity_id,
+                                                            ocr_result.text.len()
+                                                        );
                                                     }
                                                 }
                                                 Ok(_) => {}
@@ -3231,9 +3235,13 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                                     match remote_upload::upload_screenshot(&remote_cfg, &ap, &rp).await {
                                                         Ok(url) => {
                                                             log::info!("远程上传成功: {url}");
-                                                            if let Ok(g) = st.lock() {
-                                                                let _ = g.database.update_activity_screenshot_url(activity_id, &url);
-                                                            }
+                                                            // 锁中毒也恢复而非静默跳过
+                                                            let g =
+                                                                st.lock().unwrap_or_else(|e| e.into_inner());
+                                                            let _ = g.database
+                                                                .update_activity_screenshot_url(
+                                                                    activity_id, &url,
+                                                                );
                                                         }
                                                         Err(e) => log::warn!("远程上传失败: {e}"),
                                                     }
@@ -4018,9 +4026,11 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
                 log::warn!("写入实体分类缓存失败({key}): {e}");
                 continue;
             }
-            if let Ok(mut map) = entity_category_cache().write() {
-                map.insert(key.clone(), (base.clone(), semantic.clone()));
-            }
+            // 锁中毒也恢复而非静默跳过（内存缓存与库内缓存从此脱节）
+            let mut map = entity_category_cache()
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            map.insert(key.clone(), (base.clone(), semantic.clone()));
 
             // 回溯修正近 14 天历史记录,让统计"自己变准"
             let updated = if let Some(app) = key.strip_prefix("app:") {
@@ -4355,7 +4365,12 @@ async fn main() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let lightweight_mode = window
                     .try_state::<Arc<Mutex<AppState>>>()
-                    .and_then(|state| state.lock().ok().map(|guard| guard.config.lightweight_mode))
+                    .map(|state| {
+                        state
+                            .lock()
+                            .map(|guard| guard.config.lightweight_mode)
+                            .unwrap_or_else(|e| e.into_inner().config.lightweight_mode)
+                    })
                     .unwrap_or(false);
 
                 if main_window_close_behavior(lightweight_mode)

@@ -67,6 +67,34 @@ fn ensured_webdav_dirs() -> &'static Mutex<HashSet<String>> {
     ENSURED_WEBDAV_DIRS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// 远端目录被外部删除后 PUT 会恒 409（缓存只增不失效，MKCOL 永不再发，
+/// send_with_one_retry 只覆盖 5xx/网络错误，补传机制走同一缓存同样失败）——
+/// PUT 命中 409/404 时从缓存移除 object_path 涉及的各级目录，当场重建后重试。
+fn invalidate_webdav_dir_cache(base_url: &str, object_path: &str) {
+    let parts: Vec<&str> = object_path.split('/').collect();
+    let dir_parts = &parts[..parts.len().saturating_sub(1)];
+    let mut current = String::new();
+    let mut removed = 0usize;
+    let mut ensured = ensured_webdav_dirs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    for part in dir_parts {
+        if part.is_empty() {
+            continue;
+        }
+        if !current.is_empty() {
+            current.push('/');
+        }
+        current.push_str(part);
+        if ensured.remove(&format!("{base_url}/{current}")) {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        log::info!("WebDAV 目录缓存失效 {removed} 级（疑似远端目录被删除），将重建");
+    }
+}
+
 pub async fn upload_screenshot(
     config: &RemoteStorageConfig,
     local_path: &Path,
@@ -286,28 +314,46 @@ async fn upload_webdav(
     .await?;
 
     let put_url = format!("{}/{}", base, object_path);
-    let request = client
-        .put(&put_url)
-        .basic_auth(&config.username, Some(&config.password))
-        .header("Content-Type", content_type_for_extension(&object_path))
-        .body(file_bytes.to_vec());
-    let resp = send_with_one_retry(request)
-        .await
-        .map_err(|e| AppError::Screenshot(format!("WebDAV PUT 失败: {e}")))?;
 
-    let status = resp.status().as_u16();
-    if !resp.status().is_success() && status != 201 && status != 204 {
-        let body = resp.text().await.unwrap_or_default();
-        let body_preview = body.chars().take(500).collect::<String>();
+    // PUT 遇 409/404（典型：远端目录被外部清理）时失效目录缓存、重建后重试一次；
+    // 正常路径（首次成功）行为不变，仅修复失败路径的进程内永久失效。
+    let mut retried_after_invalidate = false;
+    loop {
+        let request = client
+            .put(&put_url)
+            .basic_auth(&config.username, Some(&config.password))
+            .header("Content-Type", content_type_for_extension(&object_path))
+            .body(file_bytes.to_vec());
+        let resp = send_with_one_retry(request)
+            .await
+            .map_err(|e| AppError::Screenshot(format!("WebDAV PUT 失败: {e}")))?;
+        let status = resp.status().as_u16();
+        if (200..300).contains(&status) || status == 201 || status == 204 {
+            let public_url =
+                public_url_or_fallback(config.public_url_base.as_deref(), &object_path, &put_url);
+            return Ok(public_url);
+        }
+        let body_preview = match resp.text().await {
+            Ok(body) => body.chars().take(500).collect::<String>(),
+            Err(_) => String::new(),
+        };
+        if (status == 409 || status == 404) && !retried_after_invalidate {
+            retried_after_invalidate = true;
+            invalidate_webdav_dir_cache(base, &object_path);
+            ensure_webdav_directories(
+                client,
+                base,
+                &object_path,
+                &config.username,
+                &config.password,
+            )
+            .await?;
+            continue;
+        }
         return Err(AppError::Screenshot(format!(
             "WebDAV PUT 返回 {status}: {body_preview}"
         )));
     }
-
-    let public_url =
-        public_url_or_fallback(config.public_url_base.as_deref(), &object_path, &put_url);
-
-    Ok(public_url)
 }
 
 pub const APP_CONFIG_OBJECT: &str = "work-review/app-config.json";

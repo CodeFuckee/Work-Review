@@ -22,10 +22,12 @@ pub(crate) fn get_timeline_inner(
     let filtered = filter_activities_by_privacy(activities, &ignored_apps, &excluded_domains);
 
     if !ignored_apps.is_empty() || !excluded_domains.is_empty() {
+        // 只记条数不记清单：哪些应用/域名被隐藏本身是隐私配置，
+        // 明文进持久日志后每次打开时间线都落一份（同第七轮日志脱敏口径）
         log::info!(
-            "隐私过滤: 需过滤应用 {:?}, 域名 {:?}，结果 {} 条",
-            ignored_apps,
-            excluded_domains,
+            "隐私过滤: 应用规则 {} 条, 域名规则 {} 条，结果 {} 条",
+            ignored_apps.len(),
+            excluded_domains.len(),
             filtered.len()
         );
     }

@@ -259,6 +259,8 @@ async fn chat_openai_compatible(
     let response = send_with_retry(request, deadline).await?;
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
+        // 网关错误页可能是整页 HTML，截断防其全量进错误串与日志（同 Gemini 口径）
+        let error_text = error_text.chars().take(300).collect::<String>();
         return Err(AppError::Analysis(format!("LLM 调用失败: {error_text}")));
     }
 
@@ -476,6 +478,8 @@ async fn chat_claude(
 
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
+        // 同上：截断防整页错误 HTML 进错误串与日志
+        let error_text = error_text.chars().take(300).collect::<String>();
         return Err(AppError::Analysis(format!("Claude 调用失败: {error_text}")));
     }
 

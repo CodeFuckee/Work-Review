@@ -27,6 +27,16 @@ pub fn effective_api_host(config_host: Option<&str>) -> String {
         .unwrap_or(LOCALHOST_API_HOST)
         .to_string()
 }
+
+/// 构造对外展示的 base URL。host 为 IPv6 字面量（含冒号）时按 RFC 3986
+/// 包上方括号，否则产出 `http://::1:47831` 这类不可用的畸形串。
+fn http_base_url(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("http://[{host}]:{port}")
+    } else {
+        format!("http://{host}:{port}")
+    }
+}
 const LOCALHOST_API_TOKEN_FILE: &str = "localhost_api_token.txt";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_BODY_BYTES: usize = 128 * 1024;
@@ -381,7 +391,7 @@ pub fn get_localhost_api_status(state: &Arc<Mutex<AppState>>) -> Result<Localhos
         running: runtime_running,
         host: host.clone(),
         port,
-        base_url: format!("http://{host}:{port}"),
+        base_url: http_base_url(&host, port),
         token_configured: token.is_some(),
         token_preview: token.as_deref().map(mask_localhost_api_token),
         last_error,
@@ -520,7 +530,8 @@ pub fn sync_localhost_api_runtime(app: &AppHandle, state: &Arc<Mutex<AppState>>)
     });
 
     log::info!(
-        "本地 API 已监听在 http://{host}:{port}，token={}",
+        "本地 API 已监听在 {}，token={}",
+        http_base_url(&host, port),
         mask_localhost_api_token(&token)
     );
     Ok(())
@@ -714,7 +725,7 @@ fn handle_device_info(state: &Arc<Mutex<AppState>>) -> Result<HttpResponse> {
             "protocolVersion": node_status.protocol_version,
             "recording": is_recording,
             "paused": is_paused,
-            "apiEndpoint": format!("http://{host}:{port}"),
+            "apiEndpoint": http_base_url(&host, port),
         }),
     ))
 }
@@ -1270,7 +1281,7 @@ fn authorize_request(request: &ParsedRequest, state: &Arc<Mutex<AppState>>) -> R
 mod tests {
     use super::{
         acquire_api_capture_permit, build_capture_payload, effective_api_host,
-        ensure_api_capture_enabled, extract_bearer_token, mask_localhost_api_token,
+        ensure_api_capture_enabled, extract_bearer_token, http_base_url, mask_localhost_api_token,
         parse_generate_report_params, request_auth_mode, ParsedRequest, RequestAuthMode,
     };
     use crate::screenshot::ScreenshotResult;
@@ -1416,6 +1427,15 @@ mod tests {
         assert_eq!(effective_api_host(Some(" 0.0.0.0 ")), "0.0.0.0");
         assert_eq!(effective_api_host(Some("192.168.1.23")), "192.168.1.23");
         assert_eq!(effective_api_host(Some("::")), "::");
+    }
+
+    #[test]
+    fn base_url对ipv6字面量应包方括号() {
+        assert_eq!(http_base_url("127.0.0.1", 47831), "http://127.0.0.1:47831");
+        assert_eq!(http_base_url("localhost", 8080), "http://localhost:8080");
+        // 不包方括号时是 `http://::47831` 畸形串，状态面板与 apiEndpoint 均不可用
+        assert_eq!(http_base_url("::", 47831), "http://[::]:47831");
+        assert_eq!(http_base_url("::1", 8080), "http://[::1]:8080");
     }
 
     #[test]

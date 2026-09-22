@@ -572,9 +572,15 @@ pub fn fast_answer(
     }
 
     // 如果有 FTS 关键词命中的结果，也附上
-    let fts_results = database
-        .search_memory(question, date_from.as_deref(), date_to.as_deref(), 3)
-        .unwrap_or_default();
+    let fts_results =
+        match database.search_memory(question, date_from.as_deref(), date_to.as_deref(), 3) {
+            Ok(results) => results,
+            // 降级可以，但不能无声：FTS/库故障时“相关记录”小节静默消失无从排查
+            Err(e) => {
+                log::warn!("fast_answer 记忆检索失败，跳过相关记录小节: {e}");
+                Vec::new()
+            }
+        };
     if !fts_results.is_empty() {
         lines.push("".to_string());
         lines.push(format!("{lbl_related}："));

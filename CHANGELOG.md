@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **第九轮全量代码评审修复（第一批：Rust 行为保持，22 项；完整问题清单与处置见 `CODE_REVIEW_FINDINGS.md` 第九轮）**：
+  - **助手会话追加消息无事务（P2，正确性）**：INSERT 消息与 UPDATE 会话 `updated_at` 不包事务，UPDATE 失败/崩溃后消息已落库但会话排序键停留旧值——新消息会话沉底并可能提前落入「保留最近 100 个」清理被连消息一起删；补 `unchecked_transaction`（同表 create/delete 同款口径）。
+  - **建库迁移吞掉全部 ALTER 错误（P2，正确性）**：`init_tables` 8 处 `ALTER TABLE ADD COLUMN` 用 `let _ =` 吞错，磁盘满/只读库时列静默缺失、后续对这些列的读写以晦涩错误失败且启动日志零痕迹；新增 `add_column_if_missing` 只忽略 duplicate column，其余错误照常传播。
+  - **WebDAV 远端目录被删后上传进程内永久失效（P2，正确性）**：目录缓存只增不失效，PUT 恒 409 且重试只覆盖 5xx/网络错误、补传机制走同一缓存同样失败；PUT 命中 409/404 时失效本次涉及各级目录缓存并重建后重试一次，正常路径不变。
+  - **macOS 桌宠输入监听部分注册失败泄漏系统级监听（P2，正确性）**：提前返回路径不撤已成功的 monitor（泄漏在系统侧），且 STARTED 标志复位后的重试再注册一份造成事件重复派发；部分失败先 `removeMonitor:` 再返回。同文件不再对未校验整数 `transmute` 成 `NSEventType`（fieldless enum 非法判别式即 UB），改为按枚举判别式 usize 直接比较（语义不变）；补 4 处 unsafe SAFETY 注释。
+  - **企业微信智能机器人退避计数只增不复位（P2，正确性）**：任何一次失败后即使长连接健康运行数小时，下次断线重连仍按累计次数吃满 60 秒封顶退避；健康会话结束后退避从基础值重新起步（连续快速断开仍递增）。
+  - **本地 API base_url 对 IPv6 字面量产畸形串（P2，正确性）**：`http://{host}:{port}` 拼接对含冒号 host 产出 `http://::47831`，状态面板地址与 device apiEndpoint 均不可用；IPv6 包方括号，配回归测试。
+  - **锁中毒被吞成静默跳过（P2，健壮性）**：main.rs 4 处与 file_monitor_runtime 1 处用 `if let Ok(lock)` 吞 PoisonError——合并/新建路径 OCR 文本写库、远程截图 URL 回写、实体分类内存缓存、轻量模式关窗行为、文件监控事件入库在某次持锁 panic 后从此静默失效无日志；统一 `unwrap_or_else(into_inner)` 恢复口径（与第五轮 feishu 读路径同款）。
+  - **飞书 token 缓存写路径仍吞锁中毒（P2，健壮性）**：读路径第五轮已修、写路径漏网——缓存从此永远写不进，每条飞书消息多打一次 tenant_access_token API；写路径同款恢复。
+  - **隐私过滤 debug 日志明文记录命中敏感关键词的标题（P2，隐私）**：`crates/core/privacy.rs` 恰在标题命中敏感词时才把标题整条打进 debug 日志（第八轮修的是 src-tauri 侧五处，本处为 core 侧残留）；改只记「命中+长度」。
+  - **时间线命令日志明文打印隐私规则清单（P2，隐私）**：`get_timeline` 每次以 info 级打印完整 ignored_apps/excluded_domains（哪些应用/域名被隐藏本身是隐私配置，明文进持久日志）；改只记条数。
+  - **MCP/助手会话分页 limit 无上限直通 DB（P2，防御）**：mcp-server `search_activities`/`query_timeline` 与命令层 `list_assistant_conversations` 的 limit 直通 SQL LIMIT（FTS 回退路径内部还放大 12 倍行数）；统一钳 [1, 200]。
+  - **agent 收束与确认卡加固（P2，健壮性）**：模型返回 Stop 但正文为空时给兜底文案不再产生空气泡（同 calls_missing/MaxTokens 收束口径）；行动工具确认卡片回显模型参数剥控制字符并限长（同文件 user_memory 预览同款安全立场）；OpenAI/Claude 非流式错误 body 截 300 字符（防网关整页 HTML 进错误串与日志，同 Gemini/流式口径）；fast_answer 记忆检索失败补 warn 不再无声降级。
+  - **统计与搜索性能（P2，性能）**：storage 周期清理复用首次统计少付 1-2 遍全目录扫描；`get_daily_stats_with_segments_filtered` 与 `get_hourly_app_breakdown_range_filtered` 数据物化后立即释放连接锁，聚合不再阻塞采集热路径；`search_memory_fallback` 按实参拼确定性 WHERE 让 timestamp 索引可走范围扫描（同 `get_activities_in_range` 已修款）。
+  - **健壮性小修（P2）**：`get_hourly_activities` 先 clamp 再 cast（负数 hour 经 u32 回绕恒查 23 点，对齐 `local_hour_end_timestamp` 口径）；记忆块 upsert 注释与实现对齐（仅新内容更长才更新并清空 embedding）。
+  - **去重与测试卫生（P2，可维护性）**：`matches_ignored_app_for_stats` 直接委托 privacy 版本（消除逐字重复的第二份匹配实现）；工具规范名查找表整响应构建一次不随 tool_calls 数放大；测试清理统一 drop 连接后删 db/-wal/-shm 三文件（Windows 句柄锁定致删除静默失败、CI 临时目录持续累积）。
 - **GitLab 提交行数统计恒为空（P2，服务集成）**：`gitlab_sync_commits_for_date` 拉取提交列表时虽带 `stats=true`，但 GitLab v4 的 commits **列表**接口不返回 stats（该参数被忽略，仅单条详情接口 `/commits/:sha` 返回）——入库的 additions/deletions 全为 NULL，概览统计恒为 0、时间线「+x/-y」从不显示。修复：`fetch_today_commits` 拉完列表后按项目并发（8/批）补拉每条提交详情，总预算 10 秒，超预算或失败的提交保持无统计不影响其余数据（`fetch_commit_stats` 新增；upsert 按 sha 幂等覆盖，重同步即回填）。
 - **客户端登录/注册恒报「账号或密码错误」（匿名请求租户过滤器，P1，服务端）**：Admin.Core `ClientAuthService` 的登录/注册查询受 FreeSql 全局租户过滤器影响——匿名请求没有租户上下文，过滤器生成 `TenantId IS NULL`，任何用户都查不到（注册时的默认租户查询、「OA只读」角色/部门查询同受影响，导致注册的用户租户回退为 1 且角色/部门绑定全部落空）。服务端 ClientAuthService 全部查询补 `DisableGlobalFilter(FilterNames.Tenant)`（fork commit 4251f0e9），部署后重新注册测试账号验证登录通过。
 - **第八轮全量代码评审修复（行为保持，Rust 批次 + CI/构建批次 + TS 去重批次，共 24 项；另有 14 条涉行为语义列待确认、1 条 .svelte 待过目，见 `CODE_REVIEW_FINDINGS.md` 第八轮）**：

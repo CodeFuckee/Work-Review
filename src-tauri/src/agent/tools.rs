@@ -404,12 +404,18 @@ fn user_memory_enum_confirm_preview(
 
 /// 确认卡片上展示的操作摘要（人话描述模型想做什么）。
 pub fn action_confirm_summary(tool: &str, args: &Value) -> String {
+    // 与 user_memory_key_confirm_preview 同一安全立场：模型参数视为不可信输入，
+    // 控制字符（含换行）不回显以防伪造成段文案污染确认卡片，展示限长。
     let s = |key: &str| {
-        args.get(key)
+        let cleaned: String = args
+            .get(key)
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim()
-            .to_string()
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect();
+        truncate_chars(cleaned.trim(), 80)
     };
     let expires_at = || match args.get("expires_at") {
         None | Some(Value::Null) => "永久".to_string(),

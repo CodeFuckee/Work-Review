@@ -665,7 +665,7 @@ fn handle_tool_call(name: &str, args: &Value, state: &Arc<Mutex<AppState>>) -> V
     match name {
         "query_timeline" => with_policy_check(state, name, Permission::ReadActivities, |s| {
             let date = args["date"].as_str().unwrap_or("");
-            let limit = args["limit"].as_u64().map(|l| l as u32);
+            let limit = args["limit"].as_u64().map(|l| l.clamp(1, 200) as u32);
             let offset = args["offset"].as_u64().map(|o| o as u32);
             match s.db.get_timeline(date, limit, offset) {
                 Ok(activities) => {
@@ -690,7 +690,9 @@ fn handle_tool_call(name: &str, args: &Value, state: &Arc<Mutex<AppState>>) -> V
             let query = args["query"].as_str().unwrap_or("");
             let date_from = args["date_from"].as_str();
             let date_to = args["date_to"].as_str();
-            let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+            // MCP 客户端传参不可信：limit 钳 [1, 200]，防止极大值全量载入
+            // （FTS 回退路径内部还会放大 12 倍行数）
+            let limit = args["limit"].as_u64().unwrap_or(50).clamp(1, 200) as usize;
             match s.db.search_memory(query, date_from, date_to, limit) {
                 Ok(results) => {
                     let results = filter_memory_results_by_privacy(results, &s.config);
