@@ -48,7 +48,7 @@ variables:
   # cache key 漂移，三平台每条流水线全量冷启动）。注意：runner 构建目录会
   # 随时间增长（target/ 单机可达数十 GB），偶发手动清理或删除整个构建目录
   # 即可（首轮会冷构建一次）。
-  GIT_CLEAN_FLAGS: -ffdx --exclude=target --exclude=.cargo --exclude=.npm
+  GIT_CLEAN_FLAGS: -ffdx --exclude=target --exclude=.cargo --exclude=.npm --exclude=.cache
   LINUX_X64_RUNNER_TAG: linux-x64
   LINUX_ARM64_RUNNER_TAG: linux-arm64
   MACOS_RUNNER_TAG: macos
