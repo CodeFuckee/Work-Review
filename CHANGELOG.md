@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 移除
+- **桌宠（桌面化身）功能整体移除**：悬浮窗、主动开口提醒、全局键鼠输入联动、跟进对话（followups）、休息提醒、托盘桌宠开关、设置页桌宠分区与全部 avatar 配置字段（旧配置文件里的 avatar 键会被自动忽略，无需手动清理）；README 三语言宣传段、桌宠截图与 BongoCat 第三方署名（THIRD_PARTY_NOTICES.md）一并移除。用户裁决「功能鸡肋」（2026-09-24）。
+- **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
+
 ### 修复
 - **第九轮全量代码评审修复（第二/三批：CI/构建 7 项 + 前端 TS 8 项，行为保持）**：
   - **CI：version-bump 并发推送丢失发版（P2）**：两条 main 流水线全绿并发进入 version 阶段时基于同一 origin/main 推导同一版本号，后推送方 `git push --atomic` 因非 fast-forward 整体失败——自动发版丢失、作业假红需人工重跑；加 `resource_group: version-bump` 跨流水线串行。

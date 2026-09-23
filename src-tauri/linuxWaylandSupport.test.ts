@@ -58,31 +58,3 @@ test('Linux 活动窗口检测应为 GNOME Wayland 单独提供 provider 分流'
   assert.match(source, /firefox_family_session_store_url/);
 });
 
-test('GNOME Wayland 桌宠联动应内置专用扩展并通过 D-Bus 暴露指针信息', async () => {
-  const inputSource = await readFile(new URL('./src/avatar_input.rs', import.meta.url), 'utf8');
-  const commandSource = await readCommandsSource();
-  const metadata = await readFile(
-    new URL('../scripts/gnome-shell/work-review-avatar-input@workreview.app/metadata.json', import.meta.url),
-    'utf8'
-  );
-  const extensionSource = await readFile(
-    new URL('../scripts/gnome-shell/work-review-avatar-input@workreview.app/extension.js', import.meta.url),
-    'utf8'
-  );
-
-  assert.match(inputSource, /WorkReviewAvatarInput\.GetInput/);
-  assert.match(inputSource, /gnome-shell-dbus/);
-  assert.match(commandSource, /install_gnome_avatar_extension/);
-  assert.match(commandSource, /requires_relogin/);
-  assert.match(commandSource, /gnome_avatar_extension_needs_relogin/);
-  assert.match(commandSource, /gnome-extensions/);
-  assert.match(commandSource, /work-review-avatar-input@workreview\.app/);
-  assert.match(metadata, /work-review-avatar-input@workreview\.app/);
-  assert.match(extensionSource, /global\.get_pointer\(\)/);
-  assert.match(extensionSource, /captured-event/);
-  assert.match(extensionSource, /KEY_PRESS/);
-  assert.match(extensionSource, /get_key_symbol/);
-  assert.match(extensionSource, /org\.gnome\.shell\.extensions\.WorkReviewAvatarInput/);
-  assert.match(extensionSource, /keyboardTimestampMs/);
-  assert.match(extensionSource, /keyval/);
-});

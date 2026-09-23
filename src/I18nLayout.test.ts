@@ -39,7 +39,6 @@ test('侧边栏底部应提供语言切换菜单，并按 ZH、EN、TW 顺序展
       < source.indexOf("value: 'ar', label: 'AR'"),
     '语言顺序应为 ZH、EN、TW、AR'
   );
-  assert.match(source, /emitTo\('avatar', 'locale-changed', normalizedLocale\)/);
   assert.doesNotMatch(source, /sidebar-footer-version/);
 });
 
@@ -61,21 +60,5 @@ test('语言菜单应左对齐展开，并按“英文缩写 + 语言名称”�
   assert.match(
     source,
     /<span class="font-semibold tracking-\[0\.08em\] text-slate-500 dark:text-\[#7d8590\]">\{option\.label\}<\/span>\s*<span class="text-slate-700 dark:text-\[#c9d1d9\]">\{option\.fullLabel\}<\/span>/s
-  );
-});
-
-test('桌宠窗口应初始化 locale 并监听语言切换事件', async () => {
-  const source = await readFile(new URL('./routes/avatar/AvatarWindow.svelte', import.meta.url), 'utf8');
-
-  assert.match(source, /initializeLocale\(\)/);
-  assert.match(source, /applyLocaleToDocument/);
-  assert.match(source, /listen\('locale-changed'/);
-  assert.match(
-    source,
-    /getAvatarStateBubble\(\s*nextState\.mode,\s*currentLocale,\s*nextState\.contextLabel,\s*nextState\.avatarPersona,?\s*\)/s
-  );
-  assert.match(
-    source,
-    /nextState\.mode !== state\.mode\s*\|\|\s*nextState\.contextLabel !== state\.contextLabel/
   );
 });

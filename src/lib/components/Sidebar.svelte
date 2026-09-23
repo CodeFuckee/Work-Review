@@ -1,7 +1,6 @@
 <script lang="ts">
   import { link, location } from 'svelte-spa-router';
   import { invoke } from '@tauri-apps/api/core';
-  import { emitTo } from '@tauri-apps/api/event';
   import { createEventDispatcher } from 'svelte';
   import {
     getLocaleLabel,
@@ -74,9 +73,6 @@
   function selectLocale(nextLocale: Locale): void {
     const normalizedLocale = setLocale(nextLocale);
     localeMenuOpen = false;
-    emitTo('avatar', 'locale-changed', normalizedLocale).catch((error) => {
-      console.warn('同步桌宠语言失败:', error);
-    });
     invoke('set_app_locale', { locale: normalizedLocale }).catch((error) => {
       console.warn('同步后端语言失败:', error);
     });

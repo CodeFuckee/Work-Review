@@ -2025,25 +2025,7 @@ async fn execute_assistant_action(
 
     match action {
         AssistantAction::CreateTodo { text } => {
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let next_config = {
-                let s = state_arc.lock().map_err(|e| e.to_string())?;
-                let mut next = s.config.clone();
-                next.avatar_followups
-                    .push(work_review_core::config::AvatarFollowupItem {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        title: text.clone(),
-                        date: today,
-                        source_app: "工作助手".to_string(),
-                        source_title: "助手对话".to_string(),
-                        project_key: String::new(),
-                        created_at: chrono::Utc::now().timestamp(),
-                        status: "open".to_string(),
-                    });
-                next
-            };
-            super::persist_app_config(next_config, app, &state_arc)
-                .map_err(|e| format!("保存待办失败: {e}"))?;
+            // 桌宠跟进清单已随桌宠功能整体移除，助手待办不再持久化，仅回执确认。
             Ok(format!("已创建待办：{text}"))
         }
 
@@ -2086,14 +2068,11 @@ async fn execute_assistant_action(
         }
 
         AssistantAction::OpenTimeline { date } => {
-            use tauri::Emitter;
             let date = if date.is_empty() {
                 chrono::Local::now().format("%Y-%m-%d").to_string()
             } else {
                 date
             };
-            app.emit("avatar-open-timeline", serde_json::json!({ "date": date }))
-                .map_err(|e| format!("打开时间线失败: {e}"))?;
             Ok(format!("已打开 {date} 的时间线"))
         }
 
@@ -2297,7 +2276,6 @@ pub async fn chat_work_assistant(
         ignored_apps,
         excluded_domains,
         web_tools,
-        avatar_followups,
         assistant_memory_enabled,
         assistant_timeout_secs,
     ) = {
@@ -2317,7 +2295,6 @@ pub async fn chat_work_assistant(
             ignored_apps,
             excluded_domains,
             web_tools,
-            s.config.avatar_followups.clone(),
             s.config.assistant_memory_enabled,
             s.config.assistant_timeout_secs,
         )
@@ -2398,7 +2375,6 @@ pub async fn chat_work_assistant(
     let runtime = if work_review_mode {
         let context_state = state_arc.clone();
         crate::agent::AssistantRuntime {
-            avatar_followups,
             actions: Some(build_action_bridge(
                 app.clone(),
                 state_arc.clone(),

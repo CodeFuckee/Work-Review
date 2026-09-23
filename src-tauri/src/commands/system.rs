@@ -1,11 +1,6 @@
 //! Auto-extracted from the historical `commands.rs`. Behavior unchanged.
 
 #[cfg(target_os = "linux")]
-use super::avatar::{
-    gnome_avatar_extension_needs_relogin, is_gnome_avatar_extension_enabled,
-    is_gnome_avatar_extension_installed,
-};
-#[cfg(target_os = "linux")]
 use crate::linux_session::{current_linux_desktop_environment, current_linux_desktop_session};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -114,13 +109,6 @@ pub struct LinuxSessionSupportInfo {
     pub active_window_supported: bool,
     pub screenshot_supported: bool,
     pub browser_url_support_level: String,
-    pub avatar_input_provider: String,
-    pub avatar_input_support_level: String,
-    pub avatar_keyboard_supported: bool,
-    pub avatar_mouse_supported: bool,
-    pub gnome_avatar_extension_installed: bool,
-    pub gnome_avatar_extension_enabled: bool,
-    pub gnome_avatar_extension_needs_relogin: bool,
 }
 
 #[tauri::command]
@@ -136,20 +124,7 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
         let desktop_environment = current_linux_desktop_environment();
         let active_window_provider =
             crate::monitor::current_linux_active_window_provider(session, desktop_environment);
-        let avatar_input_support = crate::avatar_input::current_linux_avatar_input_support();
         let screenshot_support = crate::screenshot::current_linux_screenshot_support();
-        let gnome_avatar_extension_installed = desktop_environment
-            == crate::linux_session::LinuxDesktopEnvironment::Gnome
-            && is_gnome_avatar_extension_installed();
-        let gnome_avatar_extension_enabled = desktop_environment
-            == crate::linux_session::LinuxDesktopEnvironment::Gnome
-            && is_gnome_avatar_extension_enabled();
-        let gnome_avatar_extension_needs_relogin = gnome_avatar_extension_needs_relogin(
-            desktop_environment,
-            gnome_avatar_extension_installed,
-            gnome_avatar_extension_enabled,
-            &avatar_input_support,
-        );
         let active_window_supported = active_window_provider.is_some();
         let browser_url_support_level = if active_window_supported {
             "mixed"
@@ -165,13 +140,6 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
             active_window_supported,
             screenshot_supported: screenshot_support.supported,
             browser_url_support_level: browser_url_support_level.to_string(),
-            avatar_input_provider: avatar_input_support.provider.to_string(),
-            avatar_input_support_level: avatar_input_support.support_level.to_string(),
-            avatar_keyboard_supported: avatar_input_support.keyboard_supported,
-            avatar_mouse_supported: avatar_input_support.mouse_supported,
-            gnome_avatar_extension_installed,
-            gnome_avatar_extension_enabled,
-            gnome_avatar_extension_needs_relogin,
         })
     }
 
@@ -185,13 +153,6 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
             active_window_supported: false,
             screenshot_supported: false,
             browser_url_support_level: "not_applicable".to_string(),
-            avatar_input_provider: "not_applicable".to_string(),
-            avatar_input_support_level: "not_applicable".to_string(),
-            avatar_keyboard_supported: false,
-            avatar_mouse_supported: false,
-            gnome_avatar_extension_installed: false,
-            gnome_avatar_extension_enabled: false,
-            gnome_avatar_extension_needs_relogin: false,
         })
     }
 }
@@ -209,20 +170,10 @@ pub async fn check_permissions() -> Result<serde_json::Value, AppError> {
     #[cfg(not(target_os = "linux"))]
     let screenshot_supported = screen_capture;
 
-    #[cfg(target_os = "linux")]
-    let avatar_input_supported =
-        crate::avatar_input::current_linux_avatar_input_support().support_level != "none";
-    #[cfg(target_os = "macos")]
-    let avatar_input_supported = accessibility && input_monitoring;
-    #[cfg(target_os = "windows")]
-    let avatar_input_supported = true;
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let avatar_input_supported = false;
-
     let all_granted = if cfg!(target_os = "macos") {
         screen_capture && accessibility && input_monitoring
     } else {
-        screenshot_supported && avatar_input_supported
+        screenshot_supported
     };
 
     Ok(serde_json::json!({
@@ -230,10 +181,18 @@ pub async fn check_permissions() -> Result<serde_json::Value, AppError> {
         "accessibility": accessibility,
         "input_monitoring": input_monitoring,
         "screenshot_supported": screenshot_supported,
-        "avatar_input_supported": avatar_input_supported,
         "all_granted": all_granted,
         "platform": std::env::consts::OS,
     }))
+}
+
+/// 显示主窗口
+#[tauri::command]
+pub async fn show_main_window(
+    app: tauri::AppHandle,
+    source_window_label: Option<String>,
+) -> Result<(), AppError> {
+    crate::reveal_main_window(&app, source_window_label.as_deref())
 }
 
 #[cfg(target_os = "macos")]

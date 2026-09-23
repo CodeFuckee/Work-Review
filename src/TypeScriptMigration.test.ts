@@ -16,7 +16,6 @@ const migratedModules = [
   'requestEventGate',
   'starterPromptPresentation',
   'streamEvent',
-  'bubbleMessage',
   'errorDisplay',
   'timelineData',
   'reportDateNavigation',
@@ -26,9 +25,6 @@ const migratedModules = [
   'reportSections',
   'overviewCategoryPresentation',
   'overviewDomainPresentation',
-  'avatarStateMeta',
-  'avatarPresetRegistry',
-  'avatarToggle',
   'focusTrap',
   'recording',
   'toast',
@@ -48,7 +44,6 @@ const typedContractModules = [
   'routes/ask/requestEventGate',
   'routes/ask/starterPromptPresentation',
   'routes/ask/streamEvent',
-  'lib/components/Avatar/bubbleMessage',
   'lib/utils/errorDisplay',
   'routes/timeline/timelineData',
   'routes/report/reportDateNavigation',
@@ -58,9 +53,6 @@ const typedContractModules = [
   'routes/report/reportSections',
   'routes/overviewCategoryPresentation',
   'routes/overviewDomainPresentation',
-  'lib/components/Avatar/avatarStateMeta',
-  'lib/components/Avatar/avatarPresetRegistry',
-  'lib/utils/avatarToggle',
   'lib/utils/focusTrap',
   'lib/stores/recording',
   'lib/stores/toast',
@@ -75,9 +67,6 @@ const typedContractModules = [
 ];
 
 const sixthBatchPublicTypeContracts = [
-  'AvatarSettingsConfig',
-  'AvatarConfigSaver',
-  'AvatarToggleUiState',
   'FocusTrapActionResult',
   'RecordingStateInput',
   'RecordingState',
@@ -289,7 +278,7 @@ test('全部第一方 Svelte 组件脚本应启用 TypeScript', async () => {
     }
   }
 
-  assert.equal(svelteFiles.length, 44);
+  assert.equal(svelteFiles.length, 38);
   assert.deepEqual(untypedComponents, []);
 });
 
@@ -333,10 +322,6 @@ test('Ask 流式事件归约工具应迁移到 TypeScript', async () => {
   await assertMigratedToTypeScript('src/routes/ask/streamEvent');
 });
 
-test('桌宠气泡文案工具应迁移到 TypeScript', async () => {
-  await assertMigratedToTypeScript('src/lib/components/Avatar/bubbleMessage');
-});
-
 test('共享错误展示工具应迁移到 TypeScript', async () => {
   await assertMigratedToTypeScript('src/lib/utils/errorDisplay');
 });
@@ -371,18 +356,6 @@ test('概览分类展示工具应迁移到 TypeScript', async () => {
 
 test('概览域名展示工具应迁移到 TypeScript', async () => {
   await assertMigratedToTypeScript('src/routes/overviewDomainPresentation');
-});
-
-test('桌宠状态元数据应迁移到 TypeScript', async () => {
-  await assertMigratedToTypeScript('src/lib/components/Avatar/avatarStateMeta');
-});
-
-test('桌宠预设注册表应迁移到 TypeScript', async () => {
-  await assertMigratedToTypeScript('src/lib/components/Avatar/avatarPresetRegistry');
-});
-
-test('桌宠设置工具应迁移到 TypeScript', async () => {
-  await assertMigratedToTypeScript('src/lib/utils/avatarToggle');
 });
 
 test('弹窗焦点陷阱应迁移到 TypeScript', async () => {

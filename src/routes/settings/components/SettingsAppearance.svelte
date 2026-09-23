@@ -3,41 +3,10 @@
   import { invoke } from '@tauri-apps/api/core';
   import { showToast } from '$lib/stores/toast.ts';
   import { locale, t } from '$lib/i18n/index.ts';
-  import {
-    AVATAR_OPACITY_DEFAULT,
-    AVATAR_SCALE_DEFAULT,
-    clampAvatarOpacity,
-    clampAvatarScale,
-    formatAvatarOpacityLabel,
-    formatAvatarScaleLabel,
-    getAvatarToggleToast,
-    getAvatarToggleUiState,
-    toggleAvatarSetting,
-    updateAvatarOpacitySetting,
-    updateAvatarScaleSetting,
-  } from '$lib/utils/avatarToggle.ts';
-  import type { AvatarToggleUiState } from '$lib/utils/avatarToggle.ts';
-  import {
-    AVATAR_PRESET_OPTIONS,
-    type AvailableAvatarPresetId,
-  } from '$lib/components/Avatar/avatarPresetRegistry.ts';
-  import AvatarPresetPreview from '$lib/components/Avatar/AvatarPresetPreview.svelte';
 
-  type AppearanceMode = 'full' | 'avatar-only' | 'background-only';
-  type AvatarPersona = 'companion' | 'assistant' | 'coach';
   type UiVisualStyle = 'a' | 'b' | 'c';
 
   interface AppearanceConfig {
-    avatar_enabled: boolean;
-    avatar_scale?: number | null;
-    avatar_opacity?: number | null;
-    avatar_persona: AvatarPersona;
-    avatar_preset: AvailableAvatarPresetId;
-    avatar_click_through: boolean;
-    avatar_body_hidden: boolean;
-    avatar_proactive_ai_enabled: boolean;
-    break_reminder_enabled: boolean;
-    break_reminder_interval_minutes: number;
     ui_visual_style: UiVisualStyle;
     background_image: string | null;
     background_opacity?: number | null;
@@ -50,23 +19,11 @@
   };
 
   export let config: AppearanceConfig;
-  export let mode: AppearanceMode = 'full';
 
   const dispatch = createEventDispatcher<{ change: AppearanceChangeDetail }>();
   $: currentLocale = $locale;
-  $: showAvatarControls = mode === 'full' || mode === 'avatar-only';
-  $: showInterfaceStyleSettings = mode === 'full' || mode === 'background-only';
-  $: showBackgroundSettings = mode === 'full' || mode === 'background-only';
 
-  let avatarSaving = false;
-  let avatarScaleSaving = false;
-  let avatarOpacitySaving = false;
-  let avatarPersonaSaving = false;
-  let avatarPresetSaving = false;
   let uiVisualStyleSaving = false;
-  let avatarScaleTimer: ReturnType<typeof setTimeout> | null = null;
-  let avatarOpacityTimer: ReturnType<typeof setTimeout> | null = null;
-  const breakReminderIntervals = [30, 45, 50, 60, 90, 120];
   const UI_VISUAL_STYLE_OPTIONS: readonly {
     id: UiVisualStyle;
     titleKey: string;
@@ -92,29 +49,7 @@
       badgeKey: 'settingsAppearance.uiStyleCBadge',
     },
   ];
-  const AVATAR_PERSONA_OPTIONS: readonly {
-    id: AvatarPersona;
-    titleKey: string;
-    descriptionKey: string;
-  }[] = [
-    {
-      id: 'companion',
-      titleKey: 'settingsAppearance.avatarPersonaCompanionTitle',
-      descriptionKey: 'settingsAppearance.avatarPersonaCompanionDesc',
-    },
-    {
-      id: 'assistant',
-      titleKey: 'settingsAppearance.avatarPersonaAssistantTitle',
-      descriptionKey: 'settingsAppearance.avatarPersonaAssistantDesc',
-    },
-    {
-      id: 'coach',
-      titleKey: 'settingsAppearance.avatarPersonaCoachTitle',
-      descriptionKey: 'settingsAppearance.avatarPersonaCoachDesc',
-    },
-  ];
   let blurLabels: string[] = [];
-  let avatarToggleUi: AvatarToggleUiState = getAvatarToggleUiState(false);
   // === 背景图片 ===
   let bgPreview: string | null = null;
   let bgUploading = false;
@@ -128,164 +63,16 @@
       t('settingsAppearance.blurMedium'),
     ];
   }
-  $: {
-    currentLocale;
-    avatarToggleUi = getAvatarToggleUiState(Boolean(config.avatar_enabled), avatarSaving);
-  }
-  $: avatarScale = clampAvatarScale(config.avatar_scale ?? AVATAR_SCALE_DEFAULT);
-  $: avatarScaleLabel = formatAvatarScaleLabel(avatarScale);
-  $: avatarOpacity = clampAvatarOpacity(config.avatar_opacity ?? AVATAR_OPACITY_DEFAULT);
-  $: avatarOpacityLabel = formatAvatarOpacityLabel(avatarOpacity);
   onMount(async () => {
-    if (showBackgroundSettings) {
-      try {
-        const b64 = await invoke<string | null>('get_background_image');
-        if (b64) bgPreview = `data:image/jpeg;base64,${b64}`;
-      } catch (e) { /* ignore */ }
-    }
+    try {
+      const b64 = await invoke<string | null>('get_background_image');
+      if (b64) bgPreview = `data:image/jpeg;base64,${b64}`;
+    } catch (e) { /* ignore */ }
   });
 
   onDestroy(() => {
     appearanceDestroyed = true;
-    if (avatarScaleTimer !== null) clearTimeout(avatarScaleTimer);
-    if (avatarOpacityTimer !== null) clearTimeout(avatarOpacityTimer);
   });
-
-  async function toggleAvatarMode() {
-    if (avatarSaving) {
-      return;
-    }
-
-    avatarSaving = true;
-
-    try {
-      if (config.avatar_enabled) {
-        try {
-          await invoke<void>('persist_avatar_position');
-        } catch (persistError) {
-          console.warn('关闭桌面助手前持久化位置失败:', persistError);
-        }
-      }
-
-      const enabled = await toggleAvatarSetting(config, async (nextConfig) => {
-        await invoke<void>('save_config', { config: nextConfig });
-      });
-
-      dispatch('change', config);
-      showToast(getAvatarToggleToast(enabled), enabled ? 'success' : 'info');
-    } catch (e) {
-      console.error('设置桌宠失败:', e);
-      showToast(t('settingsAppearance.avatarToggleFailed', { error: e }), 'error');
-    } finally {
-      avatarSaving = false;
-    }
-  }
-
-  function queueAvatarScaleSave(nextScale: number) {
-    if (avatarScaleTimer !== null) clearTimeout(avatarScaleTimer);
-    avatarScaleTimer = setTimeout(async () => {
-      avatarScaleSaving = true;
-
-      try {
-        const savedScale = await updateAvatarScaleSetting(config, nextScale, async (nextConfig) => {
-          await invoke<void>('save_config', { config: nextConfig });
-        });
-        config.avatar_scale = savedScale;
-        dispatch('change', config);
-      } catch (e) {
-        console.error('保存桌宠缩放失败:', e);
-        showToast(t('settingsAppearance.avatarScaleSaveFailed', { error: e }), 'error');
-      } finally {
-        avatarScaleSaving = false;
-      }
-    }, 120);
-  }
-
-  function handleAvatarScaleInput(event: Event) {
-    const input = event.currentTarget;
-    if (!(input instanceof HTMLInputElement)) return;
-    const nextScale = clampAvatarScale(Number(input.value));
-    config.avatar_scale = nextScale;
-    dispatch('change', config);
-    queueAvatarScaleSave(nextScale);
-  }
-
-  function queueAvatarOpacitySave(nextOpacity: number) {
-    if (avatarOpacityTimer !== null) clearTimeout(avatarOpacityTimer);
-    avatarOpacityTimer = setTimeout(async () => {
-      avatarOpacitySaving = true;
-
-      try {
-        const savedOpacity = await updateAvatarOpacitySetting(
-          config,
-          nextOpacity,
-          async (nextConfig) => {
-            await invoke<void>('save_config', { config: nextConfig });
-          }
-        );
-        config.avatar_opacity = savedOpacity;
-        dispatch('change', config);
-      } catch (e) {
-        console.error('保存桌宠透明度失败:', e);
-        showToast(t('settingsAppearance.avatarOpacitySaveFailed', { error: e }), 'error');
-      } finally {
-        avatarOpacitySaving = false;
-      }
-    }, 120);
-  }
-
-  function handleAvatarOpacityInput(event: Event) {
-    const input = event.currentTarget;
-    if (!(input instanceof HTMLInputElement)) return;
-    const nextOpacity = clampAvatarOpacity(Number(input.value));
-    config.avatar_opacity = nextOpacity;
-    dispatch('change', config);
-    queueAvatarOpacitySave(nextOpacity);
-  }
-
-  async function selectAvatarPreset(presetId: AvailableAvatarPresetId) {
-    if (avatarPresetSaving || config.avatar_preset === presetId) {
-      return;
-    }
-
-    avatarPresetSaving = true;
-    const previousPreset = config.avatar_preset;
-    config.avatar_preset = presetId;
-    dispatch('change', config);
-
-    try {
-      await invoke<void>('save_config', { config });
-    } catch (e) {
-      config.avatar_preset = previousPreset;
-      dispatch('change', config);
-      console.error('保存桌宠预设失败:', e);
-      showToast(t('settingsAppearance.avatarPresetSaveFailed', { error: e }), 'error');
-    } finally {
-      avatarPresetSaving = false;
-    }
-  }
-
-  async function selectAvatarPersona(personaId: AvatarPersona) {
-    if (avatarPersonaSaving || config.avatar_persona === personaId) {
-      return;
-    }
-
-    avatarPersonaSaving = true;
-    const previousPersona = config.avatar_persona;
-    config.avatar_persona = personaId;
-    dispatch('change', config);
-
-    try {
-      await invoke<void>('save_config', { config });
-    } catch (e) {
-      config.avatar_persona = previousPersona;
-      dispatch('change', config);
-      console.error('保存桌宠互动风格失败:', e);
-      showToast(t('settingsAppearance.avatarPersonaSaveFailed', { error: e }), 'error');
-    } finally {
-      avatarPersonaSaving = false;
-    }
-  }
 
   async function selectUiVisualStyle(styleId: UiVisualStyle) {
     if (uiVisualStyleSaving || config.ui_visual_style === styleId) {
@@ -314,31 +101,6 @@
     } finally {
       uiVisualStyleSaving = false;
     }
-  }
-
-  function toggleBreakReminder() {
-    if (!config.avatar_enabled) {
-      return;
-    }
-
-    config.break_reminder_enabled = !config.break_reminder_enabled;
-    dispatch('change', config);
-    saveConfigQuietly();
-  }
-
-  function toggleAvatarProactiveAi() {
-    if (!config.avatar_enabled) {
-      return;
-    }
-
-    config.avatar_proactive_ai_enabled = !Boolean(config.avatar_proactive_ai_enabled);
-    dispatch('change', config);
-    saveConfigQuietly();
-  }
-
-  function handleBreakReminderIntervalChange() {
-    dispatch('change', config);
-    saveConfigQuietly();
   }
 
   function handleBgFileSelect(event: Event) {
@@ -430,269 +192,6 @@
   }
 </script>
 
-{#if showAvatarControls}
-<div class="settings-card" data-locale={currentLocale}>
-  <div class="settings-section">
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <div class="flex items-center gap-2">
-          <div class="settings-text">{t('settingsAppearance.avatar')}</div>
-        </div>
-        <div class="settings-muted mt-0.5">{t('settingsAppearance.avatarDesc')}</div>
-        <div class="settings-muted mt-0.5">{t('settingsAppearance.avatarBetaHint')}</div>
-      </div>
-      <button
-        type="button"
-        on:click={toggleAvatarMode}
-        class="switch-track {avatarToggleUi.trackClass} {avatarToggleUi.buttonClass}"
-        disabled={avatarSaving}
-        role="switch"
-        aria-label={avatarToggleUi.ariaLabel}
-        aria-checked={config.avatar_enabled}
-      >
-        <span class="switch-thumb {avatarToggleUi.thumbClass}"></span>
-      </button>
-    </div>
-    <div class="grid gap-x-10 gap-y-3 border-t border-slate-200 pt-3.5 dark:border-[#30363d] lg:grid-cols-2">
-    <div>
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <div class="settings-text">{t('settingsAppearance.avatarSize')}</div>
-        </div>
-        <div class="text-sm font-semibold text-slate-700 dark:text-[#c9d1d9]">
-          {avatarScaleLabel}
-          {#if avatarScaleSaving}
-            <span class="ml-2 text-xs font-normal text-slate-400 dark:text-[#636c76]">{t('settingsAppearance.syncing')}</span>
-          {/if}
-        </div>
-      </div>
-
-      <input
-        type="range"
-        min="0.4"
-        max="1.3"
-        step="0.05"
-        value={avatarScale}
-        on:input={handleAvatarScaleInput}
-        class="mt-3 w-full accent-primary-500"
-        aria-label={t('settingsAppearance.avatarSizeAria')}
-      />
-      <div class="mt-2 flex justify-between text-[11px] text-slate-400 dark:text-[#636c76]">
-        <span>{t('settingsAppearance.smaller')}</span>
-        <span>{t('settingsAppearance.default90')}</span>
-        <span>{t('settingsAppearance.larger')}</span>
-      </div>
-    </div>
-
-    <div>
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <div class="settings-text">{t('settingsAppearance.avatarOpacity')}</div>
-          <div class="settings-muted mt-0.5">{t('settingsAppearance.avatarOpacityHint')}</div>
-        </div>
-        <div class="text-sm font-semibold text-slate-700 dark:text-[#c9d1d9]">
-          {avatarOpacityLabel}
-          {#if avatarOpacitySaving}
-            <span class="ml-2 text-xs font-normal text-slate-400 dark:text-[#636c76]">{t('settingsAppearance.syncing')}</span>
-          {/if}
-        </div>
-      </div>
-
-      <input
-        type="range"
-        min="0.45"
-        max="1"
-        step="0.05"
-        value={avatarOpacity}
-        on:input={handleAvatarOpacityInput}
-        class="mt-3 w-full accent-primary-500"
-        aria-label={t('settingsAppearance.avatarOpacityAria')}
-      />
-      <div class="mt-2 flex justify-between text-[11px] text-slate-400 dark:text-[#636c76]">
-        <span>{t('settingsAppearance.moreTransparent')}</span>
-        <span>{t('settingsAppearance.default82')}</span>
-        <span>{t('settingsAppearance.moreSolid')}</span>
-      </div>
-    </div>
-    </div>
-
-    <div class="settings-block border-t border-slate-200 pt-3.5 dark:border-[#30363d]">
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <div class="settings-text">{t('settingsAppearance.avatarPersona')}</div>
-        </div>
-        {#if avatarPersonaSaving}
-          <div class="text-xs text-slate-400 dark:text-[#636c76]">{t('settingsAppearance.syncing')}</div>
-        {/if}
-      </div>
-
-      <div class="mt-3 grid gap-3 md:grid-cols-3">
-        {#each AVATAR_PERSONA_OPTIONS as persona}
-          <button
-            type="button"
-            class="rounded-lg border p-3 text-left transition {config.avatar_persona === persona.id ? 'border-emerald-400 bg-emerald-50/80 shadow-sm dark:shadow-none dark:border-emerald-400/70 dark:bg-emerald-500/10' : 'border-slate-200 bg-white hover:border-slate-300 dark:border-[#30363d] dark:bg-[#161b22]/60 dark:hover:border-[#484f58]'}"
-            on:click={() => selectAvatarPersona(persona.id)}
-            aria-pressed={config.avatar_persona === persona.id}
-          >
-            <div class="flex items-center justify-between gap-3">
-              <div class="text-sm font-semibold text-slate-900 dark:text-[#e6edf3]">
-                {t(persona.titleKey)}
-              </div>
-              {#if config.avatar_persona === persona.id}
-                <span class="rounded-full bg-emerald-500/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-emerald-700 dark:text-emerald-300">
-                  {t('settingsAppearance.avatarPersonaCurrent')}
-                </span>
-              {/if}
-            </div>
-            <div class="mt-2 text-xs leading-5 text-slate-500 dark:text-[#7d8590]">
-              {t(persona.descriptionKey)}
-            </div>
-          </button>
-        {/each}
-      </div>
-    </div>
-
-    <div class="settings-block pt-1">
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <div class="settings-text">{t('settingsAppearance.avatarPreset')}</div>
-        </div>
-        {#if avatarPresetSaving}
-          <div class="text-xs text-slate-400 dark:text-[#636c76]">{t('settingsAppearance.syncing')}</div>
-        {/if}
-      </div>
-
-      <div class="mt-3 grid gap-3 md:grid-cols-3">
-        {#each AVATAR_PRESET_OPTIONS as preset}
-          <button
-            type="button"
-            class="rounded-[var(--radius-md)] border p-3 text-left transition {config.avatar_preset === preset.id ? 'border-primary-500 bg-primary-50/70 shadow-sm dark:shadow-none dark:border-primary-400 dark:bg-primary-500/10' : 'border-slate-200 bg-white hover:border-slate-300 dark:border-[#30363d] dark:bg-[#161b22]/60 dark:hover:border-[#484f58]'}"
-            on:click={() => selectAvatarPreset(preset.id)}
-            aria-pressed={config.avatar_preset === preset.id}
-          >
-            <div class="h-24 w-full rounded-xl border border-slate-200 bg-slate-50 dark:border-[#30363d] dark:bg-[#0d1117]/70">
-              <AvatarPresetPreview presetId={preset.id} selected={config.avatar_preset === preset.id} />
-            </div>
-            <div class="mt-3 text-sm font-semibold text-slate-900 dark:text-[#e6edf3]">
-              {t(preset.titleKey)}
-            </div>
-            <div class="mt-1 text-xs leading-5 text-slate-500 dark:text-[#7d8590]">
-              {t(preset.descriptionKey)}
-            </div>
-          </button>
-        {/each}
-      </div>
-    </div>
-
-    <div class="grid gap-x-10 gap-y-4 border-t border-slate-200 pt-3.5 dark:border-[#30363d] lg:grid-cols-2">
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <div class="settings-text">{t('settingsAppearance.avatarClickThrough')}</div>
-        <div class="settings-muted mt-1 text-xs">{t('settingsAppearance.avatarClickThroughDescription')}</div>
-      </div>
-      <button
-        type="button"
-        on:click={() => { config.avatar_click_through = !config.avatar_click_through; }}
-        class="switch-track {config.avatar_click_through ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-        role="switch"
-        aria-label={t('settingsAppearance.avatarClickThrough')}
-        aria-checked={config.avatar_click_through}
-      >
-        <span class="switch-thumb {config.avatar_click_through ? 'translate-x-5' : 'translate-x-0'}"></span>
-      </button>
-    </div>
-
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <div class="settings-text">{t('settingsAppearance.avatarBodyHidden')}</div>
-        <div class="settings-muted mt-1 text-xs">{t('settingsAppearance.avatarBodyHiddenDescription')}</div>
-      </div>
-      <button
-        type="button"
-        on:click={() => { config.avatar_body_hidden = !config.avatar_body_hidden; }}
-        class="switch-track {config.avatar_body_hidden ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'} {!config.avatar_enabled ? 'cursor-not-allowed opacity-50' : ''}"
-        disabled={!config.avatar_enabled}
-        role="switch"
-        aria-label={t('settingsAppearance.avatarBodyHidden')}
-        aria-checked={config.avatar_body_hidden}
-      >
-        <span class="switch-thumb {config.avatar_body_hidden ? 'translate-x-5' : 'translate-x-0'}"></span>
-      </button>
-    </div>
-
-    <div>
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <div class="settings-text">{t('settingsAppearance.breakReminder')}</div>
-        <div class="settings-muted mt-1 text-xs">{t('settingsAppearance.breakReminderDescription')}</div>
-        {#if !config.avatar_enabled}
-          <div class="settings-muted mt-1 text-xs">{t('settingsAppearance.breakReminderRequiresAvatar')}</div>
-        {/if}
-      </div>
-      <button
-        type="button"
-        on:click={toggleBreakReminder}
-        class="switch-track {config.break_reminder_enabled && config.avatar_enabled ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'} {!config.avatar_enabled ? 'cursor-not-allowed opacity-50' : ''}"
-        disabled={!config.avatar_enabled}
-        role="switch"
-        aria-label={t('settingsAppearance.breakReminder')}
-        aria-checked={config.break_reminder_enabled}
-      >
-        <span class="switch-thumb {config.break_reminder_enabled && config.avatar_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-      </button>
-    </div>
-
-    {#if config.break_reminder_enabled}
-      <div class="settings-block mt-3">
-        <label for="break-reminder-interval" class="settings-label mb-1.5">
-          {t('settingsAppearance.breakReminderInterval')}
-        </label>
-        <select
-          id="break-reminder-interval"
-          bind:value={config.break_reminder_interval_minutes}
-          on:change={handleBreakReminderIntervalChange}
-          class="control-input"
-          disabled={!config.avatar_enabled}
-        >
-          {#each breakReminderIntervals as interval}
-            <option value={interval}>{interval} {t('common.minutes')}</option>
-          {/each}
-        </select>
-      </div>
-    {/if}
-    </div>
-
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <div class="settings-text">{t('settingsAppearance.avatarProactiveAi')}</div>
-        <div class="settings-muted mt-1 text-xs">{t('settingsAppearance.avatarProactiveAiDescription')}</div>
-        <div class="settings-muted mt-1 text-xs">{t('settingsAppearance.avatarProactiveAiDataNotice')}</div>
-        {#if !config.avatar_enabled}
-          <div class="settings-muted mt-1 text-xs">{t('settingsAppearance.avatarProactiveAiRequiresAvatar')}</div>
-        {/if}
-      </div>
-      <button
-        type="button"
-        on:click={toggleAvatarProactiveAi}
-        class="switch-track {config.avatar_proactive_ai_enabled && config.avatar_enabled ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'} {!config.avatar_enabled ? 'cursor-not-allowed opacity-50' : ''}"
-        disabled={!config.avatar_enabled}
-        role="switch"
-        aria-checked={config.avatar_proactive_ai_enabled}
-        aria-label={t('settingsAppearance.avatarProactiveAi')}
-      >
-        <span class="switch-thumb {config.avatar_proactive_ai_enabled && config.avatar_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-      </button>
-    </div>
-    </div>
-
-    <div class="settings-muted text-xs leading-5">
-      {t('settingsAppearance.avatarLocalReminderNote')}
-    </div>
-  </div>
-</div>
-{/if}
-
-{#if showInterfaceStyleSettings}
 <div class="settings-card" data-locale={currentLocale}>
   <div class="flex items-start justify-between gap-4">
     <div>
@@ -753,10 +252,8 @@
     {/each}
   </div>
 </div>
-{/if}
 
 <!-- 背景图片 -->
-{#if showBackgroundSettings}
 <div class="settings-card" data-locale={currentLocale}>
   <h3 class="settings-card-title">{t('settingsAppearance.backgroundImage')}</h3>
 
@@ -843,4 +340,3 @@
     {/if}
   </div>
 </div>
-{/if}

@@ -28,6 +28,12 @@ cross-cutting 清单逐项检查五个维度：架构、性能、安全（SQL �
 
 # 第九轮（2026-09-23）
 
+## 第九轮裁决执行（2026-09-24，用户逐条拍板）
+
+- **待确认 #1（桌宠）→ 整体移除**：用户裁决「桌宠功能鸡肋，直接去掉」，经四问确认边界后执行全家桶删除：Rust 侧 avatar_engine/followup/input/proactive 四模块 + commands/avatar.rs + main.rs 桌宠循环/托盘开关/nudge 全家 + AppState avatar 字段 + config.rs 全部 avatar_* 与 break_reminder_* 字段 + capabilities avatar 窗口 + scripts/gnome-shell 桌宠专用扩展；前端侧 Avatar 组件/路由/设置分区/i18n 156 键×4 语言 + break_reminder 残留。GitLab 项目头像（gitlab.rs）与 focused-window-dbus 窗口跟踪扩展保留。原待确认 #1（桌宠阈值不读配置）随功能移除消解；.svelte 待过目两条 Avatar 项随之消解。
+- **待确认 #17（auth.ts 内网 admin 默认值）→ 有意保留**：用户确认为内网部署的刻意默认值，不改代码。
+- **待确认 #22（reinstall.sh GitHub 回退）→ 已删**：GitHub latest 回退整段删除，本地无 deb 时报错并给出 WR_DEB/WR_DEB_URL/GitLab 制品页指引；WR_DEB_URL 显式覆盖保留。
+
 范围：十分片并行复扫（main+storage+采集 / localhost+网关+上传+桌宠输入 / agent+五bot /
 commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-server+skills-engine /
 前端 stores+utils+i18n / 12 组件 / 路由页 28k 行 / CI+构建+打包+admin-core+capabilities），
@@ -182,10 +188,7 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
 
 ## 第九轮待确认（修复会改对外行为/语义或需产品决策，未经确认不动）
 
-- ⏸ [P2] src-tauri/src/main.rs:1721 — 桌宠循环 IdleDetector 硬编码 3 分钟空闲阈值，不读
-  配置：用户在设置里改「空闲阈值」只对采集循环生效，桌宠 idle 展示/休息提醒计时重置/
-  主动开口 is_idle 全部固定按 3 分钟，与采集循环口径永久漂移 — 修法是经 setter 热更新；
-  对阈值≠3 的用户提醒频率与状态切换时点可观察变化
+- ♻️ [P2] src-tauri/src/main.rs:1721 — 桌宠循环 IdleDetector 硬编码 3 分钟空闲阈值（原待确认）— **2026-09-24 用户裁决桌宠整体移除，随功能删除消解，见「第九轮裁决执行」**
 - ⏸ [P2] src-tauri/src/main.rs:3634 — 崩溃日志写 default_data_dir().join("crashes") 而非
   实际数据目录：自定义数据目录的用户按注释指引去自己目录找不到崩溃日志 — 修法是
   resolve 后存 OnceCell；落盘位置变化可观察
@@ -246,15 +249,11 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
 - ⏸ [P2] admin-core/Dockerfile:82 — 运行阶段无 USER 指令，容器以 root 运行且持 LAN 可达
   端口与生产凭据挂载 — 加 USER $APP_UID 属部署语义变更：挂载目录属主/读权限需同步调整
   （现网首启可能需手动 chown 一次），需与部署窗口协调
-- ⏸ [P2] scripts/deb/reinstall.sh:194 — 本地 deb 未命中时的回退是 GitHub latest API
-  （第二轮 ⏸ 已知失效链），会 die 或装回陈旧版 — 改指 GitLab 包仓库/制品链接还是删除，
-  需定回退目标
+- ✅→♻️ [P2] scripts/deb/reinstall.sh:194 — 本地 deb 未命中时的回退是 GitHub latest API（原待确认）— **2026-09-24 用户裁决直接删：回退整段移除，无本地 deb 时报错并给指引，WR_DEB_URL 显式覆盖保留**
 - ⏸ [P2] scripts/stage-tauri-key.sh — 疑似 no-op：stage-tauri-key.ps1 头注（tauri-cli
   v2 自行 base64 解码环境变量值、文件路径与原始内容皆可）暗示 bash 侧暂存文件可能从未被
   消费；确认后可从各 before_script 移除（纯降噪，不改行为）
-- ⏸ [P2] src/lib/stores/auth.ts:54 — 默认 admin URL 硬编码内网 IP `http://10.37.80.25:4191`：
-  分发出去的客户端未配置时会把登录密码 POST 到该内网地址（若确为内部部署默认值可接受，
-  否则应改空串强制填写；修复改变全新安装默认行为）
+- ⏸→✔️ [P2] src/lib/stores/auth.ts:54 — 默认 admin URL 硬编码内网 IP `http://10.37.80.25:4191` — **2026-09-24 用户确认为内网部署的刻意默认值，保留不动**
 - ⏸ [P2] src-tauri/src/avatar_input.rs:1419 — macOS current_cursor_ratio 遍历 NSScreen 只取
   联合包围盒未逐屏 clamp：多屏负坐标排列下是否产生可感知画布偏移需 macOS 实机验证
 

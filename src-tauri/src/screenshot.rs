@@ -103,7 +103,7 @@ pub fn has_accessibility_permission(prompt: bool) -> bool {
 }
 
 /// 检查 macOS 输入监控（Input Monitoring）权限
-/// 桌宠全局键盘鼠标联动需要此权限
+/// 权限状态展示与引导（check_permissions / open_permission_settings）使用
 #[cfg(target_os = "macos")]
 pub fn has_input_monitoring_permission() -> bool {
     extern "C" {

@@ -222,7 +222,7 @@ Yue-Review 的核心始终是**本地记录**。AI 的作用是让记录更容�
 | Linux x86_64 (X11 / Wayland) | `.deb` / `.rpm` / `.AppImage` |
 | Linux ARM64 (aarch64) | `.deb` / `.rpm` / `.AppImage` |
 
-**macOS：** 截图需「屏幕录制」权限，桌宠联动需「辅助功能 + 输入监控」。首次提示"已损坏"时：`sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
+**macOS：** 截图需「屏幕录制」权限。首次提示"已损坏"时：`sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
 
 **Windows：** 依赖 Microsoft Edge WebView2 Runtime。
 
@@ -271,17 +271,6 @@ GDK_BACKEND=x11 ./Work_Review
 ---
 
 ## 扩展能力（Beta）
-
-<details>
-<summary>桌面化身</summary>
-
-用独立桌宠窗口反馈待机/办公/阅读/会议/音乐/视频等状态。
-
-<img src="docs/桌宠.png" alt="桌面化身" width="220" />
-
-当前仍在持续完善中，会继续改进交互联动、状态表达和预设细节。
-
-</details>
 
 <details>
 <summary>Bot 联动（Telegram / 飞书 / 钉钉 / 企业微信）</summary>
@@ -412,7 +401,6 @@ npm run tauri:build  # 构建
 ## 致谢
 
 - 感谢 [linux.do](https://linux.do/) 社区的交流与讨论支持
-- 桌面化身 BongoCat 资源改编自 [ayangweb/BongoCat](https://github.com/ayangweb/BongoCat) (MIT License)，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ## License
 

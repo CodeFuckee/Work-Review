@@ -12,9 +12,9 @@
 #   WR_DEB_URL=https://.../foo.deb bash .../reinstall.sh   # use a specific URL
 #
 # Local-deb lookup: only scans $PWD for Yue_Review_*.deb / Yue-Review_*.deb
-# (any version; legacy Work_Review_*.deb still matched).
-# If nothing is found and no env override is given, the latest release is
-# resolved from the GitHub API.
+# (any version; legacy Work_Review_*.deb still matched). No remote fallback:
+# without a local deb the script fails with instructions (WR_DEB / WR_DEB_URL /
+# GitLab daily-build artifacts).
 #
 set -euo pipefail
 
@@ -206,29 +206,23 @@ else
 fi
 
 if [ -z "$DEB" ]; then
-    # Resolve URL: explicit override > GitHub latest release.
+    # 显式 URL 覆盖仍支持（WR_DEB_URL）；GitHub latest 自动回退已删除——
+    # 该发布链早已失效，静默装回陈旧版本比直接报错更糟
     if [ -n "$EXPLICIT_URL" ]; then
-        DEB_URL="$EXPLICIT_URL"
-    else
-        log "  resolving latest release from GitHub API"
+        log "  downloading $EXPLICIT_URL"
         if [ "$DRY" -eq 0 ]; then
-            DEB_URL=$(curl -fsSL https://api.github.com/repos/wm94i/Work-Review/releases/latest \
-                | grep -oE '"browser_download_url":[[:space:]]*"[^"]*_amd64\.deb"' \
-                | head -1 \
-                | sed -E 's/.*"([^"]+)"$/\1/')
-            [ -n "$DEB_URL" ] || die "could not find an *_amd64.deb asset on the latest GitHub release"
+            DEB=$(mktemp /tmp/work-review.XXXXXX.deb)
+            register_cleanup "$DEB"
+            curl -fsSL --progress-bar -o "$DEB" "$EXPLICIT_URL" || die "download failed"
         else
-            DEB_URL="<resolved at run time from github releases/latest>"
+            printf '\033[2m[dry] curl -o /tmp/work-review.deb %s\033[0m\n' "$EXPLICIT_URL"
+            DEB="/tmp/work-review.deb"
         fi
-    fi
-    log "  downloading $DEB_URL"
-    if [ "$DRY" -eq 0 ]; then
-        DEB=$(mktemp /tmp/work-review.XXXXXX.deb)
-        register_cleanup "$DEB"
-        curl -fsSL --progress-bar -o "$DEB" "$DEB_URL" || die "download failed"
     else
-        printf '\033[2m[dry] curl -o /tmp/work-review.deb %s\033[0m\n' "$DEB_URL"
-        DEB="/tmp/work-review.deb"
+        die "no local .deb found in \$PWD (Yue-Review_*.deb / Yue_Review_*.deb).
+Set WR_DEB=/path/to/foo.deb or WR_DEB_URL=https://... to install explicitly,
+or download a daily build from the GitLab artifacts:
+  https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-linux-x64"
     fi
 else
     log "  using local: $DEB"

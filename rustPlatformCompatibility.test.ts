@@ -6,17 +6,11 @@ const readSource = (path: string) =>
   readFileSync(new URL(path, import.meta.url), 'utf8');
 
 test('Linux 发布构建不应编译仅供 macOS 或测试使用的符号', () => {
-  const avatar = readSource('./src-tauri/src/commands/avatar.rs');
   const system = readSource('./src-tauri/src/commands/system.rs');
   const main = readSource('./src-tauri/src/main.rs');
   const monitor = readSource('./src-tauri/src/monitor.rs');
   const screenshot = readSource('./src-tauri/src/screenshot.rs');
 
-  assert.doesNotMatch(
-    avatar,
-    /current_linux_desktop_session, LinuxDesktopSession/,
-    'avatar 命令不得导入未使用的 LinuxDesktopSession',
-  );
   assert.match(
     system,
     /#\[cfg\(any\(target_os = "macos", target_os = "windows"\)\)\]\nuse std::path::Path;/,

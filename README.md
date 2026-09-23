@@ -59,7 +59,6 @@ The focus is not "monitoring". It is helping you **recall, organize, and review*
 - **Automated versioning and release pipeline** — On every green push to `main`, CI bumps the patch version (carrying over at 100, e.g. 1.2.99 → 1.3.0) across all five version sources, creates a `vX.Y.Z` tag, and runs the full three-platform packaging and release flow; every push also builds three-platform release binaries as artifacts
 - **Downloadable installers from every push** — Each green push to `main` also builds the full installers (dmg / deb / rpm / AppImage / nsis exe + portable zip) and uploads them as CI artifacts (kept 30 days). Latest-build links: `https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-windows` (also `package-daily-macos-arm64`, `package-daily-macos-x64`, `package-daily-linux-x64`, `package-daily-linux-arm64`). Tagged releases keep permanent installers via the normal Release flow.
 - **Privacy-first and locally controllable** — Data is stored in local SQLite by default; AI is optional, and model calls use your own API key without third-party relay. When no model is configured, the built-in fallback model is used and your question/report content is sent to the third-party AI service behind it.
-- **Desktop Avatar Beta** — Shows work status through a desktop avatar and is gradually expanding toward proactive reminders and context assistance
 - **Multilingual UI** — Available in Simplified Chinese, English, Traditional Chinese, and Arabic (with RTL layout)
 
 ---
@@ -125,11 +124,6 @@ The screenshots below are captured from the running desktop app with localized U
 <p align="center"><strong>AI Models</strong></p>
 <p align="center">
   <img src="docs/Introduction_en/设置-AI模型.png" alt="AI Model Settings" width="720" />
-</p>
-
-<p align="center"><strong>Desktop Avatar</strong></p>
-<p align="center">
-  <img src="docs/Introduction_en/设置-桌面化身.png" alt="Desktop Avatar Settings" width="720" />
 </p>
 
 <p align="center"><strong>Privacy</strong></p>
@@ -222,7 +216,7 @@ Supported providers: Ollama (local) / LM Studio (local) / OpenAI compatible / De
 | Linux x86_64 (X11 / Wayland) | `.deb` / `.rpm` / `.AppImage` |
 | Linux ARM64 (aarch64) | `.deb` / `.rpm` / `.AppImage` |
 
-**macOS:** Screenshots require the "Screen Recording" permission, and avatar linkage requires "Accessibility + Input Monitoring". If you see a "damaged" warning on first launch: `sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
+**macOS:** Screenshots require the "Screen Recording" permission. If you see a "damaged" warning on first launch: `sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
 
 **Windows:** Depends on Microsoft Edge WebView2 Runtime.
 
@@ -271,17 +265,6 @@ GDK_BACKEND=x11 ./Work_Review
 ---
 
 ## Extended Capabilities (Beta)
-
-<details>
-<summary>Desktop Avatar</summary>
-
-Uses a standalone desktop pet window to reflect idle / working / reading / meeting / music / video states.
-
-<img src="docs/桌宠.png" alt="Desktop Avatar" width="220" />
-
-Still being actively refined — interaction linkage, state expression, and preset details will continue to improve.
-
-</details>
 
 <details>
 <summary>Bot Integration (Telegram / Feishu / DingTalk / WeCom)</summary>
@@ -412,7 +395,6 @@ Requires: Node.js 22+ / Rust stable / Tauri 2 CLI · Tech stack: Tauri 2 + Rust 
 ## Acknowledgements
 
 - Thanks to the [linux.do](https://linux.do/) community for discussion and feedback
-- Desktop Avatar BongoCat resources adapted from [ayangweb/BongoCat](https://github.com/ayangweb/BongoCat) (MIT License), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ## License
 

@@ -287,8 +287,6 @@ pub type CurrentContextFn = Arc<dyn Fn() -> String + Send + Sync>;
 /// 单测传 `Default::default()` 即可（全部禁用，保持既有行为）。
 #[derive(Default, Clone)]
 pub struct AssistantRuntime {
-    /// 手动待办快照（extract_todos 合并用）。
-    pub avatar_followups: Vec<work_review_core::config::AvatarFollowupItem>,
     /// 写操作桥；None = 不注册行动工具。
     pub actions: Option<ActionBridge>,
     /// 确认桥；行动工具存在时必须提供，否则行动工具一律拒绝执行。
@@ -2045,7 +2043,7 @@ fn weekly_review_execute(ctx: &ToolContext, args: Value) -> Result<String, Strin
     Ok(truncate_chars(&review.markdown, 3000))
 }
 
-/// extract_todos — 从活动记录提取待跟进事项（含手动待办合并）
+/// extract_todos — 从活动记录提取待跟进事项
 fn extract_todos_execute(ctx: &ToolContext, args: Value) -> Result<String, String> {
     let date_from = args.get("date_from").and_then(|v| v.as_str());
     let date_to = args.get("date_to").and_then(|v| v.as_str());
@@ -2056,13 +2054,7 @@ fn extract_todos_execute(ctx: &ToolContext, args: Value) -> Result<String, Strin
         .map_err(|e| format!("获取活动记录失败: {e}"))?;
     let activities = ctx.filter_activities(activities);
 
-    let extracted = work_intelligence::extract_todos(&activities);
-    let merged = crate::commands::merge_manual_followups_into_todos(
-        extracted,
-        &ctx.runtime.avatar_followups,
-        date_from,
-        date_to,
-    );
+    let merged = work_intelligence::extract_todos(&activities);
 
     if merged.items.is_empty() {
         return Ok("未提取到待跟进事项。".to_string());

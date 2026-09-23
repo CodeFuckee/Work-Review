@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, type ComponentType } from 'svelte';
+  import { onMount } from 'svelte';
   import Router, { location, push } from 'svelte-spa-router';
   import { wrap } from 'svelte-spa-router/wrap';
   import Sidebar from './lib/components/Sidebar.svelte';
@@ -54,10 +54,6 @@
   interface RecordingStateChangedPayload {
     isRecording: boolean;
     isPaused: boolean;
-  }
-
-  interface AvatarTimelinePayload {
-    date?: string;
   }
 
   interface BackgroundChangeDetail {
@@ -166,11 +162,6 @@
       && value.every((item) => typeof item === 'boolean');
   }
 
-  function isAvatarTimelinePayload(value: unknown): value is AvatarTimelinePayload {
-    return isRecord(value)
-      && (value.date === undefined || typeof value.date === 'string');
-  }
-
   async function getRuntimeConfig(): Promise<RuntimeConfig> {
     const payload = await invoke<unknown>('get_config');
     if (!isRuntimeConfig(payload)) {
@@ -235,15 +226,6 @@
   }
 
   const appWindow = getSafeCurrentWebviewWindow();
-  const currentWindowLabel = appWindow.label;
-  const isAvatarWindow = currentWindowLabel === 'avatar';
-  let AvatarWindowComponent: ComponentType | null = null;
-
-  if (isAvatarWindow) {
-    import('./routes/avatar/AvatarWindow.svelte').then((module) => {
-      AvatarWindowComponent = module.default;
-    });
-  }
 
   // 視窗拖拽（Linux WebKitGTK 不支援 -webkit-app-region: drag，改用 Tauri API）
   let lastDragClick = 0;
@@ -513,14 +495,6 @@
     window.addEventListener('drop', preventFileDrop);
     window.addEventListener('contextmenu', preventNativeContextMenu);
 
-    if (isAvatarWindow) {
-      return () => {
-        window.removeEventListener('dragover', preventFileDrop);
-        window.removeEventListener('drop', preventFileDrop);
-        window.removeEventListener('contextmenu', preventNativeContextMenu);
-      };
-    }
-
     initializeLocale();
     refreshAuthGate();
     const handleAuthChanged = () => refreshAuthGate();
@@ -660,31 +634,6 @@
       if (disposed) { try { if (unlistenConfigChanged) unlistenConfigChanged(); } catch {} return; }
       pendingCleanup.push(unlistenConfigChanged);
 
-      const unlistenAvatarTimeline = await safeListen(
-        'avatar-open-timeline',
-        isAvatarTimelinePayload,
-        async (payload) => {
-          const nextDate = typeof payload.date === 'string' ? payload.date.trim() : '';
-
-          try {
-            await push('/timeline');
-            if (nextDate) {
-              window.history.replaceState(
-                window.history.state,
-                '',
-                `/timeline?date=${encodeURIComponent(nextDate)}`
-              );
-            }
-            await tick();
-            window.dispatchEvent(new CustomEvent('timeline-focus-date', { detail: payload }));
-          } catch (e) {
-            console.error('桌宠跳转时间线失败:', e);
-          }
-        },
-      );
-      if (disposed) { try { if (unlistenAvatarTimeline) unlistenAvatarTimeline(); } catch {} return; }
-      pendingCleanup.push(unlistenAvatarTimeline);
-
       // 监听背景图更新事件（来自设置页，实时预览）
       const handleBgChange = (e: Event) => handleBackgroundChanged(e);
       window.addEventListener('background-changed', handleBgChange);
@@ -817,11 +766,6 @@
   });
 </script>
 
-{#if isAvatarWindow}
-  {#if AvatarWindowComponent}
-    <svelte:component this={AvatarWindowComponent} />
-  {/if}
-{:else}
 <div class="app-shell ui-style-{uiVisualStyle} platform-{platform || 'web'} flex h-screen overflow-hidden relative">
   <div class="app-shell-ambient pointer-events-none absolute inset-0 z-0 opacity-80">
     <div class="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.14),transparent_62%)] dark:bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.18),transparent_62%)]"></div>
@@ -938,4 +882,3 @@
     </section>
   </div>
 </div>
-{/if}

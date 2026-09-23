@@ -39,7 +39,7 @@ test('应用应提供 A/B/C 三套可持久化界面风格并作用到根壳层'
   assert.match(settingsSource, /function handleSettingsChange\(event: CustomEvent<unknown>\)/);
   assert.match(settingsSource, /'autosaved' in detail/);
   assert.match(settingsSource, /detail\.autosaved === true/);
-  assert.match(settingsSource, /<SettingsAppearance bind:config mode="background-only" on:change=\{handleSettingsChange\} \/>/);
+  assert.match(settingsSource, /<SettingsAppearance bind:config on:change=\{handleSettingsChange\} \/>/);
 
   assert.match(appearanceSource, /UI_VISUAL_STYLE_OPTIONS/);
   assert.match(appearanceSource, /id:\s*'a'/);

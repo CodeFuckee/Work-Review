@@ -8,7 +8,6 @@
 mod ai;
 mod ask;
 mod assistant_history;
-mod avatar;
 mod category;
 mod config;
 mod file_monitor;
@@ -29,7 +28,6 @@ mod user_memory;
 pub use ai::*;
 pub use ask::*;
 pub use assistant_history::*;
-pub use avatar::*;
 pub use category::*;
 pub use config::*;
 pub use file_monitor::*;
@@ -48,8 +46,7 @@ pub use user_memory::*;
 // 被 main.rs / localhost_api / agent / bot 直接调用的 pub(crate) helper
 // 通过子模块再次 re-export，保持 `commands::xxx_inner` / `commands::xxx` 路径不断。
 pub(crate) use shared::{
-    collect_privacy_filters, filter_activities_by_privacy, load_filtered_activities_in_range,
-    merge_manual_followups_into_todos, parse_temporal_range, persist_app_config,
-    resolve_single_date, validated_join,
+    collect_privacy_filters, filter_activities_by_privacy, parse_temporal_range,
+    persist_app_config, resolve_single_date, validated_join,
 };
 pub(crate) use system::apply_dock_visibility;

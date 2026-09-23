@@ -31,13 +31,6 @@ impl IdleDetector {
         self.idle_timeout_secs = minutes.max(1) * 60;
     }
 
-    /// 第一阶段：检查键鼠是否超时
-    /// 返回 true 表示键鼠超时（可能空闲），需要进一步用截图哈希确认
-    pub fn is_input_idle(&self) -> bool {
-        let idle_secs = get_idle_seconds();
-        idle_secs >= self.idle_timeout_secs
-    }
-
     /// 第二阶段：用截图哈希判断屏幕是否长时间无变化。
     ///
     /// **注意**：返回值不再驱动空闲判定。早期版本曾把"画面连续无变化"当作"确认空闲"

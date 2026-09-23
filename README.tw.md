@@ -56,7 +56,6 @@ Yue-Review 面向個人工作復盤，適合用來回答這些問題：
 - **本地記錄問答** — 用基礎模板、你配置的模型，或內建模型（未配置任何模型時開箱即用）回答「今天做了什麼」「某個任務花了多久」「最近在推進什麼」等問題
 - **日報生成與匯出** — 生成結構化日報，支援 Markdown 匯出、自動匯出、段落編輯、釘選/隱藏和 AI 編排順序
 - **隱私優先，本地可控** — 數據默認保存在本地 SQLite；AI 可不啟用，模型調用使用你自己的 API Key，不經第三方中轉。未配置任何模型時將使用內建模型，此時問答/日報內容會傳送至內建模型對應的第三方 AI 服務
-- **桌面化身 Beta** — 用桌面化身反饋工作狀態，並逐步擴展到主動提醒和上下文輔助
 - **多語言界面** — 支援简体中文、English、繁體中文、العربية（阿拉伯文，RTL 佈局）
 
 ---
@@ -122,11 +121,6 @@ Yue-Review 面向個人工作復盤，適合用來回答這些問題：
 <p align="center"><strong>AI 模型</strong></p>
 <p align="center">
   <img src="docs/Introduction_tw/设置-AI模型.png" alt="AI 模型設置" width="720" />
-</p>
-
-<p align="center"><strong>桌面化身</strong></p>
-<p align="center">
-  <img src="docs/Introduction_tw/设置-桌面化身.png" alt="桌面化身設置" width="720" />
 </p>
 
 <p align="center"><strong>隱私設置</strong></p>
@@ -218,7 +212,7 @@ Yue-Review 的核心始終是**本地記錄**。AI 的作用是讓記錄更容�
 | Linux x86_64 (X11 / Wayland) | `.deb` / `.rpm` / `.AppImage` |
 | Linux ARM64 (aarch64) | `.deb` / `.rpm` / `.AppImage` |
 
-**macOS：** 截圖需「螢幕錄製」權限，桌寵聯動需「輔助功能 + 輸入監控」。首次提示"已損壞"時：`sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
+**macOS：** 截圖需「螢幕錄製」權限。首次提示"已損壞"時：`sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
 
 **Windows：** 依賴 Microsoft Edge WebView2 Runtime。
 
@@ -267,17 +261,6 @@ GDK_BACKEND=x11 ./Work_Review
 ---
 
 ## 擴展能力（Beta）
-
-<details>
-<summary>桌面化身</summary>
-
-用獨立桌寵窗口反饋待機/辦公/閱讀/會議/音樂/視頻等狀態。
-
-<img src="docs/桌宠.png" alt="桌面化身" width="220" />
-
-當前仍在持續完善中，會繼續改進交互聯動、狀態表達和預設細節。
-
-</details>
 
 <details>
 <summary>Bot 聯動（Telegram / 飛書 / 釘釘 / 企業微信）</summary>
@@ -408,7 +391,6 @@ npm run tauri:build  # 構建
 ## 致謝
 
 - 感謝 [linux.do](https://linux.do/) 社區的交流與討論支持
-- 桌面化身 BongoCat 資源改編自 [ayangweb/BongoCat](https://github.com/ayangweb/BongoCat) (MIT License)，詳見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ## License
 
