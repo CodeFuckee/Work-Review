@@ -238,10 +238,12 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
 - ⏸ [P2] telegram_bot.rs:92,220 / wecom_aibot.rs:84,496 — 轮询/长连接任务 panic 无哨兵：
   JoinHandle 从不 await，任务 panic 后 shared.running 恒 true，状态面板显示「运行中」实际
   已死 — 未找到现高概率 panic 路径，若修属 spawn 包装层加固
-- ⏸ [P2] scripts/ci/linux-package-inner.sh:31 — 发布链打包工具经第三方 gh-proxy 镜像下载、
-  校验仅头 4 字节魔数、插件钉 master/continuous 移动目标：镜像或上游 continuous 产物被
-  投毒时恶意 ELF 通过头部检查，在持有签名私钥的发版 runner 上执行 — 正解是钉版本 +
-  sha256 白名单（需定各工具版本并接受校验失败即发版失败的语义，见暂缓说明）
+- ✅→♻️ [P2] scripts/ci/linux-package-inner.sh:31 — 发布链打包工具供应链（原待确认）—
+  **2026-09-24 用户裁决修复（commit b4bc02e）**：5 个工具钉 github 直连真源计算的 sha256
+  白名单（镜像交叉验证 8/8 一致），plugin-gtk/gstreamer 的 raw URL 钉死 commit
+  （dda522bc/2a2e6749）；缓存命中同样全量校验；校验不过即 exit 1 拒绝打包（含打包器自行
+  重试路径），上游升版流程写入脚本注释。fetch_tool 三路径（缓存命中/损坏重下/白名单
+  不匹配 fatal）本机实测通过
 - ⏸ [P2] .gitlab-ci.yml:1024 — publish-release 端到端自检只传 windows-x86_64 与
   darwin-aarch64：启用 PACKAGE_MACOS_X64 后 darwin-x86_64 清单项的远端 SHA/签名一致性
   永不在自检范围（第七轮 ⏸ x64 通用名互覆盖之外的同域盲区）— 启用该开关前需补第三个
