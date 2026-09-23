@@ -315,9 +315,10 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
 commands 19 文件+capabilities+注册表一致性 / database.rs 8.5k 行深审 /
 core 其余+mcp-server+skills-engine / stores+utils+i18n+App / 路由页四组件 /
 设置页+auth+about+组件库 / CI+脚本+打包+admin-core+e2e），与九轮台账逐条去重。
-新发现 44 条：P0 1、P1 5、P2 38。修复 38 项分两批：批次 1 = Rust 29 项（commit 9ec77bf，
-流水线 <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2926> 全绿）；
-批次 2 = TS/CI/脚本/文档 9 项。.svelte 项按红线全部列待过目未动；行为语义/需产品决策项列待确认。
+新发现按台账条目口径 74 条：已修复 36 条（38 处，P0 1 / P1 8 / P2 其余），分两批：
+批次 1 = Rust 29 项（commit 9ec77bf，流水线 <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2926> 全绿）；
+批次 2 = TS/CI/脚本/文档 9 项（流水线 2930 全绿）。.svelte 项 16 条按红线全部列待过目未动；
+行为语义/需产品决策项 19 条列待确认；3 条列暂缓。
 
 ## 第十轮已修复
 
