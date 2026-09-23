@@ -684,7 +684,12 @@ try {{
                     }))
                 } else {
                     if !stdout.trim().is_empty() {
-                        log::warn!("Windows OCR 输出无法解析为 JSON: {}", stdout.trim());
+                        // 只记长度不记原文：stdout 是识别出的屏幕文本 JSON（敏感），
+                        // 落日志前不过 filter_sensitive_text（同 privacy 日志脱敏口径）
+                        log::warn!(
+                            "Windows OCR 输出无法解析为 JSON（长度 {} 字节）",
+                            stdout.len()
+                        );
                     }
                     if !stderr.trim().is_empty() {
                         log::warn!("Windows OCR stderr: {}", stderr.trim());
@@ -695,11 +700,12 @@ try {{
             Ok(result) => {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 let stdout = String::from_utf8_lossy(&result.stdout);
+                // stdout 含识别出的屏幕文本（敏感），只记长度（同 privacy 日志脱敏口径）
                 log::warn!(
-                    "Windows OCR PowerShell 执行失败: status={:?}, stderr={}, stdout={}",
+                    "Windows OCR PowerShell 执行失败: status={:?}, stderr={}, stdout_len={}",
                     result.status.code(),
                     stderr.trim(),
-                    stdout.trim()
+                    stdout.len()
                 );
                 Ok(None)
             }

@@ -147,7 +147,11 @@ async fn upload_s3(
     // Content-Type 按扩展名推导；同时参与 SigV4 签名，签名与实际请求头必须一致
     let content_type = content_type_for_extension(&object_key);
 
-    let canonical_uri = format!("/{}/{}", config.bucket, url_encode_path(&object_key));
+    // canonical_uri 必须与实际发送的路径严格一致：reqwest 发送的是 Url::parse 归一化后的
+    // 路径（`+ ( ) ! = @` 等字符保持原样），自造 percent 编码会把这些字符变成 %XX，
+    // 两种形态不一致时 S3 按收到的路径验签 → SignatureDoesNotMatch（path_prefix 含
+    // 此类字符的用户上传恒失败）
+    let canonical_uri = parsed.path().to_string();
     let canonical_querystring = "";
 
     let canonical_headers = format!(
@@ -227,25 +231,6 @@ fn content_type_for_extension(path: &str) -> &'static str {
         "json" => "application/json",
         _ => "application/octet-stream",
     }
-}
-
-fn url_encode_path(path: &str) -> String {
-    path.split('/')
-        .map(|segment| {
-            segment
-                .bytes()
-                .map(|b| {
-                    if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~'
-                    {
-                        String::from(b as char)
-                    } else {
-                        format!("%{b:02X}")
-                    }
-                })
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 // --- WebDAV ---

@@ -673,16 +673,19 @@ impl<'a> ToolContext<'a> {
         if items.is_empty() {
             return;
         }
-        if let Ok(mut buf) = self.collected_references.lock() {
-            for item in items {
-                let dup = buf.iter().any(|b| {
-                    b.source_id == item.source_id
-                        && b.timestamp == item.timestamp
-                        && b.title == item.title
-                });
-                if !dup {
-                    buf.push(item);
-                }
+        // 纯内存缓冲，中毒恢复取原值：任一次持锁 panic 不应让引用收集从此静默失效
+        let mut buf = self
+            .collected_references
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for item in items {
+            let dup = buf.iter().any(|b| {
+                b.source_id == item.source_id
+                    && b.timestamp == item.timestamp
+                    && b.title == item.title
+            });
+            if !dup {
+                buf.push(item);
             }
         }
     }
@@ -691,24 +694,26 @@ impl<'a> ToolContext<'a> {
     pub fn references_len(&self) -> usize {
         self.collected_references
             .lock()
-            .map(|b| b.len())
-            .unwrap_or(0)
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     /// 取 [start..] 区间的引用克隆（StepResult 携带本轮增量）。
     pub fn drain_from(&self, start: usize) -> Vec<MemorySearchItem> {
-        self.collected_references
+        let buf = self
+            .collected_references
             .lock()
-            .map(|b| b.get(start..).map(|s| s.to_vec()).unwrap_or_default())
-            .unwrap_or_default()
+            .unwrap_or_else(|e| e.into_inner());
+        buf.get(start..).map(|s| s.to_vec()).unwrap_or_default()
     }
 
     /// 取出全部引用（executor 结束时填入 AgentResult）。
     pub fn take_all_references(&self) -> Vec<MemorySearchItem> {
-        self.collected_references
+        let mut b = self
+            .collected_references
             .lock()
-            .map(|mut b| std::mem::take(&mut *b))
-            .unwrap_or_default()
+            .unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *b)
     }
 }
 
@@ -1606,7 +1611,7 @@ pub(crate) async fn bing_search_html(
                 return r.text().await.map_err(|e| format!("搜索响应读取失败: {e}"));
             }
             Err(e) => {
-                // 只重试连接/超时类错误；其他（如 DNS、SSL）也一并重试，反正最后一次会返回
+                // 只重试连接/超时类瞬态错误；其余（DNS、SSL 等）立即返回，最后一次错误向上抛
                 last_err = format!("搜索请求失败: {e}");
                 let transient = e.is_connect() || e.is_timeout();
                 if !transient {
@@ -3501,10 +3506,17 @@ mod tests {
             provider: "tavily".to_string(),
             api_key: Some("tvly-test".to_string()),
         });
-        let db = work_review_core::database::Database::new(std::path::Path::new(
-            &std::env::temp_dir().join("wr-web-tools-test.db"),
-        ))
-        .expect("临时库创建失败");
+        // 唯一文件名 + 收尾清理三件套（WAL 伴生文件 + Windows 连接存活时主文件删不掉，
+        // 固定名与不清理都会让 CI 临时目录累积）
+        let db_path = std::env::temp_dir().join(format!(
+            "wr-web-tools-test-{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let db = work_review_core::database::Database::new(std::path::Path::new(&db_path))
+            .expect("临时库创建失败");
         let ctx = ToolContext {
             database: &db,
             ignored_apps: vec![],
@@ -3536,5 +3548,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("query"));
+
+        drop(db); // 先关连接再删文件（Windows 上连接存活时删除静默失败）
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", db_path.display(), suffix));
+        }
     }
 }

@@ -14,6 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
 
 ### 修复
+- **第十轮全量代码评审修复（第一批：Rust 行为保持，29 项；完整问题清单与处置见 `CODE_REVIEW_FINDINGS.md` 第十轮）**：
+  - **切换数据目录可误删当前数据（P0，正确性）**：`change_data_dir` 的「同目录/互为父子」两道校验在 `canonicalize` 之前比较字面路径，Windows 大小写差异、8.3 短名、符号链接或含 `..` 的等价形式选中当前数据目录时全部绕过，随后目标目录「清空已有受管条目」会把正在使用的 config.json/截图/OCR 日志（Linux 上含活动中的数据库）整目录删除；对齐 `cleanup_old_data_dir` 的既有口径：先规范化再比较。
+  - **崩溃日志目录跟随换目录的修复实际未生效（P1，回归）**：上一轮引入的 `CRASH_REPORT_DATA_DIR` 用 `OnceCell` 存储，`set` 只在首次生效，启动后 `change_data_dir` 成功换目录时的二次更新是静默 no-op——崩溃日志永远写旧目录；改 `RwLock<Option<PathBuf>>`（读取容忍锁中毒）。
+  - **OpenAI 兼容流式端点（vLLM 等）工具调用整体被拒（P1，正确性）**：流式装配器对 tool_call 的 id/name 逐片 `push_str` 累积，官方 OpenAI 仅首片携带所以无感，vLLM 等自托管端点每片重复完整值会拼出 `call_xxxcall_xxx`，被 `trusted_event_tool_metadata` 精确匹配当未注册工具拒绝——按 openai-python 官方流式累积语义改为 slot 为空时写入，arguments 保持逐片拼接。
+  - **localhost API 三个端点 limit/offset 无钳制（P2，资源）**：`/v1/weekly-review`（经 `load_filtered_activities_in_range` 可全表载入含窗口标题）、`/v1/timeline/` 查询参数直通 DB；在 Tauri/localhost 共用的 inner 层统一钳制（limit ≤10000、offset ≤1000000，同 `/v1/activities` 用户裁决先例）。
+  - **S3 SigV4 签名与实际请求路径不一致（P2，正确性）**：canonical_uri 用自造 percent 编码，而实际发送的是 reqwest `Url::parse` 归一化后的路径，`+ ( ) ! = @` 等字符两种形态不同导致 `SignatureDoesNotMatch`——path_prefix 含此类字符的用户上传恒失败；canonical_uri 改用 `parsed.path()`（与线上严格一致），删除自造编码函数。
+  - **HTTP 403 状态行写成 `403 OK`（P2）**：localhost_api `reason_phrase` 缺 403 映射且未知状态回落 "OK"，回调签名失败/令牌不匹配等 403 响应状态行错误；补 `403 => "Forbidden"`。
+  - **流式错误 body 读取不受 deadline 约束（P2）**：`ensure_stream_status` 对非 2xx 响应 `response.text()` 无超时，半死端点慢速滴漏可无限挂起；包 deadline 剩余时间（另设 10s 上限），超时按空 body 报错（行为同前）。
+  - **后台锁中毒恢复统一（P2）**：agent/tools.rs 引用收集缓冲 4 处 `if let Ok`/`unwrap_or(0)` 把 Mutex 中毒吞成引用永久失效零日志；统一 `unwrap_or_else(into_inner)`（纯内存缓冲，恢复安全）。
+  - **文件监控事件通道错误静默吞掉（P2）**：core/file_monitor.rs debouncer 的 Err 批次 `unwrap_or_default()` 丢弃事件无痕迹；补 warn（条数+首条）。同批同路径+同类型去重由 O(n²) 线性扫描改 HashSet（移动含数千文件的目录时单批事件上万不再卡 worker）。
+  - **AI 网关错误页全文落日志（P2，日志卫生）**：core/analysis/cloud.rs 两处把非 2xx 响应 body（网关大 HTML）整页拼进错误串并 warn 落盘（同文件第九轮已在 src-tauri 侧截 300，core 侧漏网）；补 `chars().take(300)`。`summary.rs decide_block_order` 两条失败路径（AI 调用/JSON 解析）从完全静默改为补 warn 后回退默认顺序。
+  - **Windows OCR 失败路径把识别原文落日志（P2，隐私）**：两条失败分支把整段 stdout（屏幕识别文本 JSON）以 warn 明文落盘且未过敏感过滤；只记长度/状态码（同 privacy 日志脱敏口径）。
+  - **域名分类热路径每循环堆分配（P2，性能）**：`builtin_domain_category` 在 170 项表循环内每次 `format!(".{suffix}")`；改 `strip_suffix` 免分配等价比较（分类路径逐活动调用）。
+  - **配置修复后周期清理仍永久跳过（P2，正确性）**：`storage_cleanup_task` 读的 `config_load_status` 是启动快照且从不再赋值，启动时 Corrupted（fail-safe 跳过清理保护数据）的用户在设置页修复配置后仍永久跳过直到重启；`persist_app_config` 成功落盘后把 fail-safe 状态刷新为 Loaded。
+  - **锁屏日志刷屏（P2）**：采集循环锁屏期间每轮（约 5 秒）打一条 info，整夜锁屏上千行；改为仅进入锁屏时打一次。
+  - **背景图上传无载荷/解码上限（P2，纵深防御）**：`save_background_image` 对 IPC base64 无长度限制、解码无尺寸限制，解压炸弹可把内存撑到数 GB；载荷钳 20MB + `image::Limits`（8192px/256MB）。
+  - **删除自定义分类的 reassign_to 未校验（P2，正确性）**：传入不存在的分类或恰好等于被删 key 时，规则与全部历史活动被批量重定向到无效分类且无报错；校验目标必须存在于内置/自定义分类且 ≠ 被删 key，否则回退 "other" 并 warn。
+  - **macOS Dock 图标重载回退按旧名硬编码（P2）**：bundle 内找不到 icon.icns 时回退 `/Applications/Work Review.app/...`，应用更名 Yue-Review 后永不命中且静默；删除回退（找不到即放弃重设）。
+  - **`save_hourly_summary` 返回值不可靠（P2，API 卫生）**：UPSERT 走 DO UPDATE 分支时 SQLite 规定 `last_insert_rowid()` 未定义（实为陈旧值）；两处调用方均忽略返回值，签名改 `Result<()>` 并注释陷阱。
+  - **测试与死代码清理（P2）**：database.rs 7 处测试收尾只删主库文件（WAL 伴生文件 CI 持续累积）改 `remove_db_files` 三件套；agent 测试库（orchestrator 3 处 + tools 固定名 1 处）加唯一命名与收尾清理；`screen_lock.rs` 只写不读的 `is_locked` 字段与无调用点的 `set_locked` 连同 `#![allow(dead_code)]` 删除；`monitor.rs get_cf_dict_number` 补 `# Safety` 文档；`search_memory` 重复文档注释、`bing_search_html` 与行为矛盾的注释对齐；`generation_params.rs apply_ollama` 生产 `expect` 改防御性跳过（同第九轮 category.rs 口径）。
+  - **database.rs 四函数结构重复（P2，可维护性）**：`get_last_activity_by_app`/`get_latest_activity_by_app`/`get_latest_activity_by_app_title`/`get_latest_activity_by_url` 逐字同构（仅过滤列与回溯起点不同）提取 `latest_activity_by_filter` 共享 helper + `today_start_ts`（SQL 形状与参数序不变）。
 - **文件监控设置页整页显示裸 i18n 键名（P2）**：`fileMonitor` 键组被误嵌进 `settingsStorage` 分组内部，组件引用的 `settings.fileMonitor.*` 全部找不到，页面各标题/提示显示为原始键名；且缺 `pickFolderTitle` 键（选择文件夹对话框标题同样裸露）。修复：键组移到顶层并改名 `settingsFileMonitor`（与 settingsStorage/settingsAppearance 命名一致），补齐 `pickFolderTitle`，组件引用同步，四语言叶子 1_242→1_243（zh-CN/zh-TW/en/ar 同步）。
 - **第九轮待确认批次修复（#6/#7/#11/#15/#23）**：
   - macOS「打开权限设置」`open` spawn 后不收割，每次点击残留僵尸进程直至退出；改后台线程 wait 收割。

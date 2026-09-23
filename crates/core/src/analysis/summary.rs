@@ -1037,7 +1037,14 @@ Rules:\n\
 - Do not include sections not listed above"
         );
 
-        let content = self.generate_ai_content(&prompt).await.ok()?;
+        // 失败分支静默回退默认顺序会让编排问题无从排查，落 warn 留痕
+        let content = match self.generate_ai_content(&prompt).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("decide_block_order: AI 段落排序调用失败，回退默认顺序: {e}");
+                return None;
+            }
+        };
         let trimmed = content
             .trim()
             .trim_start_matches("```json")
@@ -1045,7 +1052,13 @@ Rules:\n\
             .trim()
             .trim_end_matches("```")
             .trim();
-        let parsed: Vec<String> = serde_json::from_str(trimmed).ok()?;
+        let parsed: Vec<String> = match serde_json::from_str(trimmed) {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!("decide_block_order: 排序结果 JSON 解析失败，回退默认顺序: {e}");
+                return None;
+            }
+        };
         if parsed.is_empty() {
             return None;
         }

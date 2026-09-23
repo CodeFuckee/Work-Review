@@ -128,7 +128,14 @@ impl CloudAnalyzer {
             .await?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            // 错误页可能很大（网关 HTML），截断后再进错误串/日志（同 agent/model.rs 口径）
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect::<String>();
             return Err(AppError::Analysis(format!(
                 "OpenAI Vision API 错误: {error_text}"
             )));
@@ -204,7 +211,14 @@ impl CloudAnalyzer {
             .await?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            // 错误页可能很大（网关 HTML），截断后再进错误串/日志（同 agent/model.rs 口径）
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect::<String>();
             return Err(AppError::Analysis(format!("OpenAI API 错误: {error_text}")));
         }
 

@@ -947,15 +947,26 @@ async fn drive_stream(
 }
 
 /// 校验流式响应状态码，非 2xx 时读取 body 报错（触发上层回退）。
+/// body 读取受 deadline 剩余时间约束（另设 10s 上限）：半死端点慢速滴漏错误 body
+/// 不能拖垮整个请求。
 async fn ensure_stream_status(
     response: reqwest::Response,
     provider_label: &str,
+    deadline: Deadline,
 ) -> Result<reqwest::Response, AppError> {
     if response.status().is_success() {
         return Ok(response);
     }
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let idle = deadline.cap(Duration::from_secs(10));
+    let body = if idle.is_zero() {
+        String::new()
+    } else {
+        match tokio::time::timeout(idle, response.text()).await {
+            Ok(Ok(text)) => text,
+            _ => String::new(),
+        }
+    };
     Err(AppError::Analysis(format!(
         "{provider_label} 流式调用失败 ({status}): {}",
         body.chars().take(300).collect::<String>()
@@ -995,11 +1006,19 @@ impl OpenAiStreamAssembler {
                         .push((String::new(), String::new(), String::new()));
                 }
                 let slot = &mut self.partial_calls[idx];
+                // id/name 仅在 slot 为空时写入：官方 OpenAI 只在首个分片携带，此后为 null；
+                // vLLM 等自托管兼容端点每个分片重复完整 id/name——按 openai-python 官方
+                // 流式累积语义「首次非空生效」，否则重复值会拼成 "call_xxxcall_xxx" 并被
+                // trusted_event_tool_metadata 精确匹配拒绝。arguments 保持逐片拼接。
                 if let Some(id) = tc["id"].as_str() {
-                    slot.0.push_str(id);
+                    if slot.0.is_empty() {
+                        slot.0 = id.to_string();
+                    }
                 }
                 if let Some(name) = tc["function"]["name"].as_str() {
-                    slot.1.push_str(name);
+                    if slot.1.is_empty() {
+                        slot.1 = name.to_string();
+                    }
                 }
                 if let Some(args) = tc["function"]["arguments"].as_str() {
                     slot.2.push_str(args);
@@ -1108,7 +1127,8 @@ async fn chat_openai_compatible_streaming(
         }
     }
 
-    let response = ensure_stream_status(send_until(request, deadline).await?, "LLM").await?;
+    let response =
+        ensure_stream_status(send_until(request, deadline).await?, "LLM", deadline).await?;
 
     let mut assembler = OpenAiStreamAssembler::default();
     drive_stream(response, deadline, |line| {
@@ -1232,6 +1252,7 @@ async fn chat_ollama_streaming(
     let response = ensure_stream_status(
         send_until(client.post(&url).json(&body), deadline).await?,
         "Ollama",
+        deadline,
     )
     .await?;
 
@@ -1404,6 +1425,7 @@ async fn chat_claude_streaming(
         )
         .await?,
         "Claude",
+        deadline,
     )
     .await?;
 
@@ -1534,6 +1556,7 @@ async fn chat_gemini_streaming(
         )
         .await?,
         "Gemini",
+        deadline,
     )
     .await?;
 

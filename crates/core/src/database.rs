@@ -1249,25 +1249,38 @@ impl Database {
         Ok(activity_id)
     }
 
-    /// 获取指定应用最近24小时内的最新一条活动记录
-    pub fn get_last_activity_by_app(&self, app_name: &str) -> Result<Option<Activity>> {
+    /// 当天 00:00:00 的本地时间戳（合并判断的默认回溯起点）
+    fn today_start_ts() -> i64 {
+        let now = chrono::Local::now();
+        let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+        safe_local_timestamp(ndt)
+    }
+
+    /// 「按合并键查最近一条活动」共享实现：四类查询仅 WHERE 过滤列与回溯起点不同。
+    /// where_clause 内的占位符从 ?1 编号，start_ts 恒为最后一个参数。
+    fn latest_activity_by_filter(
+        &self,
+        where_clause: &str,
+        start_ts: i64,
+        filter_params: &[&dyn rusqlite::ToSql],
+    ) -> Result<Option<Activity>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
-        // 回溯24小时
-        let start_ts = chrono::Local::now().timestamp() - 86400;
-
         let sql = format!(
             "SELECT {ACTIVITY_SELECT_COLUMNS}
              FROM activities
-             WHERE app_name = ?1 AND timestamp >= ?2
+             WHERE {where_clause} AND timestamp >= ?{start_idx}
              ORDER BY id DESC
-             LIMIT 1"
+             LIMIT 1",
+            start_idx = filter_params.len() + 1,
         );
         let mut stmt = conn.prepare(&sql)?;
 
-        let mut rows = stmt.query(params![app_name, start_ts])?;
+        let mut all_params: Vec<&dyn rusqlite::ToSql> = filter_params.to_vec();
+        all_params.push(&start_ts);
+        let mut rows = stmt.query(all_params.as_slice())?;
         if let Some(row) = rows.next()? {
             Ok(Some(activity_from_row(row)?))
         } else {
@@ -1275,34 +1288,17 @@ impl Database {
         }
     }
 
+    /// 获取指定应用最近24小时内的最新一条活动记录
+    pub fn get_last_activity_by_app(&self, app_name: &str) -> Result<Option<Activity>> {
+        // 回溯24小时
+        let start_ts = chrono::Local::now().timestamp() - 86400;
+        self.latest_activity_by_filter("app_name = ?1", start_ts, &[&app_name])
+    }
+
     /// 获取指定应用今天的最近一条活动记录（用于合并判断）
     pub fn get_latest_activity_by_app(&self, app_name: &str) -> Result<Option<Activity>> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
-
-        // 获取今天的开始时间戳（当天 00:00:00）
-        let today_start = {
-            let now = chrono::Local::now();
-            let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            safe_local_timestamp(ndt)
-        };
-
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE app_name = ?1 AND timestamp >= ?2
-             ORDER BY id DESC
-             LIMIT 1"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![app_name, today_start])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(activity_from_row(row)?))
-        } else {
-            Ok(None)
-        }
+        let today_start = Self::today_start_ts();
+        self.latest_activity_by_filter("app_name = ?1", today_start, &[&app_name])
     }
 
     /// 获取指定应用 + 窗口标题今天的最近一条活动记录
@@ -1312,66 +1308,29 @@ impl Database {
         app_name: &str,
         window_title: &str,
     ) -> Result<Option<Activity>> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
-
-        let today_start = {
-            let now = chrono::Local::now();
-            let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            safe_local_timestamp(ndt)
-        };
-
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE app_name = ?1 AND window_title = ?2 AND timestamp >= ?3
-             ORDER BY id DESC
-             LIMIT 1"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![app_name, window_title, today_start])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(activity_from_row(row)?))
-        } else {
-            Ok(None)
-        }
+        let today_start = Self::today_start_ts();
+        self.latest_activity_by_filter(
+            "app_name = ?1 AND window_title = ?2",
+            today_start,
+            &[&app_name, &window_title],
+        )
     }
 
     /// 按 URL 获取今天的活动记录（用于浏览器 URL 合并）
     /// 使用规范化 URL 进行匹配，解决末尾斜杠差异问题
     pub fn get_latest_activity_by_url(&self, browser_url: &str) -> Result<Option<Activity>> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
-
-        let today_start = {
-            let now = chrono::Local::now();
-            let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            safe_local_timestamp(ndt)
-        };
+        let today_start = Self::today_start_ts();
 
         // 规范化输入 URL
         let normalized_url = normalize_url(browser_url);
         log::debug!("URL 合并查询: 原始='{browser_url}', 规范化='{normalized_url}'");
 
         // 使用 RTRIM 规范化数据库中的 URL 进行比较
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE RTRIM(browser_url, '/') = ?1 AND timestamp >= ?2
-             ORDER BY id DESC
-             LIMIT 1"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![normalized_url, today_start])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(activity_from_row(row)?))
-        } else {
-            Ok(None)
-        }
+        self.latest_activity_by_filter(
+            "RTRIM(browser_url, '/') = ?1",
+            today_start,
+            &[&normalized_url],
+        )
     }
 
     /// 根据 ID 获取单个活动
@@ -3172,8 +3131,10 @@ impl Database {
         Ok(reports)
     }
 
-    /// 保存小时摘要
-    pub fn save_hourly_summary(&self, summary: &HourlySummary) -> Result<i64> {
+    /// 保存小时摘要。不返回 rowid：UPSERT 走 DO UPDATE 分支时 SQLite 规定
+    /// last_insert_rowid() 未定义（实为上一次其它 INSERT 的陈旧值），返回即陷阱；
+    /// 需要定位行时按 (date, hour) 唯一键反查。
+    pub fn save_hourly_summary(&self, summary: &HourlySummary) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
@@ -3204,7 +3165,7 @@ impl Database {
             ],
         )?;
 
-        Ok(conn.last_insert_rowid())
+        Ok(())
     }
 
     /// 获取指定日期的所有小时摘要
@@ -3806,9 +3767,6 @@ impl Database {
         Ok(rows)
     }
 
-    /// 搜索工作记忆
-    /// 使用 FTS5 全文检索，支持中英文混合查询。
-    /// 回退到关键词匹配当 FTS 无结果时。
     /// 搜索工作记忆
     /// 使用 FTS5 全文检索，支持中英文混合查询。
     /// FTS 无结果时回退到关键词匹配。
@@ -7396,8 +7354,9 @@ mod tests {
             Some("返回空内容，已回退到基础模板")
         );
 
-        let _ = std::fs::remove_file(source_path);
-        let _ = std::fs::remove_file(backup_path);
+        // WAL 模式下 -wal/-shm 任何平台都会伴生，统一走三件套清理（同 remove_db_files 口径）
+        remove_db_files(&source_path);
+        remove_db_files(&backup_path);
     }
 
     fn sample_activity(timestamp: i64, app_name: &str) -> Activity {
@@ -7709,17 +7668,20 @@ mod tests {
         let (path, db, _, _, date) = seed_activity_deletion_state("delete-before-date");
         assert_eq!(db.delete_activities_before_date("2026-08-05").unwrap(), 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, id, _, date) = seed_activity_deletion_state("delete-by-id");
         assert_eq!(db.delete_activity_by_id(id).unwrap().0, 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, _, _, date) = seed_activity_deletion_state("delete-by-date");
         assert_eq!(db.delete_activities_by_date(&date).unwrap().0, 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, _, timestamp, date) = seed_activity_deletion_state("delete-by-range");
         assert_eq!(
@@ -7729,12 +7691,14 @@ mod tests {
             1
         );
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, _, _, date) = seed_activity_deletion_state("delete-by-app");
         assert_eq!(db.delete_activities_by_app("Code", None).unwrap().0, 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
     }
 
     #[test]

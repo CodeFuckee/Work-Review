@@ -58,8 +58,25 @@ impl FileMonitorHandle {
         let excludes = excludes.to_vec();
         let worker = std::thread::spawn(move || {
             while let Ok(batch) = rx.recv() {
+                // Err 通道携带 watch 失效/后端错误：静默吞掉会丢事件且零痕迹
+                let events = match batch {
+                    Ok(events) => events,
+                    Err(errs) => {
+                        log::warn!(
+                            "文件监控事件通道错误（本批事件丢弃）: {} 条, 首条: {:?}",
+                            errs.len(),
+                            errs.first()
+                        );
+                        continue;
+                    }
+                };
                 let mut rows: Vec<FileEventRow> = Vec::new();
-                for event in batch.unwrap_or_default() {
+                // 去重索引：同批内同路径+同类型只保留一条。用 HashSet 而非对 rows
+                // 线性扫描：移动含数千文件的目录时单批事件上万，O(n²) 比较会卡住
+                // worker 线程（首个命中的语义与原实现一致）
+                let mut seen: std::collections::HashSet<(String, String)> =
+                    std::collections::HashSet::new();
+                for event in events {
                     {
                         let Some(event_type) = map_event_kind(&event.event.kind) else {
                             continue;
@@ -69,11 +86,7 @@ impl FileMonitorHandle {
                             if is_path_excluded(&path, &excludes) {
                                 continue;
                             }
-                            // 去重：同批内同路径+同类型只保留一条
-                            if rows
-                                .iter()
-                                .any(|r| r.path == path && r.event_type == event_type)
-                            {
+                            if !seen.insert((path.clone(), event_type.to_string())) {
                                 continue;
                             }
                             let size = if event_type == "deleted" {

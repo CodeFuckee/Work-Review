@@ -242,6 +242,11 @@ pub async fn change_data_dir(
     }
 
     let requested_path = to_absolute_path(Path::new(requested_dir))?;
+    // 与 cleanup_old_data_dir 同口径：先规范化再比较。否则大小写/短名/符号链接/「..」
+    // 等价形式选中当前目录时会绕过下方同目录与父子两道校验，进而清空正在使用的数据目录
+    let requested_path = requested_path
+        .canonicalize()
+        .unwrap_or_else(|_| requested_path.clone());
     let current_dir = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         state

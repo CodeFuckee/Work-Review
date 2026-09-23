@@ -4483,6 +4483,10 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
 }
 
 /// 从 CFDictionary 读取一个数值字段
+///
+/// # Safety
+/// 调用方保证 `dict` 是有效的 CFDictionaryRef（由系统 API 返回、生命周期覆盖本次调用），
+/// 且对应 `key` 的值（若存在）是 CFNumber，否则 CFNumberGetValue 按错误类型解释内存。
 #[cfg(target_os = "macos")]
 unsafe fn get_cf_dict_number(
     dict: core_foundation::dictionary::CFDictionaryRef,

@@ -291,18 +291,14 @@ fn refresh_dock_icon(activate: bool) {
             ofType: NSString::alloc(nil).init_str("icns")
         ];
 
-        // 如果 bundle 中找不到，尝试硬编码路径
-        let path_to_use = if resource != nil {
-            resource
-        } else {
-            NSString::alloc(nil)
-                .init_str("/Applications/Work Review.app/Contents/Resources/icon.icns")
-        };
-
-        let image: *mut Object = NSImage::alloc(nil).initByReferencingFile_(path_to_use);
-        if image != nil {
-            let _: () = objc::msg_send![app, setApplicationIconImage: image];
-            log::info!("已重新设置 Dock 图标");
+        // bundle 内找不到 icon.icns 时直接放弃重设：历史硬编码 /Applications/Work Review.app
+        // 回退在应用更名 Yue-Review 后永不命中，只会静默失败
+        if resource != nil {
+            let image: *mut Object = NSImage::alloc(nil).initByReferencingFile_(resource);
+            if image != nil {
+                let _: () = objc::msg_send![app, setApplicationIconImage: image];
+                log::info!("已重新设置 Dock 图标");
+            }
         }
 
         if activate {
@@ -1269,12 +1265,29 @@ pub async fn save_background_image(
         (s.data_dir.clone(), s.config_path.clone())
     };
 
+    // 纵深防御：IPC 传入的 base64 无需信任。载荷上限 20MB（20MB 原始数据 ≈ 27MB base64）；
+    // 解码设尺寸/内存上限，防止解压炸弹把位图撑到数 GB
+    const MAX_BASE64_CHARS: usize = 28 * 1024 * 1024;
+    if data.len() > MAX_BASE64_CHARS {
+        return Err(AppError::Unknown(
+            "背景图过大：base64 载荷超过 20MB 上限".to_string(),
+        ));
+    }
     // 解码 base64
     let image_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &data)
         .map_err(|e| AppError::Unknown(format!("base64 解码失败: {e}")))?;
 
     // 保存为 JPEG（压缩体积）
-    let img = image::load_from_memory(&image_bytes)
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&image_bytes));
+    reader.limits(limits);
+    let img = reader
+        .with_guessed_format()
+        .map_err(|e| AppError::Unknown(format!("图片解析失败: {e}")))?
+        .decode()
         .map_err(|e| AppError::Unknown(format!("图片解析失败: {e}")))?;
 
     // 限制最大尺寸为 1920px 宽

@@ -3,7 +3,7 @@
 use crate::AppState;
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
-use work_review_core::config::{AppConfig, PrivacyConfig};
+use work_review_core::config::{AppConfig, ConfigLoadStatus, PrivacyConfig};
 use work_review_core::database::Activity;
 use work_review_core::error::AppError;
 
@@ -264,6 +264,12 @@ pub(crate) fn persist_app_config(
         config.save(&config_path)?;
 
         state.config = config.clone();
+        // 配置已成功落盘：刷新启动时的加载状态快照。否则启动时 Corrupted（fail-safe
+        // 跳过周期清理以保护数据）的用户在设置页修复配置后，storage_cleanup_task 仍
+        // 永久按 Corrupted 跳过，直到重启
+        if state.config_load_status.requires_fail_safe() {
+            state.config_load_status = ConfigLoadStatus::Loaded;
+        }
         state.storage_manager.update_config(config.storage.clone());
         state.screenshot_service.update_config(&config.storage);
         // 文件监控：按新配置热重载监听器（未启用时停掉）

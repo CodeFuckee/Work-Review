@@ -269,7 +269,12 @@ pub fn builtin_domain_category(url_or_domain: &str) -> Option<(&'static str, &'s
 
     let mut best: Option<(usize, &'static str, &'static str)> = None;
     for (suffix, base, semantic) in DOMAIN_TABLE {
-        let hit = domain == *suffix || domain.ends_with(&format!(".{suffix}"));
+        // 免分配等价改写：`domain.ends_with(&format!(".{suffix}"))` 语义为
+        // 「domain 以 .suffix 结尾且 suffix 前是完整标签」，分类热路径逐活动调用
+        let hit = domain == *suffix
+            || domain
+                .strip_suffix(suffix)
+                .is_some_and(|rest| rest.ends_with('.'));
         if hit && best.is_none_or(|(len, _, _)| suffix.len() > len) {
             best = Some((suffix.len(), base, semantic));
         }

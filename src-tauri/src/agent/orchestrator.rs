@@ -630,13 +630,46 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use work_review_core::config::AiProvider;
 
-    fn test_database(name: &str) -> Database {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("work-review-{name}-{unique}.db"));
-        Database::new(&path).expect("创建测试数据库失败")
+    /// 包装测试库：drop 时先释放连接再清理 db 三件套。WAL 模式下 -wal/-shm 任何平台
+    /// 都会伴生；Windows 上连接存活时主文件删除静默失败，CI 临时目录持续累积
+    /// （同第九轮 database.rs 测试清理战役口径）。
+    struct TestDb {
+        db: Option<Database>,
+        path: std::path::PathBuf,
+    }
+
+    impl TestDb {
+        fn new(name: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("work-review-{name}-{unique}.db"));
+            Self {
+                db: Some(Database::new(&path).expect("创建测试数据库失败")),
+                path,
+            }
+        }
+    }
+
+    impl std::ops::Deref for TestDb {
+        type Target = Database;
+        fn deref(&self) -> &Database {
+            self.db.as_ref().expect("测试库在 drop 后不可再访问")
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            self.db.take(); // 先关连接再删文件
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{}", self.path.display(), suffix));
+            }
+        }
+    }
+
+    fn test_database(name: &str) -> TestDb {
+        TestDb::new(name)
     }
 
     #[test]

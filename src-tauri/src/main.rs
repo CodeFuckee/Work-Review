@@ -31,7 +31,7 @@ use once_cell::sync::OnceCell;
 use screenshot::ScreenshotService;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use storage::StorageManager;
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder};
@@ -45,16 +45,24 @@ use work_review_core::privacy::PrivacyFilter;
 static APP_HANDLE: OnceCell<AppHandle> = OnceCell::new();
 // 启动时解析出的实际数据目录：崩溃日志优先写这里（函数注释指引的是
 // `<数据目录>/crashes/`，自定义数据目录的用户去自己的目录才找得到）；
-// 解析完成前的极早期崩溃回退默认目录（此时数据目录还无从得知）
-static CRASH_REPORT_DATA_DIR: OnceCell<std::path::PathBuf> = OnceCell::new();
+// 解析完成前的极早期崩溃回退默认目录（此时数据目录还无从得知）。
+// 用 RwLock 而非 OnceCell：运行期 change_data_dir 换目录后要能二次更新
+static CRASH_REPORT_DATA_DIR: RwLock<Option<std::path::PathBuf>> = RwLock::new(None);
 
 /// 数据目录解析完成后调用；运行期 change_data_dir 成功换目录后同样调用
 pub(crate) fn set_crash_report_data_dir(dir: &Path) {
-    let _ = CRASH_REPORT_DATA_DIR.set(dir.to_path_buf());
+    if let Ok(mut guard) = CRASH_REPORT_DATA_DIR.write() {
+        *guard = Some(dir.to_path_buf());
+    }
 }
 
 fn crash_report_dir() -> PathBuf {
-    crash_report_dir_for(CRASH_REPORT_DATA_DIR.get().map(PathBuf::as_path))
+    crash_report_dir_for(
+        CRASH_REPORT_DATA_DIR
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref(),
+    )
 }
 
 fn crash_report_dir_for(actual_data_dir: Option<&Path>) -> PathBuf {
@@ -1379,6 +1387,8 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         .checked_sub(Duration::from_millis(screen_lock_check_interval_ms()))
         .unwrap_or_else(std::time::Instant::now);
     let mut cached_screen_locked = false;
+    // 只在进入锁屏时打一条日志：锁屏期间每轮都打 info 会刷屏（整夜锁屏上千行）
+    let mut logged_screen_lock = false;
 
     loop {
         // 首先检查录制状态并获取配置
@@ -1414,12 +1424,16 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
 
         // 检测屏幕锁定状态，锁屏时不统计时长
         if cached_screen_locked {
-            log::info!("🔒 屏幕已锁定，暂停活动统计");
+            if !logged_screen_lock {
+                log::info!("🔒 屏幕已锁定，暂停活动统计");
+                logged_screen_lock = true;
+            }
             last_app_name = None; // 重置应用状态，解锁后视为新开始
             last_capture_time = std::time::Instant::now(); // 重置截图计时，避免解锁后累加锁屏时长
             tokio::time::sleep(Duration::from_secs(5)).await;
             continue;
         }
+        logged_screen_lock = false;
 
         let screenshot_interval = decision.screenshot_interval;
 

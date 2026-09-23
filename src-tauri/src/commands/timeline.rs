@@ -17,7 +17,12 @@ pub(crate) fn get_timeline_inner(
     state: &Arc<Mutex<AppState>>,
 ) -> Result<Vec<Activity>, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    let activities = state.database.get_timeline(&date, limit, offset)?;
+    // 上限钳制（同 /v1/activities 的 .min(10_000) 先例）：limit/offset 查询参数不直通 DB
+    let activities = state.database.get_timeline(
+        &date,
+        limit.map(|v| v.min(10_000)),
+        offset.map(|v| v.min(1_000_000)),
+    )?;
     let (ignored_apps, excluded_domains) = collect_privacy_filters(&state);
     let filtered = filter_activities_by_privacy(activities, &ignored_apps, &excluded_domains);
 

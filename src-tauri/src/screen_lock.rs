@@ -1,15 +1,12 @@
 // 锁屏检测模块 (Windows / macOS)
 // 监听系统锁屏/解锁事件，用于控制录制状态
 
-#![allow(dead_code)]
-
+// Linux 探测链失效标记仍用原子布尔
+#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 /// 屏幕锁定状态
 pub struct ScreenLockMonitor {
-    /// 是否锁定
-    is_locked: Arc<AtomicBool>,
     /// Linux 探测链整体失效时只告警一次的标记
     #[cfg(target_os = "linux")]
     probe_failure_warned: AtomicBool,
@@ -19,7 +16,6 @@ impl ScreenLockMonitor {
     /// 创建锁屏监控器
     pub fn new() -> Self {
         Self {
-            is_locked: Arc::new(AtomicBool::new(false)),
             #[cfg(target_os = "linux")]
             probe_failure_warned: AtomicBool::new(false),
         }
@@ -194,11 +190,6 @@ impl ScreenLockMonitor {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     pub fn is_locked(&self) -> bool {
         false
-    }
-
-    /// 设置锁定状态（用于手动更新）
-    pub fn set_locked(&self, locked: bool) {
-        self.is_locked.store(locked, Ordering::SeqCst);
     }
 }
 

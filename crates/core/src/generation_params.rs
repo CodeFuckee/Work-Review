@@ -113,11 +113,13 @@ pub fn apply_ollama(body: &mut Value, config: &ModelConfig) {
     if let Some(enabled) = config.enable_thinking {
         body["think"] = json!(enabled);
     }
-    let options = body
-        .as_object_mut()
-        .expect("ollama body is object")
-        .entry("options")
-        .or_insert_with(|| json!({}));
+    // 防御性跳过（同 category.rs 口径）：契约靠调用方构造对象字面量维持，
+    // 万一违约时跳过参数写入也比 panic 拖垮整个生成流程好
+    let Some(obj) = body.as_object_mut() else {
+        log::warn!("apply_ollama: body 非对象，跳过 options 写入");
+        return;
+    };
+    let options = obj.entry("options").or_insert_with(|| json!({}));
     options["num_predict"] = json!(resolved_max_tokens(config, 8192));
 }
 
