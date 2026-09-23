@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 移除
+- **Telegram Bot（消息通知）功能整体移除**：后端 `telegram_bot.rs`（轮询/命令处理/绑定码）与 `get_telegram_bot_status`、`generate_telegram_bot_bind_code` 命令，`AppConfig` 全部 `telegram_bot_*` 配置字段，前端 TelegramBotPanel 面板与设置页状态轮询/归一化逻辑，四语言 i18n telegram 文案与 README 三语言 Bot 联动段落中的 Telegram 字样一并移除（旧配置文件里的 telegram_bot_* 键会被自动忽略，无需手动清理；飞书/钉钉/企业微信三个 Bot 与共用的 `/devices` `/report` `/generate` 命令不受影响；识别 Telegram 桌面应用的时间线分类关键词与本功能无关，保留）。用户裁决基本不用（2026-09-24；设置入口此前已隐藏）。
 - **设置页隐藏 Telegram 通知入口（暂时）**：Telegram Bot 面板从「节点网关 → 消息通知」分组隐藏（`SHOW_TELEGRAM_PANEL = false` 单开关，恢复改回 true 即可）；面板代码与配置字段均保留，仅入口不可见（用户裁决：基本不用，2026-09-24）。
 - **桌宠（桌面化身）功能整体移除**：悬浮窗、主动开口提醒、全局键鼠输入联动、跟进对话（followups）、休息提醒、托盘桌宠开关、设置页桌宠分区与全部 avatar 配置字段（旧配置文件里的 avatar 键会被自动忽略，无需手动清理）；README 三语言宣传段、桌宠截图与 BongoCat 第三方署名（THIRD_PARTY_NOTICES.md）一并移除。用户裁决「功能鸡肋」（2026-09-24）。
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。

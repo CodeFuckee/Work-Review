@@ -61,8 +61,6 @@
     & ComponentProps<SettingsFileMonitor>['config'];
 
   type NullableCredentialKey =
-    | 'telegram_bot_token'
-    | 'telegram_bot_proxy'
     | 'feishu_app_id'
     | 'feishu_app_secret'
     | 'feishu_verification_token'
@@ -206,15 +204,6 @@
       }
       if (!['a', 'b', 'c'].includes(loadedConfig.ui_visual_style)) {
         loadedConfig.ui_visual_style = 'c';
-      }
-      if (typeof loadedConfig.telegram_bot_enabled !== 'boolean') {
-        loadedConfig.telegram_bot_enabled = false;
-      }
-      if (typeof loadedConfig.telegram_bot_token !== 'string' && loadedConfig.telegram_bot_token !== null) {
-        loadedConfig.telegram_bot_token = null;
-      }
-      if (typeof loadedConfig.telegram_bot_proxy !== 'string' && loadedConfig.telegram_bot_proxy !== null) {
-        loadedConfig.telegram_bot_proxy = null;
       }
       if (!Array.isArray(loadedConfig.node_devices)) {
         loadedConfig.node_devices = [];

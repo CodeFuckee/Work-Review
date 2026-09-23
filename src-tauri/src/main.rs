@@ -24,7 +24,6 @@ mod remote_upload;
 mod screen_lock;
 mod screenshot;
 mod storage;
-mod telegram_bot;
 mod wecom_aibot;
 mod wecom_bot;
 
@@ -434,7 +433,6 @@ pub struct AppState {
     pub is_paused: bool,
     pub generating_report: bool,
     pub localhost_api_runtime: localhost_api::LocalhostApiRuntime,
-    pub telegram_bot_runtime: telegram_bot::TelegramBotRuntime,
     pub wecom_bot_runtime: wecom_aibot::WecomBotRuntime,
     /// 本地文件监控运行句柄（设置启用时为 Some）
     pub file_monitor: Option<file_monitor_runtime::FileMonitorHandle>,
@@ -527,7 +525,6 @@ fn clear_legacy_keychain_placeholders(config: &mut work_review_core::config::App
         clear_opt(&mut config.openai_api_key);
         clear_opt(&mut config.assistant_search_api_key);
         clear_opt(&mut config.embedding_api_key);
-        clear_opt(&mut config.telegram_bot_token);
         clear_opt(&mut config.feishu_app_secret);
         clear_opt(&mut config.feishu_verification_token);
         clear_opt(&mut config.feishu_encrypt_key);
@@ -3463,7 +3460,6 @@ async fn main() {
         is_paused,
         generating_report: false,
         localhost_api_runtime: localhost_api::LocalhostApiRuntime::default(),
-        telegram_bot_runtime: telegram_bot::TelegramBotRuntime::default(),
         wecom_bot_runtime: wecom_aibot::WecomBotRuntime::default(),
         file_monitor: None,
     }));
@@ -3597,9 +3593,6 @@ async fn main() {
 
             if let Err(e) = localhost_api::sync_localhost_api_runtime(app.handle(), state.inner()) {
                 log::warn!("初始化本地 API 失败: {e}");
-            }
-            if let Err(e) = telegram_bot::sync_telegram_bot_runtime(state.inner()) {
-                log::warn!("初始化 Telegram Bot 失败: {e}");
             }
             if let Err(e) = wecom_aibot::sync_wecom_bot_runtime(state.inner()) {
                 log::warn!("初始化企业微信 Bot 失败: {e}");
@@ -3786,7 +3779,6 @@ async fn main() {
             commands::export_reports_range,
             commands::get_localhost_api_status,
             commands::get_node_gateway_status,
-            commands::get_telegram_bot_status,
             commands::get_wecom_bot_status,
             commands::gitlab_test_connection,
             commands::gitlab_list_projects,
@@ -3796,7 +3788,6 @@ async fn main() {
             commands::get_gitlab_project_stats,
             commands::get_file_monitor_stats,
             commands::file_monitor_status,
-            commands::generate_telegram_bot_bind_code,
             commands::generate_text_with_model,
             commands::reveal_localhost_api_token,
             commands::rotate_localhost_api_token,

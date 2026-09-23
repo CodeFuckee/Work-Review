@@ -1102,24 +1102,6 @@ pub struct AppConfig {
     /// 本地 localhost API 端口
     #[serde(default = "default_localhost_api_port")]
     pub localhost_api_port: u16,
-    /// 是否启用 Telegram Bot
-    #[serde(default)]
-    pub telegram_bot_enabled: bool,
-    /// Telegram Bot Token
-    #[serde(default)]
-    pub telegram_bot_token: Option<String>,
-    /// Telegram Bot 代理地址 (e.g. http://127.0.0.1:7890, socks5://127.0.0.1:1080)
-    #[serde(default)]
-    pub telegram_bot_proxy: Option<String>,
-    /// Telegram Bot 允许的 chat_id 白名单；为空时仅允许 /start 和 /bind
-    #[serde(default)]
-    pub telegram_bot_allowed_chat_ids: Vec<i64>,
-    /// Telegram Bot 一次性绑定码；通过 /bind <code> 授权当前 chat_id 后失效
-    #[serde(default)]
-    pub telegram_bot_bind_code: Option<String>,
-    /// Telegram Bot 一次性绑定码过期时间（Unix 秒）
-    #[serde(default)]
-    pub telegram_bot_bind_code_expires_at: Option<i64>,
     /// 是否启用飞书 Bot
     #[serde(default)]
     pub feishu_bot_enabled: bool,
@@ -1400,12 +1382,6 @@ impl Default for AppConfig {
             localhost_api_enabled: false,
             localhost_api_host: None,
             localhost_api_port: DEFAULT_LOCALHOST_API_PORT,
-            telegram_bot_enabled: false,
-            telegram_bot_token: None,
-            telegram_bot_proxy: None,
-            telegram_bot_allowed_chat_ids: Vec::new(),
-            telegram_bot_bind_code: None,
-            telegram_bot_bind_code_expires_at: None,
             feishu_bot_enabled: false,
             feishu_app_id: None,
             feishu_app_secret: None,
@@ -1490,8 +1466,6 @@ impl AppConfig {
         let last_app_version = self.last_app_version.clone();
         let daily_report_export_dir = self.daily_report_export_dir.clone();
         let node_gateway = self.node_gateway.clone();
-        let telegram_bot_bind_code = self.telegram_bot_bind_code.clone();
-        let telegram_bot_bind_code_expires_at = self.telegram_bot_bind_code_expires_at;
         let background_image = self.background_image.clone();
 
         *self = remote;
@@ -1505,8 +1479,6 @@ impl AppConfig {
         self.last_app_version = last_app_version;
         self.daily_report_export_dir = daily_report_export_dir;
         self.node_gateway = node_gateway;
-        self.telegram_bot_bind_code = telegram_bot_bind_code;
-        self.telegram_bot_bind_code_expires_at = telegram_bot_bind_code_expires_at;
         self.background_image = background_image;
     }
 
@@ -1565,11 +1537,6 @@ impl AppConfig {
         self.localhost_api_host = normalize_optional_string(self.localhost_api_host.take());
         self.wecom_bot_id = normalize_optional_string(self.wecom_bot_id.take());
         self.wecom_bot_secret = normalize_optional_string(self.wecom_bot_secret.take());
-        self.telegram_bot_bind_code = normalize_optional_string(self.telegram_bot_bind_code.take())
-            .map(|code| code.to_ascii_uppercase());
-        if self.telegram_bot_bind_code.is_none() {
-            self.telegram_bot_bind_code_expires_at = None;
-        }
         self.remote_storage.s3.public_url_base =
             normalize_optional_string(self.remote_storage.s3.public_url_base.take());
         self.remote_storage.webdav.public_url_base =
@@ -1683,7 +1650,6 @@ impl AppConfig {
         let mut config = Self::default();
         config.storage.screenshots_enabled = false;
         config.localhost_api_enabled = false;
-        config.telegram_bot_enabled = false;
         config.feishu_bot_enabled = false;
         config.wecom_bot_enabled = false;
         config.dingtalk_bot_enabled = false;
@@ -2610,7 +2576,6 @@ mod tests {
         assert!(result.backup_error.is_some());
         assert!(!result.config.storage.screenshots_enabled);
         assert!(!result.config.localhost_api_enabled);
-        assert!(!result.config.telegram_bot_enabled);
         assert!(!result.config.feishu_bot_enabled);
         assert!(!result.config.wecom_bot_enabled);
         assert!(!result.config.dingtalk_bot_enabled);

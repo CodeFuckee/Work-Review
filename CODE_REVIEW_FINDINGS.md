@@ -226,9 +226,8 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
   可达 360s 与外层超时口径脱节）— 修后超时语义随配置伸缩，可观察
 - ✅→♻️ [P2] src-tauri/src/localhost_api.rs:1073 — /v1/activities 的 limit 查询参数无钳制（原待确认）— **2026-09-24 用户裁决修复：钳 ≤10000（同 /v1/reports 先例）**
 - ✅→♻️ [P2] category.rs:104,150 — 生产代码 expect（原待确认，avatar.rs 侧已随桌宠移除消失）— **2026-09-24 用户裁决修复：防御性跳过（let-else continue）**
-- ⏸ [P2] telegram_bot.rs:92,220 / wecom_aibot.rs:84,496 — 轮询/长连接任务 panic 无哨兵：
-  JoinHandle 从不 await，任务 panic 后 shared.running 恒 true，状态面板显示「运行中」实际
-  已死 — 未找到现高概率 panic 路径，若修属 spawn 包装层加固
+- ⏸→✂️ [P2] telegram_bot.rs:92,220 / wecom_aibot.rs:84,496 — 轮询/长连接任务 panic 无哨兵 —
+  **telegram 侧随功能整体移除消解（2026-09-24 用户裁决）；wecom_aibot 侧仍待定**
 - ✅→♻️ [P2] scripts/ci/linux-package-inner.sh:31 — 发布链打包工具供应链（原待确认）—
   **2026-09-24 用户裁决修复（commit b4bc02e）**：5 个工具钉 github 直连真源计算的 sha256
   白名单（镜像交叉验证 8/8 一致），plugin-gtk/gstreamer 的 raw URL 钉死 commit

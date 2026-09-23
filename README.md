@@ -267,9 +267,9 @@ GDK_BACKEND=x11 ./Work_Review
 ## Extended Capabilities (Beta)
 
 <details>
-<summary>Bot Integration (Telegram / Feishu / DingTalk / WeCom)</summary>
+<summary>Bot Integration (Feishu / DingTalk / WeCom)</summary>
 
-Query records and generate daily reports remotely from Telegram / Feishu / DingTalk / WeCom via local API + multi-device registration. Supported commands: `/devices`, `/report`, `/generate`, etc. WeCom prefers the intelligent-bot long connection (Bot ID + Secret, no public URL); only one live connection is allowed per bot. Restricted to personal and own multi-device use only.
+Query records and generate daily reports remotely from Feishu / DingTalk / WeCom via local API + multi-device registration. Supported commands: `/devices`, `/report`, `/generate`, etc. WeCom prefers the intelligent-bot long connection (Bot ID + Secret, no public URL); only one live connection is allowed per bot. Restricted to personal and own multi-device use only.
 
 </details>
 

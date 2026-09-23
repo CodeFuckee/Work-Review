@@ -273,9 +273,9 @@ GDK_BACKEND=x11 ./Work_Review
 ## 扩展能力（Beta）
 
 <details>
-<summary>Bot 联动（Telegram / 飞书 / 钉钉 / 企业微信）</summary>
+<summary>Bot 联动（飞书 / 钉钉 / 企业微信）</summary>
 
-通过本地 API + 多设备注册，从 Telegram / 飞书 / 钉钉 / 企业微信远程查询记录与生成日报。支持命令：`/devices`、`/report`、`/generate` 等。企业微信优先使用智能机器人长连接（Bot ID + Secret，无需公网）；同一机器人同时只能保持一条长连接。仅限个人和本人多设备联动使用。
+通过本地 API + 多设备注册，从飞书 / 钉钉 / 企业微信远程查询记录与生成日报。支持命令：`/devices`、`/report`、`/generate` 等。企业微信优先使用智能机器人长连接（Bot ID + Secret，无需公网）；同一机器人同时只能保持一条长连接。仅限个人和本人多设备联动使用。
 
 </details>
 

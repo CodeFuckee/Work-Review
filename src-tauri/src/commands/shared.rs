@@ -287,7 +287,6 @@ pub(crate) fn persist_app_config(
     }
 
     crate::localhost_api::sync_localhost_api_runtime(&app, state)?;
-    crate::telegram_bot::sync_telegram_bot_runtime(state)?;
     crate::wecom_aibot::sync_wecom_bot_runtime(state)?;
     crate::config_sync::spawn_push(config.clone());
     crate::emit_config_changed(&app, &config);

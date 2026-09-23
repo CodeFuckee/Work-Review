@@ -449,9 +449,6 @@ const config = {
   localhost_api_enabled: true,
   localhost_api_port: 47831,
   localhost_api_host: '127.0.0.1',
-  telegram_bot_enabled: false,
-  telegram_bot_token: null,
-  telegram_bot_proxy: null,
   feishu_bot_enabled: false,
   feishu_app_id: null,
   feishu_app_secret: null,
@@ -609,8 +606,6 @@ async function installTauriMock(
             return { deviceId: 'work-review-demo', protocolVersion: '1.0', deviceName: 'Work Review Demo' };
           case 'get_localhost_api_status':
             return { enabled: true, baseUrl: 'http://127.0.0.1:47831', tokenPreview: 'wr_••••••••demo', lastError: null };
-          case 'get_telegram_bot_status':
-            return { running: false, starting: false, allowedChatIds: [], lastError: null };
           case 'get_wecom_bot_status':
             return { running: false, starting: false, lastError: null, longConnectionConfigured: false, callbackConfigured: false };
           case 'get_update_settings':

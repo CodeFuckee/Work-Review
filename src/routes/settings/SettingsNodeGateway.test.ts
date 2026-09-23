@@ -29,7 +29,6 @@ test('节点设置组件应复用设置页配置对象并读取节点与本地 A
   assert.match(source, /export let config/);
   assert.match(source, /invoke(?:<[^>]+>)?\('get_node_gateway_status'\)/);
   assert.match(source, /invoke(?:<[^>]+>)?\('get_localhost_api_status'\)/);
-  assert.match(source, /invoke(?:<[^>]+>)?\('get_telegram_bot_status'\)/);
   assert.match(source, /invoke(?:<[^>]+>)?\('get_wecom_bot_status'\)/);
   assert.match(source, /invoke(?:<[^>]+>)?\('save_config', \{ config \}\)/);
   assert.match(source, /nodeGatewayPage\.title/);
@@ -54,7 +53,6 @@ test('节点子面板的二元开关应提供本地化 switch 语义', async () 
   const sources = await Promise.all([
     'LocalApiPanel.svelte',
     'McpServerPanel.svelte',
-    'TelegramBotPanel.svelte',
     'BotCredentialsPanel.svelte',
     'WecomBotPanel.svelte',
   ].map((file) => readFile(new URL(`./components/nodeGateway/${file}`, import.meta.url), 'utf8')));
@@ -66,19 +64,6 @@ test('节点子面板的二元开关应提供本地化 switch 语义', async () 
   }
   assert.match(sources[2], /nodeGatewayPage\.(?:showSecret|hideSecret)/);
   assert.match(sources[3], /nodeGatewayPage\.(?:showSecret|hideSecret)/);
-  assert.match(sources[4], /nodeGatewayPage\.(?:showSecret|hideSecret)/);
-});
-
-test('Telegram Bot 状态应在页面加载后轮询并在销毁时清理定时器', async () => {
-  const source = await readFile(
-    new URL('./components/SettingsNodeGateway.svelte', import.meta.url),
-    'utf8'
-  );
-
-  assert.match(source, /function startTelegramStatusPolling\(\)/);
-  assert.match(source, /setInterval\(async \(\) =>/);
-  assert.match(source, /if \(config\.telegram_bot_enabled\) \{\s*startTelegramStatusPolling\(\);/);
-  assert.match(source, /onDestroy\(\(\) => \{\s*stopTelegramStatusPolling\(\);/);
 });
 
 test('拆分后应包含三个分组的 CollapsibleSection', async () => {
@@ -91,7 +76,6 @@ test('拆分后应包含三个分组的 CollapsibleSection', async () => {
   assert.match(source, /groupAdvanced/);
   assert.match(source, /McpServerPanel/);
   assert.match(source, /LocalApiPanel/);
-  assert.match(source, /TelegramBotPanel/);
   assert.match(source, /WecomBotPanel/);
   assert.match(source, /BotCredentialsPanel/);
 });
@@ -106,7 +90,7 @@ test('企业微信 Bot 应走智能机器人长连接并轮询状态', async () 
 
   assert.match(gatewaySource, /function startWecomStatusPolling\(\)/);
   assert.match(gatewaySource, /if \(config\.wecom_bot_enabled\) \{\s*startWecomStatusPolling\(\);/);
-  assert.match(gatewaySource, /onDestroy\(\(\) => \{\s*stopTelegramStatusPolling\(\);\s*stopWecomStatusPolling\(\);/);
+  assert.match(gatewaySource, /onDestroy\(\(\) => \{\s*stopWecomStatusPolling\(\);/);
   assert.match(wecomSource, /wecom_bot_id/);
   assert.match(wecomSource, /wecom_bot_secret/);
   assert.match(wecomSource, /nodeGatewayPage\.wecomConnecting/);
