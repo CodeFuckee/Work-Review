@@ -7785,7 +7785,7 @@ dependencies = [
 
 [[package]]
 name = "work-review"
-version = "1.1.90"
+version = "1.1.91"
 dependencies = [
  "aes",
  "anyhow",
