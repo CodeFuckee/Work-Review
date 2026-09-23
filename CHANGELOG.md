@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
 
 ### 修复
+- **设置侧边栏「存储」图标空白（P2）**：图标分支链缺 `storage` 分支——八个标签页只有七个有图标定义，存储页图标渲染为空。补数据库圆柱图标（同款描边风格）。
 - **第十轮全量代码评审修复（第二批：前端 TS / CI / 打包脚本 / 文档，9 项，行为保持；完整清单见 `CODE_REVIEW_FINDINGS.md` 第十轮）**：
   - **设置页账号卡片整页显示裸 i18n 键名（P1）**：`settings.accountTitle/accountDesc/accountLoggedInAs/accountNotLoggedIn/accountServerLabel/accountServerHint` 6 个键在四语言 locale 中全部误嵌 `settingsStorage` 分组（与上一轮 8403aea 修复的 fileMonitor 键组误嵌同类回归），组件按 `t('settings.account*')` 取值两级回退均失败，账号卡片标题/描述/登录态/服务器地址标签全部渲染原始键名；四语言同步把 6 键移入 `settings` 组（总叶子数不变）。
   - **README 截图脚本页签索引整体错位（P2）**：桌宠移除删掉设置页第 3 个页签后，capture-readme-pages.ts 仍按旧索引点击——重拍 README 截图时「设置-桌面化身」会实拍隐私页、「设置-隐私」实拍存储页、以此类推整体错一位且无任何报错；按现页签数组修正索引、删除化身条目，并给 `captureSettingsTab` 加索引越界守卫（页签再增删时立刻报错提示同步），mock 配置清理 avatar_*/break_reminder_* 残留字段；契约测试断言同步。
