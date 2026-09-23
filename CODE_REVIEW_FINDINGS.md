@@ -310,8 +310,16 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
 
 - 批次 1（Rust）：cargo +1.97.1 fmt/check(0 warning)/clippy(0 warning)/test 全绿
   （519+236+21+30=806 通过），npm run test:frontend 833 通过（Rust 改动可能波及的前端
-  契约测试全过），流水线 <链接见 git log 0ab38a4 对应 pipeline>
-- 批次 2/3：npm run check(0 错误)/test:frontend(833)/build 全绿 + bash -n 三个改动脚本
+  契约测试全过）；main 流水线全绿：
+  <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2875>
+  （途中 GitLab 服务器宕机 ~1.5h 打断 rust-verify-macos，重试后 build-release-macos 以
+  3h04m 完成——作业级 `timeout: 3h`（第八轮补）首次验证生效，runner 12 mac 全量冷编译
+  需 >1h）
+- 批次 2/3：npm run check(0 错误)/test:frontend(833)/build 全绿 + bash -n 三个改动脚本；
+  与 docs 同流水线全绿：
+  <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2881>
+  （resource_group version-bump / clean -e .cache / 私钥清理等本批 CI 改动即在此条
+  流水线生效验证）
 # 第八轮（2026-09-22）
 
 范围：八分片并行复扫（main+commands / monitor+screenshot+ocr / localhost+avatar+杂项 /
