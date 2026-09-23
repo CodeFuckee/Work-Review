@@ -309,6 +309,254 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
   <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2881>
   （resource_group version-bump / clean -e .cache / 私钥清理等本批 CI 改动即在此条
   流水线生效验证）
+# 第十轮（2026-09-24）
+
+范围：十分片并行复扫（main+storage+采集 / localhost+网关+bot / agent 七文件 /
+commands 19 文件+capabilities+注册表一致性 / database.rs 8.5k 行深审 /
+core 其余+mcp-server+skills-engine / stores+utils+i18n+App / 路由页四组件 /
+设置页+auth+about+组件库 / CI+脚本+打包+admin-core+e2e），与九轮台账逐条去重。
+新发现 44 条：P0 1、P1 5、P2 38。修复 38 项分两批：批次 1 = Rust 29 项（commit 9ec77bf，
+流水线 <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2926> 全绿）；
+批次 2 = TS/CI/脚本/文档 9 项。.svelte 项按红线全部列待过目未动；行为语义/需产品决策项列待确认。
+
+## 第十轮已修复
+
+### 批次 1（Rust，29 项，commit 9ec77bf）
+
+- ✅ [P0] src-tauri/src/commands/config.rs:244 — change_data_dir 的「同目录/互为父子」
+  两道校验在 canonicalize 之前比较未规范化字面路径：Windows 大小写差异/8.3 短名/符号链接/
+  「..」等价形式选中当前数据目录时全部绕过，随后 ensure_target_dir_ready 整删该目录受管
+  条目（config.json/截图/OCR，Linux 含活动中的数据库）= 数据销毁 — canonicalize 提前到
+  比较之前（对齐同文件 cleanup_old_data_dir 既有正确口径）
+- ✅ [P1] src-tauri/src/main.rs:49-54 — 崩溃日志目录 CRASH_REPORT_DATA_DIR 用 OnceCell，
+  set 只在首次生效：上一轮修复（03aa42e「换目录后同步跟随」）实际未生效，change_data_dir
+  后的二次 set 是静默 no-op — 改 RwLock<Option<PathBuf>>（崩溃路径读取容忍锁中毒）
+- ✅ [P1] src-tauri/src/agent/model.rs:998 — OpenAI 兼容流式装配器对 tool_call id/name
+  逐片 push_str：官方 OpenAI 仅首片携带所以无感，vLLM 等自托管端点每片重复完整值拼成
+  "call_xxxcall_xxx"，被 trusted_event_tool_metadata 精确匹配当未注册工具拒绝（该类端点
+  工具调用整体失效）— slot 为空时写入（openai-python 官方流式累积语义），arguments 保持逐片拼接
+- ✅ [P2] src-tauri/src/commands/memory.rs:133 + timeline.rs:20 — /v1/weekly-review 的
+  limit（`unwrap_or(5000)` 只兜默认）可传 4294967295 经 load_filtered_activities_in_range
+  全表载入含窗口标题；/v1/timeline/ 的 limit/offset 同族直通 DB — 在 Tauri/localhost 共用
+  inner 层统一钳制（limit ≤10000 同 /v1/activities 用户裁决先例、offset ≤1000000）
+- ✅ [P2] src-tauri/src/remote_upload.rs:150 — S3 SigV4 canonical_uri 用自造
+  url_encode_path（`+()!=@` 等编码成 %XX），实际发送的是 reqwest Url::parse 归一化路径
+  （同类字符保持原样），两种形态不一致 → path_prefix 含此类字符时恒 SignatureDoesNotMatch
+  — canonical_uri 改 parsed.path()，删除 url_encode_path
+- ✅ [P2] src-tauri/src/localhost_api.rs:189 — reason_phrase 缺 403 映射且未知状态回落
+  "OK"，回调签名失败/令牌不匹配等 403 响应状态行为 `HTTP/1.1 403 OK` — 补 403 Forbidden
+- ✅ [P2] src-tauri/src/agent/model.rs:958 — ensure_stream_status 对非 2xx 的
+  response.text() 不受 deadline 约束，半死端点慢速滴漏错误 body 可无限挂起 — 包 deadline
+  剩余时间（另设 10s 上限），超时/出错按空 body 报错（行为同前）
+- ✅ [P2] src-tauri/src/agent/tools.rs:676-708 — collected_references 4 处
+  `if let Ok`/`unwrap_or(0)`/`unwrap_or_default` 把 Mutex 中毒吞成引用收集永久失效零日志
+  — 统一 unwrap_or_else(into_inner)（纯内存缓冲）
+- ✅ [P2] src-tauri/src/agent/tools.rs:1614 — bing_search_html 注释称「DNS、SSL 也一并
+  重试」与实现矛盾（非 connect/timeout 立即返回）— 修正注释
+- ✅ [P2] src-tauri/src/agent/orchestrator.rs:633 + tools.rs:3510 — 测试库不清理（orchestrator
+  每次 temp 目录建 work-review-*.db 三件套；tools 用固定名 wr-web-tools-test.db）CI 长期
+  累积 — orchestrator 抽 TestDb 守卫（drop 先关连接再删三件套）；tools 改唯一名+收尾清理
+- ✅ [P2] crates/core/src/database.rs:3176 — save_hourly_summary 在 UPSERT 后返回
+  last_insert_rowid()（DO UPDATE 分支下 SQLite 规定未定义，实为陈旧值）；唯一生产调用方
+  忽略返回值 — 签名改 Result<()>，注释陷阱
+- ✅ [P2] crates/core/src/database.rs:7399,7714-7739 — 7 处测试收尾只删主库文件（WAL 伴生
+  文件 CI 持续累积，第九轮清理战役残留）— drop(db) 后 remove_db_files 三件套
+- ✅ [P2] crates/core/src/database.rs:3811 — search_memory 文档注释整段粘贴两遍 — 删重复
+- ✅ [P2] crates/core/src/database.rs:1253-1375 — get_last_activity_by_app /
+  get_latest_activity_by_app / _by_app_title / _by_url 四函数逐字同构（仅过滤列与回溯起点
+  不同）— 提取 latest_activity_by_filter 共享 helper + today_start_ts（SQL 形状与参数序不变）
+- ✅ [P2] crates/core/src/file_monitor.rs:62 — debouncer 的 Err 批次
+  unwrap_or_default() 静默吞掉 notify 错误（watch 失效时事件丢失无痕迹）— 补 warn（条数+首条）
+- ✅ [P2] crates/core/src/file_monitor.rs:73 — 同批去重 rows.iter().any() 线性扫描 O(n²)：
+  移动含数千文件的目录时单批事件上万约 5×10⁷ 次路径比较卡 worker — HashSet<(path,type)>
+  去重（首个命中语义不变）
+- ✅ [P2] crates/core/src/analysis/cloud.rs:131,207 — 两处非 2xx 时 response.text() 全文
+  （网关大 HTML）拼进 AppError 并 warn 落盘（第九轮 model.rs:261,478 已截 300，core 侧漏网）
+  — 补 chars().take(300)
+- ✅ [P2] crates/core/src/analysis/summary.rs:1040,1048 — decide_block_order 两条失败路径
+  （AI 调用 .ok()? 与 JSON 解析 .ok()?）完全静默，编排永久回退默认顺序无从排查 — 补 warn
+- ✅ [P2] crates/core/src/knowledge.rs:272 — builtin_domain_category 在 170 项
+  DOMAIN_TABLE 循环内每次 format!(".{suffix}") 堆分配（分类热路径逐活动调用）—
+  strip_suffix + ends_with('.') 免分配等价改写
+- ✅ [P2] crates/core/src/generation_params.rs:118 — apply_ollama 生产代码
+  expect("ollama body is object")（契约靠调用方维持，第九轮 category.rs 同款已裁决防御化）
+  — as_object_mut 失败时 warn + 跳过 options 写入
+- ✅ [P2] src-tauri/src/main.rs:1420 — 锁屏期间采集循环每轮（约 5s）打一条 info「屏幕已
+  锁定」，整夜锁屏上千行 — 仅进入锁屏时打一次（解锁复位）
+- ✅ [P2] src-tauri/src/ocr.rs:686-703 — Windows OCR 两条失败路径把整段 stdout（识别出的
+  屏幕文本 JSON）warn 明文落盘未过敏感过滤（偏离本仓脱敏口径）— 只记长度/状态码
+- ✅ [P2] src-tauri/src/commands/shared.rs:266 — persist_app_config 不刷新
+  config_load_status：storage_cleanup_task 读的启动快照从不再赋值，启动时 Corrupted
+  （fail-safe 跳过清理保护数据）的用户在设置页修复配置后周期清理永久跳过直到重启 —
+  成功落盘后把 fail-safe 状态置 Loaded
+- ✅ [P2] src-tauri/src/screen_lock.rs — is_locked: Arc<AtomicBool> 字段只写不读、
+  set_locked 全仓无调用点，#![allow(dead_code)] 屏蔽 — 全部删除（含 allow）
+- ✅ [P2] src-tauri/src/monitor.rs:4486 — get_cf_dict_number 是 unsafe fn 却无 # Safety
+  文档（前轮 FFI 补注漏网）— 补注
+- ✅ [P2] src-tauri/src/commands/system.rs:294 — refresh_dock_icon 回退硬编码
+  /Applications/Work Review.app/...（更名 Yue-Review 后永不命中且静默）— 删除回退
+  （bundle 内找不到即放弃重设）
+- ✅ [P2] src-tauri/src/commands/system.rs:1268 — save_background_image 对 IPC base64
+  无长度上限、image::load_from_memory 无解码限制，解压炸弹可把内存撑到数 GB — 载荷钳
+  20MB + image::Limits（8192px/256MB）
+- ✅ [P2] src-tauri/src/commands/category.rs:299 — delete_custom_category 的 reassign_to
+  无任何校验：传不存在的 key 或恰等于被删 key 时规则与全部历史活动被批量重定向到无效分类
+  — 校验必须存在于内置/自定义分类且 ≠ 被删 key，否则回退 "other" 并 warn
+
+### 批次 2（TS/CI/脚本/文档，9 项）
+
+- ✅ [P1] src/lib/i18n/locales/{zh-CN,en,zh-TW,ar}.ts — settings.account* 6 键在四语言
+  全部误嵌 settingsStorage 分组（8403aea 同类回归），组件 t('settings.account*') 两级回退
+  失败，账号卡片渲染裸键名 — 四语言同步移入 settings 组（总叶子数不变，1_242）
+- ✅ [P2] src/lib/utils/updater.ts:113 — RUNTIME_STATUS_PATTERNS 死映射
+  /^当前未发现可安装的在线更新$/ → updater.noInstallAvailable（后端已无该状态消息，
+  永不可能命中）+ 四语言死键 — 删除映射与键，index.test.ts 叶子数钉 1_243→1_242
+- ✅ [P2] scripts/capture-readme-pages.ts:839 — 桌宠移除删掉设置页 index 3 页签后仍按旧
+  索引点击：重拍 README 截图整体错位一档且无报错（化身→隐私→存储→接入全偏）— 按现
+  tabs 数组修正、删化身条目、captureSettingsTab 加索引越界守卫；mock config 清理
+  avatar_*/break_reminder_* 与 avatar_input_supported 残留；契约测试断言同步
+- ✅ [P2] scripts/appimage/uninstall.sh — 未随改名适配：pgrep/.desktop/图标/AppImage
+  glob/DATA_DIR 全部只认 Work_Review 旧名（deb/uninstall.sh、reinstall.sh 均已双名，
+  唯此脚本漏改）— 按 Yue_Review/Yue-Review/Work_Review 多名字探测改写，新旧数据目录双清
+- ✅ [P2] scripts/deb/reinstall.sh:33 — --help 的 sed '2,13p' 没跟上第九轮扩充的
+  Local-deb lookup / 无远程回退说明 — 改 2,17p
+- ✅ [P2] scripts/deb/reinstall.sh:361 — OGA_TMP 未走 register_cleanup（DEB/TMP_FWD 均已
+  注册）：set -e 下半途失败或 Ctrl-C 残留 /tmp/wr-silent.*.oga — 补注册
+- ✅ [P2] .gitlab-ci.yml:54,596 — 容器打包作业的 CARGO_HOME 挂在
+  $CI_PROJECT_DIR/.cargo-home，不在 GIT_CLEAN_FLAGS 与 version-bump git clean 排除清单：
+  每次发版容器内 crate registry 全量重下 — 两处补 -e .cargo-home
+- ✅ [P2] README.zh.md:62,130 — 桌宠移除漏删简体：功能列表「桌面化身 Beta」小节 + 截图区
+  桌面化身图片引用（指向已删除的 png；README.md/tw 已清）— 删除
+- ✅ [P2] scripts/capture-readme-pages.test.ts:39 — 契约测试钉死『设置-桌面化身』标签把
+  过期行为固化 — 断言与现页签对齐
+
+## 第十轮待过目批次（.svelte，按红线待用户过目，本轮未动）
+
+- [P1] src/routes/Overview.svelte:2086-2087,2128 — 919a937 在两行 HTML 注释中间插入整个
+  文件活动卡片段落，注释在 2087 行提前闭合，2128 行「行布局复用 app-usage-chart 同款网格
+  （名称+次数下标 | 进度条 | 行数变更） -->」成裸文本，概览页两卡片间渲染可见乱文 —
+  补回闭合并另写完整独立注释
+- [P1] src/routes/Overview.svelte:2103 — 文件活动 keyed each 的 key 是
+  path+':'+occurred_at（秒级），同路径同秒多事件（保存文件时 created+modified 连发常见）
+  产生重复 key，Svelte 4 keyed each 直接抛 "Cannot have duplicate keys" 中断组件更新 —
+  key 拼入 event_type 或 size
+- [P1] src/routes/settings/Settings.svelte:346-347,480-487 — saveConfig 失败写入与
+  loadConfig 共用的 error，模板 `{:else if error}` 分支优先于 config 分支：一次保存失败后
+  整个设置页被「加载失败」横幅整体替换，点重试（loadConfig）还丢弃未保存修改 — 保存错误
+  改独立 saveError 状态内联展示
+- [P1] src/routes/settings/Settings.svelte:588 + SettingsNodeGateway.svelte:185,191 —
+  节点网关 toast 事件链无消费者（父组件只挂 on:change 未挂 on:toast，Svelte 4 dispatch
+  不冒泡）：保存失败/token 显示/轮换/复制等反馈全部静默丢弃 — 补 on:toast 转 showToast
+- [P2] src/routes/Report.svelte:571-573 — deletePreset 经局部别名深层赋值不触发 Svelte
+  失效：删除非活跃预设后胶片不消失（删除活跃预设仅因 persistReportPrompt 内部整体赋值而
+  侥幸刷新）— 直接对 config.xxx 赋值
+- [P2] src/routes/Report.svelte:354-361 — savePresets 捕获保存异常后仅 console.error，
+  调用方仍按成功收尾，重启后改动静默丢失 — 返回成功与否由调用方 toast 报错并回滚
+- [P2] src/routes/Timeline.svelte:1604 — {#each timelineRows} 无 key：实时 upsert 插队首
+  整体重排，无 key each 按索引原地改写全部行 DOM（缩略图/图标 src 变更）整列表闪烁 —
+  用 kind+key 组合键
+- [P2] src/routes/Timeline.svelte:1657-1784,1108-1111 — getTimelineIconSrc 同一渲染被调
+  3 次（每次全表扫描图标规则）；viewActivity 的 getTimelineThumbnail 连调两次（已有局部
+  变量未复用）— 行首 {@const} 复用
+- [P2] src/routes/settings/Settings.svelte:347 — 保存失败回退文案误用
+  t('common.loadFailedRetry')（「加载失败，请稍后重试」，loadConfig 复制粘贴残留）—
+  换保存失败文案键
+- [P2] src/routes/settings/SettingsGeneral.svelte:417-421 — 工作目标小时输入无 clamp 不
+  回写（同文件 356-369 标准工时有修好先例）：手输 30 直接存 1800 分钟 — 复用 clamp+回写
+- [P2] src/routes/settings/SettingsAppearance.svelte:118-146 — handleBgFileSelect 的
+  FileReader 只挂 onload 未挂 onerror：读文件失败后 bgUploading 永久 true，「选择图片」
+  按钮锁死 — 补 onerror 复位并提示
+- [P2] src/routes/settings/nodeGateway/{DeviceRegistryPanel,DeviceIdentityPanel}.svelte —
+  新增设备行与名称/URL/Token 输入全程不 dispatch save/change：填完关页静默丢失且主页
+  dirty 不置位 — on:blur 时 dispatch('save')（与 BotCredentialsPanel 同款）
+- [P2] src/routes/settings/SettingsNodeGateway.svelte:166-188 — persistConfig 单个
+  try/catch 同时覆盖 save_config 与 3 个状态查询 IPC：保存成功但状态刷新失败也按「保存
+  失败」上报 — 状态刷新独立 try/catch 失败仅记日志
+- [P2] src/routes/settings/SettingsNodeGateway.svelte:171 — 保存成功后 dispatch('change')
+  使 Settings.svelte 无条件 dirty=true：节点页每次自动保存后主页恒「未保存」，cache 订阅
+  被 dirty 门挡住 — 复用 autosaved detail 协议
+- [P2] src/routes/settings/SettingsSystem.svelte:574-579,687-689 — 桌宠段删除后死 CSS：
+  .permission-inline-meta 与 :global(.dark) .permission-overview-platform 全仓零引用 —
+  删除
+- [P2] src/lib/App.svelte:710-728 — 日报定时器工作记忆分支在结束到午夜间每分钟无条件
+  getRuntimeConfig()（约 360 次/晚空转 IPC，即使 memory_enabled=false 或当日已合成）—
+  先用本地已同步 runtimeConfig 短路再决定拉取
+
+## 第十轮待确认（修复会改对外行为/语义或需产品决策，未经确认不动）
+
+- ⏸ [P2] src-tauri/src/bot_common.rs:383 — /report 的日期参数经 resolve_single_date
+  （_ => s 无格式校验）原样 format! 进设备 API URL path，`..`/`?`/`#` 可改写 bot 对设备
+  发出的 GET 请求路径（携带 Bearer token）；仅 GET 且响应形状校验兜底，泄漏面有限 —
+  建议白名单 `^\d{4}-\d{2}-\d{2}$`；属输入收紧，与 /generate body date 一并统一需裁决
+- ⏸ [P2] src-tauri/src/main.rs:1964 — 合并路径 latest.id 为 None 时 log::error 后
+  continue，连带跳过本轮浮窗记账与 screenshot-taken 事件；id 来自 DB 查询实际恒 Some —
+  是否改防御性返回涉及行为取舍
+- ⏸ [P2] src-tauri/src/storage.rs:198-223 — 超限清理从最旧删起但不保护「当天」目录：
+  storage_limit_mb 小于当天已产出体积时正在写的当天截图也会被删 — 是否排除今天目录属
+  产品决策
+- ⏸ [P2] crates/core/src/database.rs:5068-5128 — search_memory_chunks_semantic 全程持
+  连接锁全表流式扫描+逐行点积（万级块百毫秒级，阻塞采集热路径）；注释称流式为省内存 —
+  物化后释放锁需权衡内存
+- ⏸ [P2] crates/core/src/database.rs:555-572 — parse_date_bounds 对非法日期串静默忽略
+  （fail-open）：MCP 传错格式 date_from/time 过滤整段失效返回全范围 — 改报错属对外行为变更
+- ⏸ [P2] crates/core/src/database.rs:1395-1454 — merge_activity 读旧 OCR 与 UPDATE 两条
+  语句未包事务，理论窗口内并发删除/合并丢一次 OCR 追加（采集单写者设计触发概率极低）—
+  unchecked_transaction 可无行为变化闭环，是否值得加请确认
+- ⏸ [P2] crates/core/src/database.rs:1086-1101 — file_events 表只增不删无保留策略（与
+  已 ⏸ gitlab_commits 同族）— 数据保留决策
+- ⏸ [P2] src-tauri/src/agent/tools.rs:1587-1617 — bing_search_html 最坏 3×20s+退避
+  ≈63s 不感知 deadline，放大已知 ⏸ executor.rs:442 的单轮预算问题 — 与 442 同批定案
+- ⏸ [P2] src-tauri/src/agent/model.rs:894-902 — LineBuffer 单行无上限且 drive_stream 无
+  总量上限（恶意端点超长无换行行使缓冲无界）— 与已知 ⏸ model.rs:986/1259 同一威胁模型
+  待定项
+- ⏸ [P2] src-tauri/src/agent/executor.rs:855-865 — emit_control_event 的
+  send_control().await（mpsc 投递 ack 等待）不在取消保护内：前端存活但卡死时 executor 在
+  ConfirmRequest/Done 发送上永久挂起无法被打断 — 给 Done 加取消包裹会收不到终态，属
+  行为变更
+- ⏸ [P2] src-tauri/src/commands/system.rs:1292-1296,1344-1346 — save/clear_background_image
+  直改 state.config 后 config.save()，绕过 persist_app_config（不 stamp_local_sync/
+  spawn_push/emit_config_changed/normalize）：启用配置同步的设备上背景图变更不上推且会
+  被其他端整包推送覆盖 — 「背景图仅本机生效」是否有意需确认
+- ⏸ [P2] src-tauri/src/commands/report.rs:330-331 — 日报自动导出 ensure_export_dir_
+  components_safe 不 canonicalize（与手动导出口径不一）：父目录预置指向 .ssh/LaunchAgents
+  的符号链接可绕过组件检查写入 — create_dir_all 后 canonicalize 复核可不动入参契约
+- ⏸ [P2] src/routes/Timeline.svelte:439-458 — confirmPrivacyRule 的 get_config→改→
+  save_config 整包回写与全库 14 处同款并发时读-改-写丢失更新 — 根治需后端专用命令，
+  涉 IPC 契约变更
+- ⏸ [P2] src/routes/ask/Ask.svelte:134-159 + modelPresentation.ts — 显示回退链平行实现
+  两份已现终点漂移（行为当前等价）— 是否统一走 modelPresentation.ts 酌定
+- ⏸ [P2] src/routes/settings/Settings.svelte:566-567 — filemonitor 标签图标分支渲染两个
+  并排 SVG（其余七个标签单图标，桌宠移除前已存在）疑似残留 — 有意与否需过目
+- ⏸ [P2] src/routes/settings/nodeGateway/ApiExamplesPanel.svelte:23,46-67 — examples
+  初始化快照 curlBase 依赖 SettingsNodeGateway 的 {:if loading} 门控时序，面板移出该
+  分支即静默回退演示地址 — 改 $: 派生或注释钉住
+- ⏸ [P2] scripts/ci/linux-builder-22.Dockerfile:22 — 供应链白名单不覆盖构建器基镜像
+  （daocloud 拉取未按 digest 钉定，镜像内 apt/Node/Rust 不在白名单）— 钉 FROM digest
+  涉运维流程
+- ⏸ [P2] .gitlab-ci.yml:58 — WINDOWS_RUNNER_TAG: "windows, rust" 单字符串含逗号空格，
+  GitLab 不拆分 tags 数组元素：当前能调度推测 runner 恰以字面单 tag 注册，重注册为双
+  tag 会让全部 Windows 作业永久 pending — 需核实 runner 实际注册形态
+- ⏸ [P2] tests/e2e/{installer-isolation,ui}/reports/ 生成物已入库（.gitignore 只忽略
+  artifacts/html）— 有意留档还是漏忽略请裁决
+
+## 第十轮暂缓（💤）
+
+- 💤 crates/core/src/database.rs 约 15 处 query_map(...).filter_map(|r| r.ok()) 把行级
+  解码错误静默吞掉、结果集无声截断 — 至少对 Err 行计数 warn，关键读路径改 collect
+  Result；面广需专门批次
+- 💤 src-tauri/src/main.rs:982-1002 等 — should_confirm_idle 的 _screenshot_confirmed
+  参数已忽略但 input_idle 时每次截图仍整图解码算哈希只喂诊断计数 — 加 debug 门控或删
+  参数需先查证 NO_CHANGE_COUNT 外部消费
+- 💤 巨型组件拆分（Timeline 3556/Overview 2597/Report 1746/Ask 1317 行）— 已知条目，
+  行号持续增长，建议尽快排期专门批次
+
+## 第十轮测试与流水线
+
+- 批次 1（Rust）：cargo fmt/clippy（0 warning）/test 全绿（412+224+21+30=687 通过），
+  npm run test:frontend 733 通过；main 流水线全绿：
+  <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2926>
+- 批次 2：npm run check(0 错误)/test:frontend(733)/build 全绿 + bash -n 两个改动脚本；
+  流水线链接见提交后补录
 # 第八轮（2026-09-22）
 
 范围：八分片并行复扫（main+commands / monitor+screenshot+ocr / localhost+avatar+杂项 /

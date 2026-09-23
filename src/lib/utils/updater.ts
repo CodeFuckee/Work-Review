@@ -110,7 +110,6 @@ const RUNTIME_STATUS_PATTERNS: ReadonlyArray<{
     params: matched => ({ details: matched[1] }),
   },
   { pattern: /^在线更新已完成$/, key: 'updater.completed' },
-  { pattern: /^当前未发现可安装的在线更新$/, key: 'updater.noInstallAvailable' },
   {
     pattern: /^正在下载更新\s+(\d+)%（(.+)）$/,
     key: 'updater.downloadingPercent',

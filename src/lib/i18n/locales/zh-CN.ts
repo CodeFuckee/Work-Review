@@ -414,7 +414,6 @@ export default {
       installedFromSource: '更新安装完成，来源 {sourceLabel}',
       completed: '在线更新已完成',
       noSourceForVersion: '未找到可用于版本 {version} 的在线更新源',
-      noInstallAvailable: '当前未发现可安装的在线更新',
       failedWithDetails: '在线更新失败，已尝试全部更新源：{details}',
       downloadingPercent: '正在下载更新 {percent}%（{sourceLabel}）',
       downloadingSize: '正在下载更新 {size} MB（{sourceLabel}）',
@@ -541,6 +540,12 @@ export default {
     settings: {
       title: '设置',
       subtitle: '应用配置与隐私规则',
+      accountTitle: '账号',
+      accountDesc: '管理后台登录状态与服务器地址',
+      accountServerLabel: '服务器地址',
+      accountServerHint: 'work-review 管理后台地址，用于登录验证',
+      accountNotLoggedIn: '未登录',
+      accountLoggedInAs: '已登录',
       save: '保存设置',
       saving: '保存中...',
       saved: '已保存',
@@ -1300,12 +1305,6 @@ export default {
       testConnectionTesting: '测试中...',
       testConnectionSuccess: '连接成功',
       testConnectionFailed: '连接失败: {error}',
-      accountTitle: '账号',
-      accountDesc: '管理后台登录状态与服务器地址',
-      accountServerLabel: '服务器地址',
-      accountServerHint: 'work-review 管理后台地址，用于登录验证',
-      accountNotLoggedIn: '未登录',
-      accountLoggedInAs: '已登录',
     },
 
     settingsFileMonitor: {

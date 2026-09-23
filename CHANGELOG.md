@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
 
 ### 修复
+- **第十轮全量代码评审修复（第二批：前端 TS / CI / 打包脚本 / 文档，9 项，行为保持；完整清单见 `CODE_REVIEW_FINDINGS.md` 第十轮）**：
+  - **设置页账号卡片整页显示裸 i18n 键名（P1）**：`settings.accountTitle/accountDesc/accountLoggedInAs/accountNotLoggedIn/accountServerLabel/accountServerHint` 6 个键在四语言 locale 中全部误嵌 `settingsStorage` 分组（与上一轮 8403aea 修复的 fileMonitor 键组误嵌同类回归），组件按 `t('settings.account*')` 取值两级回退均失败，账号卡片标题/描述/登录态/服务器地址标签全部渲染原始键名；四语言同步把 6 键移入 `settings` 组（总叶子数不变）。
+  - **README 截图脚本页签索引整体错位（P2）**：桌宠移除删掉设置页第 3 个页签后，capture-readme-pages.ts 仍按旧索引点击——重拍 README 截图时「设置-桌面化身」会实拍隐私页、「设置-隐私」实拍存储页、以此类推整体错一位且无任何报错；按现页签数组修正索引、删除化身条目，并给 `captureSettingsTab` 加索引越界守卫（页签再增删时立刻报错提示同步），mock 配置清理 avatar_*/break_reminder_* 残留字段；契约测试断言同步。
+  - **appimage/uninstall.sh 未随改名适配（P2）**：进程探测/桌面项/图标/AppImage glob/数据目录全部只认旧名 Work_Review，新名 Yue_Review 的 AppImage 安装用本脚本卸载会残留；按 deb/uninstall.sh 同款多名字探测改写（Yue_Review/Yue-Review/Work_Review 全兼容，新旧数据目录双清）。
+  - **CI：容器打包的 CARGO_HOME 不在 git clean 排除清单（P2）**：daily-package 容器把 CARGO_HOME 挂在 `$CI_PROJECT_DIR/.cargo-home`，不在 GIT_CLEAN_FLAGS 与 version-bump 的 clean 排除清单里，每次发版 crate registry 全量重下；两处补 `-e .cargo-home`。
+  - **reinstall.sh 两处收尾（P2）**：`--help` 的 sed 截取范围没跟上第九轮扩充的 Local-deb lookup / 无远程回退说明（补到 2,17p）；静音 oga 临时文件未注册退出清理（Ctrl-C/半途失败会残留 /tmp/wr-silent.*.oga，与 DEB/TMP_FWD 同款 register_cleanup）。
+  - **README.zh.md 桌宠残留（P2）**：功能移除时英文/繁体 README 已清，简体漏删——功能列表「桌面化身 Beta」小节与截图区「桌面化身」图片引用（指向已删除的 png）残留；删除。
+  - **updater.ts 死映射与死键（P2）**：`RUNTIME_STATUS_PATTERNS` 里 `当前未发现可安装的在线更新 → updater.noInstallAvailable` 的状态消息在 Rust 侧已不存在（多源重写时被删），映射永不可能命中、四语言键同为死键；删除映射与四语言键，i18n 叶子数钉 1_243→1_242。
 - **第十轮全量代码评审修复（第一批：Rust 行为保持，29 项；完整问题清单与处置见 `CODE_REVIEW_FINDINGS.md` 第十轮）**：
   - **切换数据目录可误删当前数据（P0，正确性）**：`change_data_dir` 的「同目录/互为父子」两道校验在 `canonicalize` 之前比较字面路径，Windows 大小写差异、8.3 短名、符号链接或含 `..` 的等价形式选中当前数据目录时全部绕过，随后目标目录「清空已有受管条目」会把正在使用的 config.json/截图/OCR 日志（Linux 上含活动中的数据库）整目录删除；对齐 `cleanup_old_data_dir` 的既有口径：先规范化再比较。
   - **崩溃日志目录跟随换目录的修复实际未生效（P1，回归）**：上一轮引入的 `CRASH_REPORT_DATA_DIR` 用 `OnceCell` 存储，`set` 只在首次生效，启动后 `change_data_dir` 成功换目录时的二次更新是静默 no-op——崩溃日志永远写旧目录；改 `RwLock<Option<PathBuf>>`（读取容忍锁中毒）。

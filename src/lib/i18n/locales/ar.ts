@@ -421,7 +421,6 @@ export default {
       installedFromSource: 'تم تثبيت التحديث من {sourceLabel}',
       completed: 'اكتمل التحديث التلقائي',
       noSourceForVersion: 'لا يوجد مصدر تحديث متاح للإصدار {version}',
-      noInstallAvailable: 'لا يوجد تحديث قابل للتثبيت حالياً',
       failedWithDetails: 'فشل التحديث التلقائي بعد تجربة جميع المصادر: {details}',
       downloadingPercent: 'جارٍ تنزيل التحديث {percent}% ({sourceLabel})',
       downloadingSize: 'جارٍ تنزيل التحديث {size} م.ب ({sourceLabel})',
@@ -432,6 +431,12 @@ export default {
     settings: {
       title: 'الإعدادات',
       subtitle: 'تفضيلات التطبيق وقواعد الخصوصية',
+      accountTitle: 'الحساب',
+      accountDesc: 'حالة تسجيل الدخول إلى بوابة الإدارة وعنوان الخادم',
+      accountServerLabel: 'عنوان الخادم',
+      accountServerHint: 'عنوان خادم إدارة work-review المستخدم للتحقق عند تسجيل الدخول',
+      accountNotLoggedIn: 'غير مسجّل الدخول',
+      accountLoggedInAs: 'مسجّل الدخول',
       save: 'حفظ الإعدادات',
       saving: 'جاري الحفظ...',
       saved: 'تم الحفظ',
@@ -1309,12 +1314,6 @@ export default {
       testConnectionTesting: 'جاري الاختبار...',
       testConnectionSuccess: 'نجح الاتصال',
       testConnectionFailed: 'فشل الاتصال: {error}',
-      accountTitle: 'الحساب',
-      accountDesc: 'حالة تسجيل الدخول إلى بوابة الإدارة وعنوان الخادم',
-      accountServerLabel: 'عنوان الخادم',
-      accountServerHint: 'عنوان خادم إدارة work-review المستخدم للتحقق عند تسجيل الدخول',
-      accountNotLoggedIn: 'غير مسجّل الدخول',
-      accountLoggedInAs: 'مسجّل الدخول',
     },
 
     settingsFileMonitor: {

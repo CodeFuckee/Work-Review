@@ -59,7 +59,6 @@ Yue-Review 面向个人工作复盘，适合用来回答这些问题：
 - **自动版本与发布流水线** — 每次 main 流水线全绿后自动把版本末位 +1（逢 100 进位，如 1.2.99 → 1.3.0）并同步五处版本源，打 `vX.Y.Z` tag 触发三平台打包与发布；每次推送还会编译三平台 release 二进制作为 CI 产物
 - **每次推送直接下载安装包** — 每次 main 流水线全绿后同时产出三平台完整安装包（dmg / deb / rpm / AppImage / nsis exe + 便携 zip）并上传为 CI artifact（保留 30 天）。最新构建链接：`https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-windows`（另有 `package-daily-macos-arm64`、`package-daily-macos-x64`、`package-daily-linux-x64`、`package-daily-linux-arm64`）。tag 发布版经原 Release 流程永久保留安装包。
 - **隐私优先，本地可控** — 数据默认保存在本地 SQLite；AI 可不启用，模型调用使用你自己的 API Key，不经第三方中转。未配置任何模型时将使用内置模型，此时问答/日报内容会发送至内置模型对应的第三方 AI 服务
-- **桌面化身 Beta** — 用桌面化身反馈工作状态，并逐步扩展到主动提醒和上下文辅助
 - **多语言界面** — 支持简体中文、English、繁體中文、العربية（阿拉伯语，RTL 布局）
 
 ---
@@ -125,11 +124,6 @@ Yue-Review 面向个人工作复盘，适合用来回答这些问题：
 <p align="center"><strong>AI 模型</strong></p>
 <p align="center">
   <img src="docs/Introduction_zh/设置-AI模型.png" alt="AI 模型设置" width="720" />
-</p>
-
-<p align="center"><strong>桌面化身</strong></p>
-<p align="center">
-  <img src="docs/Introduction_zh/设置-桌面化身.png" alt="桌面化身设置" width="720" />
 </p>
 
 <p align="center"><strong>隐私设置</strong></p>

@@ -414,7 +414,6 @@ export default {
       installedFromSource: '更新安裝完成，來源 {sourceLabel}',
       completed: '線上更新已完成',
       noSourceForVersion: '未找到可用於版本 {version} 的線上更新源',
-      noInstallAvailable: '目前未發現可安裝的線上更新',
       failedWithDetails: '線上更新失敗，已嘗試全部更新源：{details}',
       downloadingPercent: '正在下載更新 {percent}%（{sourceLabel}）',
       downloadingSize: '正在下載更新 {size} MB（{sourceLabel}）',
@@ -425,6 +424,12 @@ export default {
     settings: {
       title: '設定',
       subtitle: '應用配置與隱私規則',
+      accountTitle: '帳號',
+      accountDesc: '管理後台登入狀態與伺服器地址',
+      accountServerLabel: '伺服器地址',
+      accountServerHint: 'work-review 管理後台地址，用於登入驗證',
+      accountNotLoggedIn: '未登入',
+      accountLoggedInAs: '已登入',
       save: '儲存設定',
       saving: '儲存中...',
       saved: '已儲存',
@@ -1302,12 +1307,6 @@ export default {
       testConnectionTesting: '測試中...',
       testConnectionSuccess: '連線成功',
       testConnectionFailed: '連線失敗: {error}',
-      accountTitle: '帳號',
-      accountDesc: '管理後台登入狀態與伺服器地址',
-      accountServerLabel: '伺服器地址',
-      accountServerHint: 'work-review 管理後台地址，用於登入驗證',
-      accountNotLoggedIn: '未登入',
-      accountLoggedInAs: '已登入',
     },
 
     settingsFileMonitor: {

@@ -355,7 +355,8 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   assert.ok(firstDictionary);
   const expected = collectLeafSignatures(firstDictionary).sort(byPath);
 
-  assert.equal(expected.length, 1_243);
+  // 第十轮评审删除 4 语言死键 updater.noInstallAvailable（后端已无对应状态消息）
+  assert.equal(expected.length, 1_242);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

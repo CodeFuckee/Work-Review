@@ -30,7 +30,7 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run)     DRY=1 ;;
         --purge-data)  PURGE_DATA=1 ;;
-        -h|--help)     sed -n '2,13p' "$0"; exit 0 ;;
+        -h|--help)     sed -n '2,17p' "$0"; exit 0 ;;
         *) echo "unknown flag: $arg (see --help)" >&2; exit 2 ;;
     esac
 done
@@ -359,6 +359,8 @@ SILENT_OGA_B64='T2dnUwACAAAAAAAAAADo86z2AAAAADQdbeoBHgF2b3JiaXMAAAAAASJWAAAAAAAA
 log "  silent screen-capture.oga override"
 if [ "$DRY" -eq 0 ]; then
     OGA_TMP=$(mktemp /tmp/wr-silent.XXXXXX.oga)
+    # 与 DEB/TMP_FWD 一致注册退出清理：set -e 下半途失败或 Ctrl-C 不残留 /tmp
+    register_cleanup "$OGA_TMP"
     printf '%s' "$SILENT_OGA_B64" | base64 -d > "$OGA_TMP"
     if [ "$(sha256sum "$OGA_TMP" | cut -d' ' -f1)" != "$SILENT_OGA_SHA256" ]; then
         rm -f "$OGA_TMP"

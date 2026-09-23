@@ -424,7 +424,6 @@ export default {
       installedFromSource: 'Update installed from {sourceLabel}',
       completed: 'Online update completed',
       noSourceForVersion: 'No online update source is available for version {version}',
-      noInstallAvailable: 'No installable online update is available right now',
       failedWithDetails: 'Online update failed after trying all sources: {details}',
       downloadingPercent: 'Downloading update {percent}% ({sourceLabel})',
       downloadingSize: 'Downloading update {size} MB ({sourceLabel})',
@@ -435,6 +434,12 @@ export default {
     settings: {
       title: 'Settings',
       subtitle: 'App preferences and privacy rules',
+      accountTitle: 'Account',
+      accountDesc: 'Admin portal sign-in status and server address',
+      accountServerLabel: 'Server URL',
+      accountServerHint: 'work-review admin server URL used for sign-in',
+      accountNotLoggedIn: 'Not signed in',
+      accountLoggedInAs: 'Signed in',
       save: 'Save Settings',
       saving: 'Saving...',
       saved: 'Saved',
@@ -1317,12 +1322,6 @@ export default {
       testConnectionTesting: 'Testing...',
       testConnectionSuccess: 'Connection successful',
       testConnectionFailed: 'Connection failed: {error}',
-      accountTitle: 'Account',
-      accountDesc: 'Admin portal sign-in status and server address',
-      accountServerLabel: 'Server URL',
-      accountServerHint: 'work-review admin server URL used for sign-in',
-      accountNotLoggedIn: 'Not signed in',
-      accountLoggedInAs: 'Signed in',
     },
 
     settingsFileMonitor: {
