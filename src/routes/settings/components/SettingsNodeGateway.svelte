@@ -7,6 +7,9 @@
   import McpServerPanel from './nodeGateway/McpServerPanel.svelte';
   import LocalApiPanel from './nodeGateway/LocalApiPanel.svelte';
   import TelegramBotPanel from './nodeGateway/TelegramBotPanel.svelte';
+
+  // Telegram 通知基本不用（用户裁决 2026-09-24）：设置入口暂时隐藏，恢复改回 true
+  const SHOW_TELEGRAM_PANEL = false;
   import WecomBotPanel from './nodeGateway/WecomBotPanel.svelte';
   import BotCredentialsPanel from './nodeGateway/BotCredentialsPanel.svelte';
   import DeviceIdentityPanel from './nodeGateway/DeviceIdentityPanel.svelte';
@@ -307,15 +310,17 @@
       <!-- 分组 2：消息通知（默认收起） -->
       <CollapsibleSection title={t('nodeGatewayPage.groupNotifications')} storageKey="settings.node.bots">
         <div class="space-y-3">
-          <TelegramBotPanel
-            {config}
-            {tgBotStatus}
-            {saving}
-            on:save={handleSave}
-            on:startTgPolling={handleStartTgPolling}
-            on:reloadStatus={handleReloadStatus}
-            on:toast={handleToast}
-          />
+          {#if SHOW_TELEGRAM_PANEL}
+            <TelegramBotPanel
+              {config}
+              {tgBotStatus}
+              {saving}
+              on:save={handleSave}
+              on:startTgPolling={handleStartTgPolling}
+              on:reloadStatus={handleReloadStatus}
+              on:toast={handleToast}
+            />
+          {/if}
           <BotCredentialsPanel
             {config}
             {saving}

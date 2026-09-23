@@ -202,12 +202,8 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
   ocr_text）无隐私过滤：列表面过滤 Ignored 应用/排除域名、详情面不过滤，IPC 面可按 id
   穷举读被隐藏应用 OCR（UI 只用已过滤列表 id、localhost 未暴露，实际可达性低）— 补过滤
   会改 IPC 返回契约，需先确认「详情信任列表」是否有意契约
-- ⏸ [P2] src-tauri/src/commands/system.rs:272 — open_permission_settings 的 macOS
-  `open` spawn 不 wait 不 reap：每次点击残留僵尸进程至退出（归既有 ⏸ config.rs:405
-  open_data_dir 同批补后台 reap）
-- ⏸ [P2] src-tauri/src/telegram_bot.rs:595-633 — handle_bind_command 走「clone 配置→持
-  AppState 锁内同步落盘→整体替换」：clone 与替换之间其他配置修改被覆盖（丢失更新窗口），
-  磁盘写在全局大锁内 — 归既有 ⏸ persist_app_config 收敛族
+- ✅→♻️ [P2] src-tauri/src/commands/system.rs:231 — open_permission_settings 的 macOS `open` spawn 不收割（原待确认）— **2026-09-24 用户裁决修复：后台线程 wait 收割**
+- ✅→♻️ [P2] src-tauri/src/telegram_bot.rs:581 — handle_bind_command 的 clone→保存→整体替换惯用法（原待确认）— **2026-09-24 用户裁决修复：原地修改 state.config + 保存失败回滚，锁内落盘与 persist_app_config 口径一致**
 - ⏸ [P2] src-tauri/src/agent/model.rs:1259 — ClaudeStreamAssembler 的 BTreeMap 按未校验
   content-block index 无界扩容：与已知 ⏸ model.rs:986（OpenAI partial_calls 极大 index）
   同根因同威胁模型，台账只登记了 OpenAI 侧 — 随该 ⏸ 同批定案
@@ -228,11 +224,8 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
   create_analyzer 只把 generation_timeout 传给 SummaryAnalyzer，Local 硬编码 120s、Cloud
   硬编码 60s，report_generation_timeout_secs 配置对这两个模式完全不生效（Cloud 全流程
   可达 360s 与外层超时口径脱节）— 修后超时语义随配置伸缩，可观察
-- ⏸ [P2] src-tauri/src/localhost_api.rs:1062 — /v1/activities 的 limit 查询参数无上限钳制
-  （默认 10000，任意 usize 直通；/v1/reports 有 .min(100) 先例）— 放大有限（单日+token
-  门禁），是否统一钳制待定案（需确认返回行是否含 ocr_text 大列）
-- ⏸ [P2] src-tauri/src/commands/avatar.rs:104,150 + category.rs:104,150 — 生产代码 expect
-  （DB 主键恒非 NULL，实践不可达）— 按「宁缺毋滥」是否豁免请定口径
+- ✅→♻️ [P2] src-tauri/src/localhost_api.rs:1073 — /v1/activities 的 limit 查询参数无钳制（原待确认）— **2026-09-24 用户裁决修复：钳 ≤10000（同 /v1/reports 先例）**
+- ✅→♻️ [P2] category.rs:104,150 — 生产代码 expect（原待确认，avatar.rs 侧已随桌宠移除消失）— **2026-09-24 用户裁决修复：防御性跳过（let-else continue）**
 - ⏸ [P2] telegram_bot.rs:92,220 / wecom_aibot.rs:84,496 — 轮询/长连接任务 panic 无哨兵：
   JoinHandle 从不 await，任务 panic 后 shared.running 恒 true，状态面板显示「运行中」实际
   已死 — 未找到现高概率 panic 路径，若修属 spawn 包装层加固
@@ -250,9 +243,7 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
   端口与生产凭据挂载 — 加 USER $APP_UID 属部署语义变更：挂载目录属主/读权限需同步调整
   （现网首启可能需手动 chown 一次），需与部署窗口协调
 - ✅→♻️ [P2] scripts/deb/reinstall.sh:194 — 本地 deb 未命中时的回退是 GitHub latest API（原待确认）— **2026-09-24 用户裁决直接删：回退整段移除，无本地 deb 时报错并给指引，WR_DEB_URL 显式覆盖保留**
-- ⏸ [P2] scripts/stage-tauri-key.sh — 疑似 no-op：stage-tauri-key.ps1 头注（tauri-cli
-  v2 自行 base64 解码环境变量值、文件路径与原始内容皆可）暗示 bash 侧暂存文件可能从未被
-  消费；确认后可从各 before_script 移除（纯降噪，不改行为）
+- ✅→♻️ [P2] scripts/stage-tauri-key.sh — 疑似 no-op（原待确认）— **2026-09-24 用户裁决修复：实锤后删除——bash 子进程 export 不回传父 shell、tauri-cli v2 自行解码原始值、v1.1.87-90 发版佐证；脚本与 CI 8 处调用全删，ps1 版（Windows 会话内生效）保留**
 - ⏸→✔️ [P2] src/lib/stores/auth.ts:54 — 默认 admin URL 硬编码内网 IP `http://10.37.80.25:4191` — **2026-09-24 用户确认为内网部署的刻意默认值，保留不动**
 - ⏸ [P2] src-tauri/src/avatar_input.rs:1419 — macOS current_cursor_ratio 遍历 NSScreen 只取
   联合包围盒未逐屏 clamp：多屏负坐标排列下是否产生可感知画布偏移需 macOS 实机验证

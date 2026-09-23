@@ -601,35 +601,39 @@ fn handle_bind_command(
         }
     };
 
-    let mut next_config = state.config.clone();
-    let result = apply_bind_code_to_config(&mut next_config, chat_id, &input_code, now_ts);
+    // 原地修改 state.config：锁全程持有，不再走「clone→保存→整体替换」——
+    // 该写法在锁语义未来的任何演化下（如锁内读、锁外写盘）都会覆盖其他
+    // 字段的并发修改；保存失败时用修改前快照回滚，保持「文件失败则内存
+    // 保持旧值」的既有语义（同 persist_app_config 口径）
+    let config_path = state.config_path.clone();
+    let previous_config = state.config.clone();
+    let result = apply_bind_code_to_config(&mut state.config, chat_id, &input_code, now_ts);
 
     match result {
         BindCodeApplyResult::NotConfigured => {
+            state.config = previous_config;
             BindCommandResult::reply(bind_not_configured_reply(chat_id))
         }
         BindCodeApplyResult::Expired => {
-            let config_path = state.config_path.clone();
-            if let Err(e) = next_config.save(&config_path) {
+            if let Err(e) = state.config.save(&config_path) {
+                state.config = previous_config;
                 log::warn!("清理过期 Telegram Bot 绑定码失败: {e}");
-            } else {
-                state.config = next_config;
             }
             BindCommandResult::reply(bind_expired_reply(chat_id))
         }
-        BindCodeApplyResult::Invalid => BindCommandResult::reply(bind_invalid_reply(chat_id)),
-        BindCodeApplyResult::Success => {
-            let config_path = state.config_path.clone();
-            match next_config.save(&config_path) {
-                Ok(_) => {
-                    state.config = next_config;
-                    BindCommandResult::success(bind_success_reply(chat_id), chat_id)
-                }
-                Err(e) => BindCommandResult::reply(format!(
-                    "❌ 绑定失败\n{OUTPUT_DIVIDER}\n配置保存失败：{e}"
-                )),
-            }
+        BindCodeApplyResult::Invalid => {
+            state.config = previous_config;
+            BindCommandResult::reply(bind_invalid_reply(chat_id))
         }
+        BindCodeApplyResult::Success => match state.config.save(&config_path) {
+            Ok(_) => BindCommandResult::success(bind_success_reply(chat_id), chat_id),
+            Err(e) => {
+                state.config = previous_config;
+                BindCommandResult::reply(format!(
+                    "❌ 绑定失败\n{OUTPUT_DIVIDER}\n配置保存失败：{e}"
+                ))
+            }
+        },
     }
 }
 

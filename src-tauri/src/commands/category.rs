@@ -100,8 +100,12 @@ pub(crate) fn reclassify_app_history_in_state(
                 activity.browser_url.as_deref(),
                 &target_category,
             );
+        // DB 主键恒非 NULL；防御性跳过而非 panic（理论不可达分支）
+        let Some(activity_id) = activity.id else {
+            continue;
+        };
         state.database.update_activity_classification(
-            activity.id.expect("活动记录应包含主键"),
+            activity_id,
             &classification.base_category,
             Some(&classification.semantic_category),
             Some(i32::from(classification.confidence)),
@@ -146,8 +150,12 @@ fn reclassify_domain_history_in_state(
             semantic_category,
             &activity.category,
         );
+        // DB 主键恒非 NULL；防御性跳过而非 panic（理论不可达分支）
+        let Some(activity_id) = activity.id else {
+            continue;
+        };
         state.database.update_activity_classification(
-            activity.id.expect("活动记录应包含主键"),
+            activity_id,
             &next_base_category,
             Some(semantic_category),
             Some(100),

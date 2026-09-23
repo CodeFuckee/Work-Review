@@ -8,10 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 移除
+- **设置页隐藏 Telegram 通知入口（暂时）**：Telegram Bot 面板从「节点网关 → 消息通知」分组隐藏（`SHOW_TELEGRAM_PANEL = false` 单开关，恢复改回 true 即可）；面板代码与配置字段均保留，仅入口不可见（用户裁决：基本不用，2026-09-24）。
 - **桌宠（桌面化身）功能整体移除**：悬浮窗、主动开口提醒、全局键鼠输入联动、跟进对话（followups）、休息提醒、托盘桌宠开关、设置页桌宠分区与全部 avatar 配置字段（旧配置文件里的 avatar 键会被自动忽略，无需手动清理）；README 三语言宣传段、桌宠截图与 BongoCat 第三方署名（THIRD_PARTY_NOTICES.md）一并移除。用户裁决「功能鸡肋」（2026-09-24）。
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
 
 ### 修复
+- **第九轮待确认批次修复（#6/#7/#11/#15/#23）**：
+  - macOS「打开权限设置」`open` spawn 后不收割，每次点击残留僵尸进程直至退出；改后台线程 wait 收割。
+  - Telegram 绑定命令走「clone→保存→整体替换」惯用法，未来锁语义演化下会覆盖其他字段并发修改；改原地修改+失败回滚（文件失败则内存保持旧值的语义不变）。
+  - 分类回溯两处生产代码 `expect`（DB 主键恒非 NULL、理论不可达）改防御性跳过。
+  - Localhost API `/v1/activities` 的 limit 查询参数直通 SQL LIMIT；钳到 ≤10000（同 /v1/reports 的 `.min(100)` 先例）。
+  - 删除 `scripts/stage-tauri-key.sh` 及 CI 8 处调用：bash 子进程 export 不回传父 shell，暂存从未实际生效（tauri-cli v2 自行解码原始 base64 值，v1.1.87-90 发版均为佐证）；Windows ps1 版在同一 PowerShell 会话内生效故保留。
 - **崩溃日志写错目录（P2，第九轮评审待确认 #2）**：崩溃捕获固定写默认数据目录的 `crashes/`，自定义数据目录的用户按指引去自己的目录找不到日志。修复：启动解析出实际数据目录后记入 OnceCell，崩溃日志优先跟随实际目录；运行期 `change_data_dir` 换目录后同步跟随；极早期（解析前）崩溃回退默认目录，配单元测试。
 - **第九轮全量代码评审修复（第二/三批：CI/构建 7 项 + 前端 TS 8 项，行为保持）**：
   - **CI：version-bump 并发推送丢失发版（P2）**：两条 main 流水线全绿并发进入 version 阶段时基于同一 origin/main 推导同一版本号，后推送方 `git push --atomic` 因非 fast-forward 整体失败——自动发版丢失、作业假红需人工重跑；加 `resource_group: version-bump` 跨流水线串行。

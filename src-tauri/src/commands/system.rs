@@ -228,10 +228,15 @@ pub async fn open_permission_settings(permission: String) -> Result<(), AppError
         let target = macos_permission_settings_url(&permission)
             .ok_or_else(|| AppError::Unknown(format!("不支持的权限类型: {permission}")))?;
 
-        std::process::Command::new("open")
+        // spawn 后必须在后台线程 wait 收割：不 wait 的 Child 悬挂成僵尸进程，
+        // 每次点击残留一个直至应用退出（open 很快退出，仅占用一个临时线程）
+        let child = std::process::Command::new("open")
             .arg(target)
             .spawn()
             .map_err(|e| AppError::Unknown(format!("打开系统权限设置失败: {e}")))?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
 
         Ok(())
     }

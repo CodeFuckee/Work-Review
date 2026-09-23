@@ -1070,11 +1070,12 @@ async fn route_request(
             if date.is_empty() {
                 Err(AppError::Config("日期不能为空".to_string()))
             } else {
+                // 上限钳制（同 /v1/reports 的 .min(100) 先例）：查询参数不直通
                 let limit: usize = request
                     .query
                     .get("limit")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(10000);
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .map_or(10_000, |v| v.min(10_000));
                 match state.lock() {
                     Ok(s) => s
                         .database
