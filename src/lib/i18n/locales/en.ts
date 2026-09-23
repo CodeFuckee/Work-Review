@@ -1317,7 +1317,15 @@ export default {
       testConnectionTesting: 'Testing...',
       testConnectionSuccess: 'Connection successful',
       testConnectionFailed: 'Connection failed: {error}',
-    fileMonitor: {
+      accountTitle: 'Account',
+      accountDesc: 'Admin portal sign-in status and server address',
+      accountServerLabel: 'Server URL',
+      accountServerHint: 'work-review admin server URL used for sign-in',
+      accountNotLoggedIn: 'Not signed in',
+      accountLoggedInAs: 'Signed in',
+    },
+
+    settingsFileMonitor: {
       enabled: 'Enable file monitor',
       enabledDesc: 'Watch work folders for created, modified, renamed and deleted events; only paths, event types, times and sizes are recorded, file contents are never read',
       folders: 'Work folders',
@@ -1325,13 +1333,7 @@ export default {
       pickFolder: 'Pick folder',
       excludes: 'Exclude rules',
       excludesHint: 'One per line; a directory name (e.g. .git, node_modules) or a wildcard file name (e.g. *.log)',
-    },
-      accountTitle: 'Account',
-      accountDesc: 'Admin portal sign-in status and server address',
-      accountServerLabel: 'Server URL',
-      accountServerHint: 'work-review admin server URL used for sign-in',
-      accountNotLoggedIn: 'Not signed in',
-      accountLoggedInAs: 'Signed in',
+      pickFolderTitle: 'Select Folder',
     },
   auth: {
     loginTab: 'Sign in',

@@ -1300,7 +1300,15 @@ export default {
       testConnectionTesting: '测试中...',
       testConnectionSuccess: '连接成功',
       testConnectionFailed: '连接失败: {error}',
-    fileMonitor: {
+      accountTitle: '账号',
+      accountDesc: '管理后台登录状态与服务器地址',
+      accountServerLabel: '服务器地址',
+      accountServerHint: 'work-review 管理后台地址，用于登录验证',
+      accountNotLoggedIn: '未登录',
+      accountLoggedInAs: '已登录',
+    },
+
+    settingsFileMonitor: {
       enabled: '启用文件监控',
       enabledDesc: '监听工作文件夹的新建、修改、重命名与删除事件；仅记录路径、事件类型、时间与大小，不读取文件内容',
       folders: '工作文件夹',
@@ -1308,13 +1316,7 @@ export default {
       pickFolder: '选择文件夹',
       excludes: '排除规则',
       excludesHint: '每行一条；目录名（如 .git、node_modules）或通配文件名（如 *.log）',
-    },
-      accountTitle: '账号',
-      accountDesc: '管理后台登录状态与服务器地址',
-      accountServerLabel: '服务器地址',
-      accountServerHint: 'work-review 管理后台地址，用于登录验证',
-      accountNotLoggedIn: '未登录',
-      accountLoggedInAs: '已登录',
+      pickFolderTitle: '选择文件夹',
     },
   auth: {
     loginTab: '登录',

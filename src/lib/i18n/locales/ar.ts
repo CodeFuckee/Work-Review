@@ -1309,7 +1309,15 @@ export default {
       testConnectionTesting: 'جاري الاختبار...',
       testConnectionSuccess: 'نجح الاتصال',
       testConnectionFailed: 'فشل الاتصال: {error}',
-    fileMonitor: {
+      accountTitle: 'الحساب',
+      accountDesc: 'حالة تسجيل الدخول إلى بوابة الإدارة وعنوان الخادم',
+      accountServerLabel: 'عنوان الخادم',
+      accountServerHint: 'عنوان خادم إدارة work-review المستخدم للتحقق عند تسجيل الدخول',
+      accountNotLoggedIn: 'غير مسجّل الدخول',
+      accountLoggedInAs: 'مسجّل الدخول',
+    },
+
+    settingsFileMonitor: {
       enabled: 'تفعيل مراقبة الملفات',
       enabledDesc: 'راقب مجلدات العمل لأحداث الإنشاء والتعديل وإعادة التسمية والحذف؛ تُسجل المسارات وأنواع الأحداث والأوقات والأحجام فقط، ولا تُقرأ محتويات الملفات',
       folders: 'مجلدات العمل',
@@ -1317,13 +1325,7 @@ export default {
       pickFolder: 'اختيار مجلد',
       excludes: 'قواعد الاستثناء',
       excludesHint: 'قاعدة في كل سطر؛ اسم مجلد (مثل .git أو node_modules) أو اسم ملف ببدل (مثل *.log)',
-    },
-      accountTitle: 'الحساب',
-      accountDesc: 'حالة تسجيل الدخول إلى بوابة الإدارة وعنوان الخادم',
-      accountServerLabel: 'عنوان الخادم',
-      accountServerHint: 'عنوان خادم إدارة work-review المستخدم للتحقق عند تسجيل الدخول',
-      accountNotLoggedIn: 'غير مسجّل الدخول',
-      accountLoggedInAs: 'مسجّل الدخول',
+      pickFolderTitle: 'اختر مجلدًا',
     },
   auth: {
     loginTab: 'تسجيل الدخول',

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
 
 ### 修复
+- **文件监控设置页整页显示裸 i18n 键名（P2）**：`fileMonitor` 键组被误嵌进 `settingsStorage` 分组内部，组件引用的 `settings.fileMonitor.*` 全部找不到，页面各标题/提示显示为原始键名；且缺 `pickFolderTitle` 键（选择文件夹对话框标题同样裸露）。修复：键组移到顶层并改名 `settingsFileMonitor`（与 settingsStorage/settingsAppearance 命名一致），补齐 `pickFolderTitle`，组件引用同步，四语言叶子 1_242→1_243（zh-CN/zh-TW/en/ar 同步）。
 - **第九轮待确认批次修复（#6/#7/#11/#15/#23）**：
   - macOS「打开权限设置」`open` spawn 后不收割，每次点击残留僵尸进程直至退出；改后台线程 wait 收割。
   - Telegram 绑定命令走「clone→保存→整体替换」惯用法，未来锁语义演化下会覆盖其他字段并发修改；改原地修改+失败回滚（文件失败则内存保持旧值的语义不变）。

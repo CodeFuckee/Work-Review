@@ -51,7 +51,7 @@
     const picked = await openDialog({
       directory: true,
       multiple: true,
-      title: t('settings.fileMonitor.pickFolderTitle'),
+      title: t('settingsFileMonitor.pickFolderTitle'),
     });
     const folders = fileMonitor().folders ?? [];
     let changed = false;
@@ -85,14 +85,14 @@
 <div class="space-y-4">
   <div class="settings-row">
     <div class="min-w-0">
-      <p class="settings-text">{t('settings.fileMonitor.enabled')}</p>
-      <p class="settings-muted mt-1">{t('settings.fileMonitor.enabledDesc')}</p>
+      <p class="settings-text">{t('settingsFileMonitor.enabled')}</p>
+      <p class="settings-muted mt-1">{t('settingsFileMonitor.enabledDesc')}</p>
     </div>
     <button
       type="button"
       role="switch"
       aria-checked={fileMonitor().enabled}
-      title={t('settings.fileMonitor.enabled')}
+      title={t('settingsFileMonitor.enabled')}
       on:click={toggleEnabled}
       class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 {fileMonitor()
         .enabled
@@ -109,39 +109,39 @@
   </div>
 
   <div class="settings-field">
-    <label class="settings-label" for="fm-folders">{t('settings.fileMonitor.folders')}</label>
+    <label class="settings-label" for="fm-folders">{t('settingsFileMonitor.folders')}</label>
     <textarea
       id="fm-folders"
       rows="4"
       class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
-      placeholder={t('settings.fileMonitor.foldersHint')}
+      placeholder={t('settingsFileMonitor.foldersHint')}
       value={foldersText()}
       on:input={onFoldersInput}
       spellcheck="false"
     ></textarea>
     <div class="flex items-center justify-between gap-2">
-      <p class="settings-muted">{t('settings.fileMonitor.foldersHint')}</p>
+      <p class="settings-muted">{t('settingsFileMonitor.foldersHint')}</p>
       <button
         type="button"
         class="page-control-btn min-h-8 shrink-0 px-3"
         on:click={pickFolder}
       >
-        {t('settings.fileMonitor.pickFolder')}
+        {t('settingsFileMonitor.pickFolder')}
       </button>
     </div>
   </div>
 
   <div class="settings-field">
-    <label class="settings-label" for="fm-excludes">{t('settings.fileMonitor.excludes')}</label>
+    <label class="settings-label" for="fm-excludes">{t('settingsFileMonitor.excludes')}</label>
     <textarea
       id="fm-excludes"
       rows="4"
       class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
-      placeholder={t('settings.fileMonitor.excludesHint')}
+      placeholder={t('settingsFileMonitor.excludesHint')}
       value={excludesText()}
       on:input={onExcludesInput}
       spellcheck="false"
     ></textarea>
-    <p class="settings-muted mt-1">{t('settings.fileMonitor.excludesHint')}</p>
+    <p class="settings-muted mt-1">{t('settingsFileMonitor.excludesHint')}</p>
   </div>
 </div>

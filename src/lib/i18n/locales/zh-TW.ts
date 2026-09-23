@@ -1302,7 +1302,15 @@ export default {
       testConnectionTesting: '測試中...',
       testConnectionSuccess: '連線成功',
       testConnectionFailed: '連線失敗: {error}',
-    fileMonitor: {
+      accountTitle: '帳號',
+      accountDesc: '管理後台登入狀態與伺服器地址',
+      accountServerLabel: '伺服器地址',
+      accountServerHint: 'work-review 管理後台地址，用於登入驗證',
+      accountNotLoggedIn: '未登入',
+      accountLoggedInAs: '已登入',
+    },
+
+    settingsFileMonitor: {
       enabled: '啟用檔案監控',
       enabledDesc: '監聽工作資料夾的新建、修改、重新命名與刪除事件；僅記錄路徑、事件類型、時間與大小，不讀取檔案內容',
       folders: '工作資料夾',
@@ -1310,13 +1318,7 @@ export default {
       pickFolder: '選擇資料夾',
       excludes: '排除規則',
       excludesHint: '每行一條；目錄名（如 .git、node_modules）或萬用檔名（如 *.log）',
-    },
-      accountTitle: '帳號',
-      accountDesc: '管理後台登入狀態與伺服器地址',
-      accountServerLabel: '伺服器地址',
-      accountServerHint: 'work-review 管理後台地址，用於登入驗證',
-      accountNotLoggedIn: '未登入',
-      accountLoggedInAs: '已登入',
+      pickFolderTitle: '選擇資料夾',
     },
   auth: {
     loginTab: '登入',
