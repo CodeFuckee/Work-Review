@@ -556,7 +556,9 @@ core 其余+mcp-server+skills-engine / stores+utils+i18n+App / 路由页四组�
   npm run test:frontend 733 通过；main 流水线全绿：
   <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2926>
 - 批次 2：npm run check(0 错误)/test:frontend(733)/build 全绿 + bash -n 两个改动脚本；
-  流水线链接见提交后补录
+  main 流水线全绿：
+  <https://home.chenkaidi.top:509/chenkaidi/work-review/-/pipelines/2930>
+  （批次 1 全绿后 version-bump 自动发 v1.1.95，批次 2 推送 rebase 其上为 de85951）
 # 第八轮（2026-09-22）
 
 范围：八分片并行复扫（main+commands / monitor+screenshot+ocr / localhost+avatar+杂项 /
