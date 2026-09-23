@@ -302,6 +302,8 @@ pub async fn change_data_dir(
     state.storage_manager = StorageManager::new(&target_dir, config.storage.clone());
     state.data_dir = target_dir.clone();
     state.config_path = config_path;
+    // 崩溃日志目录同步跟随新数据目录
+    crate::set_crash_report_data_dir(&target_dir);
 
     log::info!("数据目录已切换到: {target_dir:?}");
     drop(state);

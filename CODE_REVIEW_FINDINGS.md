@@ -189,9 +189,7 @@ commands 20 文件 / database.rs 8.4k 行单文件深审 / core 其余+mcp-serve
 ## 第九轮待确认（修复会改对外行为/语义或需产品决策，未经确认不动）
 
 - ♻️ [P2] src-tauri/src/main.rs:1721 — 桌宠循环 IdleDetector 硬编码 3 分钟空闲阈值（原待确认）— **2026-09-24 用户裁决桌宠整体移除，随功能删除消解，见「第九轮裁决执行」**
-- ⏸ [P2] src-tauri/src/main.rs:3634 — 崩溃日志写 default_data_dir().join("crashes") 而非
-  实际数据目录：自定义数据目录的用户按注释指引去自己目录找不到崩溃日志 — 修法是
-  resolve 后存 OnceCell；落盘位置变化可观察
+- ✅→♻️ [P2] src-tauri/src/main.rs:3634 — 崩溃日志写 default_data_dir().join("crashes") 而非实际数据目录（原待确认）— **2026-09-24 用户裁决修复**：resolve 后存 OnceCell，崩溃日志优先跟随实际目录，change_data_dir 换目录后同步跟随，极早期崩溃回退默认目录；配回归测试
 - ⏸ [P2] src-tauri/src/commands/memory.rs:22 — synthesize_insights_inner 用无隐私过滤的
   get_daily_stats_with_segments（命令层其余统计面全走 _filtered + ignored_apps）：
   被隐藏应用的时长会汇入「高峰时段/娱乐占比/办公时长」洞察落库展示 — 改过滤口径后新生成

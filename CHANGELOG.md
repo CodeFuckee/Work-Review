@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
 
 ### 修复
+- **崩溃日志写错目录（P2，第九轮评审待确认 #2）**：崩溃捕获固定写默认数据目录的 `crashes/`，自定义数据目录的用户按指引去自己的目录找不到日志。修复：启动解析出实际数据目录后记入 OnceCell，崩溃日志优先跟随实际目录；运行期 `change_data_dir` 换目录后同步跟随；极早期（解析前）崩溃回退默认目录，配单元测试。
 - **第九轮全量代码评审修复（第二/三批：CI/构建 7 项 + 前端 TS 8 项，行为保持）**：
   - **CI：version-bump 并发推送丢失发版（P2）**：两条 main 流水线全绿并发进入 version 阶段时基于同一 origin/main 推导同一版本号，后推送方 `git push --atomic` 因非 fast-forward 整体失败——自动发版丢失、作业假红需人工重跑；加 `resource_group: version-bump` 跨流水线串行。
   - **CI：version-bump 的 git clean 漏排 `.cache`（P2）**：与全局 GIT_CLEAN_FLAGS 不同步，每次发版把 linux-x64 runner 的 .cache/tauri 打包工具缓存删光，下个 tag 流水线重新经 gh-proxy 全量下载（v1.1.84/86 两次发版失败根因复现路径）；补 `-e .cache`。

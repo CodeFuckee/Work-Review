@@ -44,6 +44,26 @@ use work_review_core::privacy::PrivacyFilter;
 
 // 全局 AppHandle，用于在 macOS Dock 点击时恢复窗口
 static APP_HANDLE: OnceCell<AppHandle> = OnceCell::new();
+// 启动时解析出的实际数据目录：崩溃日志优先写这里（函数注释指引的是
+// `<数据目录>/crashes/`，自定义数据目录的用户去自己的目录才找得到）；
+// 解析完成前的极早期崩溃回退默认目录（此时数据目录还无从得知）
+static CRASH_REPORT_DATA_DIR: OnceCell<std::path::PathBuf> = OnceCell::new();
+
+/// 数据目录解析完成后调用；运行期 change_data_dir 成功换目录后同样调用
+pub(crate) fn set_crash_report_data_dir(dir: &Path) {
+    let _ = CRASH_REPORT_DATA_DIR.set(dir.to_path_buf());
+}
+
+fn crash_report_dir() -> PathBuf {
+    crash_report_dir_for(CRASH_REPORT_DATA_DIR.get().map(PathBuf::as_path))
+}
+
+fn crash_report_dir_for(actual_data_dir: Option<&Path>) -> PathBuf {
+    actual_data_dir
+        .map(|dir| dir.join("crashes"))
+        .unwrap_or_else(|| default_data_dir().join("crashes"))
+}
+
 const MAIN_WINDOW_LABEL: &str = "main";
 const AUTOSTART_LAUNCH_ARG: &str = "--autostart";
 const TRAY_MENU_SHOW_ID: &str = "show";
@@ -2779,7 +2799,7 @@ fn install_crash_handler() {
             location,
             backtrace
         );
-        let crash_dir = default_data_dir().join("crashes");
+        let crash_dir = crash_report_dir();
         match std::fs::create_dir_all(&crash_dir).and_then(|_| {
             std::fs::write(
                 crash_dir.join(format!("crash-{}.log", now.format("%Y%m%d_%H%M%S"))),
@@ -3269,6 +3289,8 @@ async fn main() {
     // 获取数据目录
     let data_dir = resolve_data_dir();
     log::info!("数据目录: {data_dir:?}");
+    // 解析完成，此后发生的崩溃日志跟随实际数据目录
+    set_crash_report_data_dir(&data_dir);
 
     // 加载配置
     let config_path = data_dir.join("config.json");
@@ -3892,7 +3914,7 @@ mod tests {
 
     use super::{
         browser_change_capture_min_interval_ms, browser_url_probe_attempted_after_full_lookup,
-        describe_config_file_issue, duplicate_instance_should_stay_silent,
+        crash_report_dir_for, describe_config_file_issue, duplicate_instance_should_stay_silent,
         effective_dock_visibility, initial_recording_state, launch_args_contain_autostart,
         main_window_close_behavior, monitoring_poll_interval_ms,
         monitoring_poll_interval_ms_for_platform, persist_previous_activity_backfill,
@@ -3925,6 +3947,19 @@ mod tests {
             initial_recording_state(ConfigLoadStatus::Corrupted),
             (false, true)
         );
+    }
+
+    #[test]
+    fn 崩溃日志目录应优先实际数据目录且未解析时回退默认() {
+        use std::path::Path;
+
+        let actual = crash_report_dir_for(Some(Path::new("D:/work-data")));
+        assert_eq!(actual, Path::new("D:/work-data").join("crashes"));
+
+        // 极早期（数据目录尚未解析）崩溃：回退默认目录下的 crashes
+        let fallback = crash_report_dir_for(None);
+        assert_eq!(fallback, super::default_data_dir().join("crashes"));
+        assert!(fallback.ends_with("crashes"));
     }
 
     #[test]
