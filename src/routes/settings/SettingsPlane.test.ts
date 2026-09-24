@@ -53,6 +53,15 @@ test('Plane 组件应提供启用开关并按结构化结果展示连接状态',
   assert.match(source, /previewError/);
 });
 
+test('Plane 组件应提供项目过滤 textarea 并随保存流程持久化', () => {
+  const source = read(PLANE_COMPONENT);
+  assert.match(source, /t\('settingsPlane\.filterLabel'\)/);
+  assert.match(source, /t\('settingsPlane\.filterHint'\)/);
+  assert.match(source, /value=\{\(plane\(\)\.project_filter \?\? \[\]\)\.join\('\\n'\)\}/);
+  assert.match(source, /on:input=\{onFilterInput\}/);
+  assert.match(source, /plane\(\)\.project_filter = lines;/);
+});
+
 test('设置页 Plane 图标分支应使用单枚描边 SVG', () => {
   const source = read(SETTINGS);
   assert.match(source, /\{:else if tab\.icon === 'plane'\}\s*<svg class="w-3\.5 h-3\.5" fill="none" stroke="currentColor"/);
@@ -76,6 +85,8 @@ test('四个语言的 i18n 都应包含 plane tab 与完整 settingsPlane 文案
       'hideKey',
       'workspaceSlugLabel',
       'workspaceSlugHint',
+      'filterLabel',
+      'filterHint',
       'testConnection',
       'testing',
       'testFailed',

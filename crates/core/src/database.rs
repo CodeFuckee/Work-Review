@@ -194,6 +194,19 @@ pub struct GitlabProjectStatRow {
     pub deletions: i64,
 }
 
+/// 一条 Plane 工作项的时间线记录（plane_work_items 表）。
+/// 同一工作项可出现在多个同步日（按 `plane_item_id` + `synced_date` 幂等），
+/// `updated_at` 为 UTC unix 秒，`synced_date` 为本机时区日期（YYYY-MM-DD）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaneWorkItemRow {
+    pub plane_item_id: String,
+    pub project_name: String,
+    pub name: String,
+    pub state_name: String,
+    pub updated_at: i64,
+    pub url: Option<String>,
+}
+
 /// 概览页文件活动：一条文件监控事件
 #[derive(Debug, Clone, Serialize)]
 pub struct FileEventRow {
@@ -1079,6 +1092,27 @@ impl Database {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_gitlab_commits_date_time
              ON gitlab_commits (date, committed_at)",
+            [],
+        )?;
+
+        // Plane 工作项（供时间线页面/日报展示；同一工作项同一天重复拉取幂等覆盖）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plane_work_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plane_item_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                name TEXT NOT NULL,
+                state_name TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                url TEXT,
+                synced_date TEXT NOT NULL,
+                UNIQUE(plane_item_id, synced_date)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_plane_work_items_date_time
+             ON plane_work_items (synced_date, updated_at)",
             [],
         )?;
 
@@ -2938,6 +2972,73 @@ impl Database {
             stats.push(row?);
         }
         Ok(stats)
+    }
+
+    /// 批量写入 Plane 工作项（按 工作项ID+同步日期 幂等覆盖；供时间线页补采调用）。
+    /// 整批包在一个事务里原子提交：任一条失败即整体回滚，调用方收到错误。
+    pub fn upsert_plane_work_items(
+        &self,
+        synced_date: &str,
+        items: &[PlaneWorkItemRow],
+    ) -> Result<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let tx = conn.unchecked_transaction()?;
+        for item in items {
+            tx.execute(
+                "INSERT INTO plane_work_items (plane_item_id, project_name, name, state_name, updated_at, url, synced_date)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(plane_item_id, synced_date) DO UPDATE SET
+                    project_name = excluded.project_name,
+                    name = excluded.name,
+                    state_name = excluded.state_name,
+                    updated_at = excluded.updated_at,
+                    url = excluded.url",
+                params![
+                    item.plane_item_id,
+                    item.project_name,
+                    item.name,
+                    item.state_name,
+                    item.updated_at,
+                    item.url,
+                    synced_date,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(items.len())
+    }
+
+    /// 按本地日期（YYYY-MM-DD）取 Plane 工作项，按更新时间倒序（最新在前）。
+    pub fn get_plane_work_items_for_date(&self, date: &str) -> Result<Vec<PlaneWorkItemRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT plane_item_id, project_name, name, state_name, updated_at, url
+             FROM plane_work_items
+             WHERE synced_date = ?1
+             ORDER BY updated_at DESC, plane_item_id ASC",
+        )?;
+        let rows = stmt.query_map(params![date], |row| {
+            Ok(PlaneWorkItemRow {
+                plane_item_id: row.get(0)?,
+                project_name: row.get(1)?,
+                name: row.get(2)?,
+                state_name: row.get(3)?,
+                updated_at: row.get(4)?,
+                url: row.get(5)?,
+            })
+        })?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
     }
 
     /// 批量写入文件监控事件（防抖后的一批，按时间升序）
@@ -5351,7 +5452,7 @@ mod tests {
     use super::{
         apply_flex_overtime_correction, local_day_bounds, local_hour_bounds,
         local_hour_end_timestamp, safe_local_timestamp, Activity, DailyReport, Database,
-        FileEventRow, GitlabCommitRow, HourlySummary, SemanticMemoryIndexState,
+        FileEventRow, GitlabCommitRow, HourlySummary, PlaneWorkItemRow, SemanticMemoryIndexState,
     };
     use chrono::{TimeZone, Timelike};
     use rusqlite::params;
@@ -8384,6 +8485,60 @@ mod tests {
             .get_gitlab_project_stats("2026-01-01", "2026-01-02")
             .expect("聚合失败");
         assert!(empty.is_empty(), "无提交区间应返回空列表");
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn plane工作项应按日期幂等覆盖并按更新时间倒序返回() {
+        let db_path = temp_db_path("plane-work-items");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        let item = |id: &str, name: &str, updated_at: i64| PlaneWorkItemRow {
+            plane_item_id: id.to_string(),
+            project_name: "Alpha".to_string(),
+            name: name.to_string(),
+            state_name: "进行中".to_string(),
+            updated_at,
+            url: None,
+        };
+
+        // 首次写入两条 + 跨日一条；同日同 id 重复写入应覆盖而非新增（幂等）
+        db.upsert_plane_work_items(
+            "2026-09-22",
+            &[
+                item("wi-a", "旧标题", 3_000),
+                item("wi-b", "搭建设计稿评审流程", 1_000),
+            ],
+        )
+        .expect("写入工作项失败");
+        db.upsert_plane_work_items("2026-09-22", &[item("wi-a", "新标题", 4_000)])
+            .expect("重复写入工作项失败");
+        db.upsert_plane_work_items("2026-09-23", &[item("wi-a", "次日又更新", 9_000)])
+            .expect("跨日写入工作项失败");
+
+        let day = db
+            .get_plane_work_items_for_date("2026-09-22")
+            .expect("按日期读取工作项失败");
+        assert_eq!(day.len(), 2, "同 id 同日应幂等覆盖，不产生重复行");
+        assert_eq!(day[0].plane_item_id, "wi-a", "更新时间倒序，4s 的在前");
+        assert_eq!(day[0].name, "新标题", "重复写入应覆盖字段值");
+        assert_eq!(day[0].updated_at, 4_000);
+        assert_eq!(day[1].plane_item_id, "wi-b");
+        assert_eq!(day[1].updated_at, 1_000);
+
+        // 同一工作项在不同同步日各存一条，互不影响
+        let next_day = db
+            .get_plane_work_items_for_date("2026-09-23")
+            .expect("读取次日工作项失败");
+        assert_eq!(next_day.len(), 1);
+        assert_eq!(next_day[0].name, "次日又更新");
+
+        // 无数据的日期返回空列表
+        let empty = db
+            .get_plane_work_items_for_date("2026-09-21")
+            .expect("读取空日期失败");
+        assert!(empty.is_empty(), "无工作项日期应返回空列表");
         drop(db);
         remove_db_files(&db_path);
     }

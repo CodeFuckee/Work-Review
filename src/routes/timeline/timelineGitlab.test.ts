@@ -6,6 +6,7 @@ import {
   mergeTimelineRows,
   type FileEventRow,
   type GitlabCommitRow,
+  type PlaneWorkItemRow,
 } from './timelineGitlab.ts';
 
 function commit(sha: string, committedAt: number): GitlabCommitRow {
@@ -100,5 +101,55 @@ test('不传文件事件时保持原有两源合并行为', () => {
   assert.deepEqual(
     rows.map((row) => row.kind),
     ['activity', 'commit'],
+  );
+});
+
+function planeItem(id: string, updatedAt: number, name = `工作项 ${id}`): PlaneWorkItemRow {
+  return {
+    plane_item_id: id,
+    project_name: 'Alpha',
+    name,
+    state_name: '进行中',
+    updated_at: updatedAt,
+    url: null,
+  };
+}
+
+test('plane 工作项行应与其他来源按时间戳交错，同时间戳时排在最后', () => {
+  const rows = mergeTimelineRows(
+    [activity(200)],
+    [commit('c', 250)],
+    [fileEvent(200)],
+    [planeItem('wi-1', 200), planeItem('wi-2', 300)],
+  );
+  assert.deepEqual(
+    rows.map((row) => `${row.kind}:${row.key}`),
+    ['planeItem:300', 'commit:250', 'activity:200', 'fileEvent:200', 'planeItem:200'],
+    '降序排列，同 200 的四类行按 commit/activity/fileEvent/planeItem 排序',
+  );
+  assert.equal(rows[0].kind, 'planeItem');
+});
+
+test('同时间戳的 plane 工作项行保持输入顺序（幂等稳定）', () => {
+  const items = [planeItem('wi-1', 100), planeItem('wi-2', 100), planeItem('wi-3', 100)];
+  const first = mergeTimelineRows([], [], [], items);
+  const second = mergeTimelineRows([], [], [], [...items].reverse());
+  const idsOf = (rows: ReturnType<typeof mergeTimelineRows>) =>
+    rows
+      .filter((row): row is Extract<typeof row, { kind: 'planeItem' }> => row.kind === 'planeItem')
+      .map((row) => row.item.plane_item_id);
+  assert.deepEqual(idsOf(first), ['wi-1', 'wi-2', 'wi-3'], '同 key 保持输入顺序');
+  assert.deepEqual(
+    idsOf(second),
+    ['wi-3', 'wi-2', 'wi-1'],
+    '稳定排序：同 key 行随输入顺序，同输入必得同输出',
+  );
+});
+
+test('不传 plane 工作项时保持原有三源合并行为', () => {
+  const rows = mergeTimelineRows([activity(200)], [commit('c', 200)], [fileEvent(150)]);
+  assert.deepEqual(
+    rows.map((row) => `${row.kind}:${row.key}`),
+    ['commit:200', 'activity:200', 'fileEvent:150'],
   );
 });

@@ -784,6 +784,11 @@ pub struct PlaneConfig {
     /// 工作区 slug（工作区 URL 中的标识，如 https://plane.example.com/my-team/ 中的 my-team）
     #[serde(default)]
     pub workspace_slug: Option<String>,
+    /// 项目名允许列表（一行一个；空 = 全部项目）。匹配忽略大小写，条目精确相等
+    /// 或项目名以条目开头（前缀）均命中——Plane 项目名常带子团队/子产品后缀，
+    /// 前缀可整组纳管（如 "Alpha" 命中 "Alpha Web"）；匹配语义见同步命令实现。
+    #[serde(default)]
+    pub project_filter: Vec<String>,
 }
 
 pub const DEFAULT_LOCALHOST_API_PORT: u16 = 47_831;
@@ -1350,8 +1355,8 @@ fn normalize_positive_token(value: Option<u32>) -> Option<u32> {
     value.filter(|n| *n > 0)
 }
 
-/// 纳入作者名单规范化：去首尾空白、剔空条目、按忽略大小写去重（保留首次写法）。
-fn normalize_work_author_list(items: &[String]) -> Vec<String> {
+/// 名单类字段规范化：去首尾空白、剔空条目、按忽略大小写去重（保留首次写法）。
+fn normalize_string_list(items: &[String]) -> Vec<String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut result = Vec::new();
     for item in items {
@@ -1516,11 +1521,12 @@ impl AppConfig {
         self.privacy
             .excluded_keywords
             .retain(|k| !k.trim().is_empty());
-        self.gitlab.work_authors = normalize_work_author_list(&self.gitlab.work_authors);
+        self.gitlab.work_authors = normalize_string_list(&self.gitlab.work_authors);
         // 实例地址去首尾空白与结尾斜杠（用户粘贴带 `/` 的地址时避免拼出 `//api/v1`）
         self.plane.url = normalize_base_url(self.plane.url.take());
         self.plane.workspace_slug = normalize_optional_string(self.plane.workspace_slug.take());
         self.plane.api_key = normalize_optional_string(self.plane.api_key.take());
+        self.plane.project_filter = normalize_string_list(&self.plane.project_filter);
         normalize_custom_categories(&mut self.custom_categories);
         normalize_app_category_rules(&mut self.app_category_rules, &self.custom_categories);
         // Seed defaults BEFORE rule validation so built-in categories are present
@@ -2145,7 +2151,7 @@ mod tests {
 
     use super::{
         commit_pending_config, config_backup_path, default_ui_visual_style,
-        normalize_app_category_rules, normalize_ui_visual_style, normalize_work_author_list,
+        normalize_app_category_rules, normalize_string_list, normalize_ui_visual_style,
         update_config_backup_with_sync, AiProvider, AppCategoryRule, AppConfig, ConfigLoadStatus,
         PendingConfigFile, RemoteStorageProvider, ScreenshotDisplayMode, WebsiteSemanticRule,
         DEFAULT_LOCALHOST_API_PORT,
@@ -2164,7 +2170,7 @@ mod tests {
             "王五".to_string(),
         ];
         assert_eq!(
-            normalize_work_author_list(&input),
+            normalize_string_list(&input),
             vec![
                 "李四".to_string(),
                 "LISI@corp.com".to_string(),
@@ -2172,7 +2178,7 @@ mod tests {
             ],
             "去首尾空白、剔空条目、忽略大小写去重并保留首次写法"
         );
-        assert!(normalize_work_author_list(&[]).is_empty());
+        assert!(normalize_string_list(&[]).is_empty());
     }
 
     #[test]
@@ -2207,12 +2213,26 @@ mod tests {
         config.normalize();
         assert_eq!(config.plane.url, None);
 
+        // 项目允许列表与名单类字段走同一规范化：去空白、剔空条目、忽略大小写去重
+        config.plane.project_filter = vec![
+            " Alpha ".to_string(),
+            "ALPHA".to_string(),
+            String::new(),
+            "Beta".to_string(),
+        ];
+        config.normalize();
+        assert_eq!(
+            config.plane.project_filter,
+            vec!["Alpha".to_string(), "Beta".to_string()]
+        );
+
         // 默认配置不动：enabled=false 且各可选字段为空
         let default = AppConfig::default();
         assert!(!default.plane.enabled);
         assert_eq!(default.plane.url, None);
         assert_eq!(default.plane.api_key, None);
         assert_eq!(default.plane.workspace_slug, None);
+        assert!(default.plane.project_filter.is_empty());
     }
 
     #[test]

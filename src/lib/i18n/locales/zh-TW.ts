@@ -225,6 +225,7 @@ export default {
       loadMore: '載入更多',
       loadingMore: '載入中...',
       noMore: '沒有更多記錄了',
+      planeItemBadge: 'Plane 工作項',
       detail: {
         appCategory: '應用預設分類',
         appCategoryHelp: '修改後會同步更新該應用的歷史記錄',
@@ -527,7 +528,7 @@ export default {
     },
     settingsPlane: {
       title: 'Plane 整合',
-      description: '連線私有化部署的 Plane（plane.so），測試連通性並預覽工作項。時間線與日報聯動將在後續版本提供。',
+      description: '連線私有化部署的 Plane（plane.so），測試連線、預覽工作項，並同步到時間線與日報。',
       enabledLabel: '啟用 Plane 整合',
       enabledHint: '開啟後可在下方測試連線並預覽工作項。',
       urlLabel: '實例位址',
@@ -538,6 +539,8 @@ export default {
       hideKey: '隱藏',
       workspaceSlugLabel: '工作區 Slug',
       workspaceSlugHint: '工作區 URL 中的標識，如 https://plane.example.com/my-team/ 中的 my-team。',
+      filterLabel: '專案過濾（允許清單）',
+      filterHint: '每行一個專案名稱。留空 = 全部專案；忽略大小寫，支援精確或前綴比對（如 "Alpha" 命中 "Alpha Web"）。',
       testConnection: '測試連線',
       testing: '測試中…',
       testFailed: '連線失敗',

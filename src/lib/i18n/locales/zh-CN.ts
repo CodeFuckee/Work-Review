@@ -225,6 +225,7 @@ export default {
       loadMore: '加载更多',
       loadingMore: '加载中...',
       noMore: '没有更多记录了',
+      planeItemBadge: 'Plane 工作项',
       detail: {
         appCategory: '应用默认分类',
         appCategoryHelp: '修改后会同步更新该应用的历史记录',
@@ -643,7 +644,7 @@ export default {
     },
     settingsPlane: {
       title: 'Plane 集成',
-      description: '连接私有化部署的 Plane（plane.so），测试连通性并预览工作项。时间线与日报联动将在后续版本提供。',
+      description: '连接私有化部署的 Plane（plane.so），测试连通性、预览工作项，并同步到时间线与日报。',
       enabledLabel: '启用 Plane 集成',
       enabledHint: '开启后可在下方测试连接并预览工作项。',
       urlLabel: '实例地址',
@@ -654,6 +655,8 @@ export default {
       hideKey: '隐藏',
       workspaceSlugLabel: '工作区 Slug',
       workspaceSlugHint: '工作区 URL 中的标识，如 https://plane.example.com/my-team/ 中的 my-team。',
+      filterLabel: '项目过滤（允许列表）',
+      filterHint: '每行一个项目名。留空 = 全部项目；忽略大小写，支持精确或前缀匹配（如 "Alpha" 命中 "Alpha Web"）。',
       testConnection: '测试连接',
       testing: '测试中…',
       testFailed: '连接失败',

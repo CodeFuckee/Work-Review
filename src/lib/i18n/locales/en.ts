@@ -227,6 +227,7 @@ export default {
       loadMore: 'Load more',
       loadingMore: 'Loading...',
       noMore: 'No more records',
+      planeItemBadge: 'Plane work item',
       detail: {
         appCategory: 'Default App Category',
         appCategoryHelp: 'Changes will be synced to this app across historical records',
@@ -537,7 +538,7 @@ export default {
     },
     settingsPlane: {
       title: 'Plane Integration',
-      description: 'Connect to a self-hosted Plane instance (plane.so) to test connectivity and preview work items. Timeline and daily-report integration arrive in a later release.',
+      description: 'Connect to a self-hosted Plane instance (plane.so) to test connectivity, preview work items, and sync them into the timeline and daily report.',
       enabledLabel: 'Enable Plane integration',
       enabledHint: 'Turn on to test the connection and preview work items below.',
       urlLabel: 'Instance URL',
@@ -548,6 +549,8 @@ export default {
       hideKey: 'Hide',
       workspaceSlugLabel: 'Workspace Slug',
       workspaceSlugHint: 'The identifier in the workspace URL, e.g. my-team in https://plane.example.com/my-team/.',
+      filterLabel: 'Project filter (allow list)',
+      filterHint: 'One project name per line. Empty = all projects; case-insensitive exact or prefix match (e.g. "Alpha" matches "Alpha Web").',
       testConnection: 'Test connection',
       testing: 'Testing…',
       testFailed: 'Connection failed',

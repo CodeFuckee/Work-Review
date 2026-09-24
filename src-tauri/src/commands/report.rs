@@ -236,6 +236,28 @@ pub(crate) async fn generate_report_inner(
         }
     }
 
+    // 「Plane 工作项」小节：读当日已入库数据（由时间线页补采写入，日报不现拉
+    // API、无额外网络依赖与超时预算）。配置齐全即产出小节（无数据为占位说明，
+    // 与 GitLab 小节的占位先例一致），未配置为空串（整块自动跳过）；读库失败
+    // 仅记日志不阻塞日报。
+    let plane_markdown = {
+        let state_guard = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        if !super::plane::plane_configured(&state_guard.config.plane) {
+            String::new()
+        } else {
+            match state_guard.database.get_plane_work_items_for_date(&date) {
+                Ok(items) => work_review_core::analysis::report_blocks::build_plane_local_section(
+                    &items,
+                    report_locale,
+                ),
+                Err(error) => {
+                    log::warn!("读取当日 Plane 工作项失败（不影响日报生成）: {error}");
+                    String::new()
+                }
+            }
+        }
+    };
+
     let spawn_result = tokio::spawn(async move {
         analyzer
             .generate_report(
@@ -247,6 +269,7 @@ pub(crate) async fn generate_report_inner(
                 category_name_overrides,
                 semantic_name_overrides,
                 &gitlab_supplement,
+                &plane_markdown,
             )
             .await
     });
@@ -751,6 +774,26 @@ mod tests {
         missing_token.gitlab.url = Some("https://git.example.com".to_string());
         let supplement = fetch_gitlab_supplement(&missing_token, "2026-09-02", AppLocale::En).await;
         assert_eq!(supplement, GitlabReportSupplement::default());
+    }
+
+    #[test]
+    fn plane配置不齐全时日报不应产出工作项小节() {
+        use super::super::plane::plane_configured;
+
+        let mut config = AppConfig::default();
+        assert!(!plane_configured(&config.plane), "默认配置未启用");
+
+        config.plane.enabled = true;
+        config.plane.url = Some("https://plane.example.com".to_string());
+        config.plane.api_key = Some("stub-key".to_string());
+        config.plane.workspace_slug = Some("my-team".to_string());
+        assert!(plane_configured(&config.plane), "配置齐全应产出小节");
+
+        config.plane.enabled = false;
+        assert!(
+            !plane_configured(&config.plane),
+            "开关关闭时即使配置齐全也不产出"
+        );
     }
 
     #[test]

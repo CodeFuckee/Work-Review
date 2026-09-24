@@ -226,6 +226,7 @@ export default {
       loadMore: 'تحميل المزيد',
       loadingMore: 'جاري التحميل...',
       noMore: 'لا يوجد المزيد من السجلات',
+      planeItemBadge: 'عنصر عمل Plane',
       detail: {
         appCategory: 'التصنيف الافتراضي للتطبيق',
         appCategoryHelp: 'ستتم مزامنة التغييرات لهذا التطبيق عبر السجلات التاريخية',
@@ -534,7 +535,7 @@ export default {
     },
     settingsPlane: {
       title: 'تكامل Plane',
-      description: 'الاتصال بخادم Plane المستضاف ذاتيًا (plane.so) لاختبار الاتصال ومعاينة عناصر العمل. ستتوفر التكامل مع الخط الزمني والتقرير اليومي في إصدار لاحق.',
+      description: 'الاتصال بخادم Plane المستضاف ذاتيًا (plane.so) لاختبار الاتصال ومعاينة عناصر العمل ومزامنتها مع الخط الزمني والتقرير اليومي.',
       enabledLabel: 'تفعيل تكامل Plane',
       enabledHint: 'بعد التفعيل يمكنك اختبار الاتصال ومعاينة عناصر العمل أدناه.',
       urlLabel: 'عنوان الخادم',
@@ -545,6 +546,8 @@ export default {
       hideKey: 'إخفاء',
       workspaceSlugLabel: 'مُعرّف مساحة العمل',
       workspaceSlugHint: 'المعرّف في رابط مساحة العمل، مثل my-team في https://plane.example.com/my-team/.',
+      filterLabel: 'تصفية المشاريع (قائمة السماح)',
+      filterHint: 'اسم مشروع واحد لكل سطر. فارغ = كل المشاريع؛ مطابقة تامة أو بالبادئة دون حساسية لحالة الأحرف (مثل "Alpha" تطابق "Alpha Web").',
       testConnection: 'اختبار الاتصال',
       testing: 'جارٍ الاختبار…',
       testFailed: 'فشل الاتصال',

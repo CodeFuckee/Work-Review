@@ -1,6 +1,7 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_summary_order, format_section_heading,
-    merge_ai_order, place_gitlab_before_hourly, wrap_block, BLOCK_AI_ANALYSIS,
+    merge_ai_order, place_gitlab_before_hourly, place_plane_before_hourly, wrap_block,
+    BLOCK_AI_ANALYSIS,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -1078,6 +1079,7 @@ impl Analyzer for SummaryAnalyzer {
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
         gitlab: &crate::gitlab::GitlabReportSupplement,
+        plane_markdown: &str,
     ) -> Result<GeneratedReport> {
         log::info!("生成混合模式日报：固定模板 + AI 扩展");
 
@@ -1123,8 +1125,11 @@ impl Analyzer for SummaryAnalyzer {
             Some(order) => merge_ai_order(order, &default_order),
             None => default_order,
         };
-        let blocks = place_gitlab_before_hourly(
-            apply_preferences(ordered, &self.pinned_blocks),
+        let blocks = place_plane_before_hourly(
+            place_gitlab_before_hourly(
+                apply_preferences(ordered, &self.pinned_blocks),
+                &self.pinned_blocks,
+            ),
             &self.pinned_blocks,
         );
         let (stats_sections, section_count) = assemble_with_section_count(
@@ -1134,6 +1139,7 @@ impl Analyzer for SummaryAnalyzer {
             &category_name_overrides,
             &semantic_name_overrides,
             &gitlab.local_section,
+            plane_markdown,
         );
         report.push_str(&stats_sections);
 
@@ -1481,6 +1487,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 &crate::gitlab::GitlabReportSupplement::default(),
+                "",
             )
             .await
             .expect("网络失败时也应生成 fallback 日报");

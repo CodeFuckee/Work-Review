@@ -40,6 +40,7 @@
     mergeTimelineRows,
     type FileEventRow,
     type GitlabCommitRow,
+    type PlaneWorkItemRow,
   } from './timelineGitlab.ts';
   import { getViewportPopoverPlacement } from '../../lib/utils/popoverPosition.ts';
   import {
@@ -123,8 +124,10 @@
   let activities: TimelineActivity[] = [];
   let gitlabCommits: GitlabCommitRow[] = [];
   let fileEvents: FileEventRow[] = [];
+  let planeWorkItems: PlaneWorkItemRow[] = [];
   let gitlabSyncStartedDates = new Set<string>();
-  $: timelineRows = mergeTimelineRows(activities, gitlabCommits, fileEvents);
+  let planeSyncStartedDates = new Set<string>();
+  $: timelineRows = mergeTimelineRows(activities, gitlabCommits, fileEvents, planeWorkItems);
 
   // 文件事件类型 → 徽标文案（复用概览页的 overview.fileEvent* 键）
   function fileEventBadgeKey(eventType: string): string {
@@ -848,7 +851,7 @@
     clearImageCaches();
 
     try {
-      const [activitiesData, summariesData, commitsData, fileEventsData] = await Promise.all([
+      const [activitiesData, summariesData, commitsData, fileEventsData, planeItemsData] = await Promise.all([
         timelineGateway.getPage({
           date: requestDate,
           limit: PAGE_SIZE,
@@ -864,6 +867,7 @@
         })
           .then((stats) => stats.events)
           .catch(() => [] as FileEventRow[]),
+        invoke<PlaneWorkItemRow[]>('get_plane_work_items_for_date', { date: requestDate }),
       ]);
 
       if (requestId !== loadTimelineRequestId || requestDate !== selectedDate) return;
@@ -875,6 +879,7 @@
       activities = preparedActivities;
       gitlabCommits = commitsData;
       fileEvents = fileEventsData;
+      planeWorkItems = planeItemsData;
 
       hourlySummaries = summariesData;
       offset = activities.length;
@@ -911,6 +916,8 @@
 
     // 后台补采：拉取该日 GitLab 提交入库后刷新（不阻塞首屏；失败静默）
     void syncGitlabCommits(requestDate);
+    // 后台补采：拉取该日 Plane 工作项入库后刷新（同款模式；未配置时后端返回空结果）
+    void syncPlaneWorkItems(requestDate);
   }
 
   // 拉取指定日期的 GitLab 提交入库（口径与日报一致），成功后刷新展示。
@@ -942,6 +949,30 @@
       }
     } catch (e) {
       console.warn('GitLab 提交补采失败:', e);
+    }
+  }
+
+  // 拉取指定日期的 Plane 工作项入库后刷新展示（配置读取在后端：未配置/未启用
+  // 返回空成功结果）。每个日期每次会话只补采一次，避免反复切日期时反复打
+  // Plane API；失败静默，不影响时间线首屏。
+  async function syncPlaneWorkItems(date: string) {
+    if (planeSyncStartedDates.has(date)) return;
+    planeSyncStartedDates.add(date);
+    try {
+      const result = await invoke<{ ok: boolean; synced: number; message: string | null }>(
+        'plane_sync_work_items_for_date',
+        { date },
+      );
+      if (!result.ok) {
+        console.warn('Plane 工作项补采失败:', result.message);
+        return;
+      }
+      const items = await invoke<PlaneWorkItemRow[]>('get_plane_work_items_for_date', { date });
+      if (date === selectedDate) {
+        planeWorkItems = items;
+      }
+    } catch (e) {
+      console.warn('Plane 工作项补采失败:', e);
     }
   }
 
@@ -1676,6 +1707,25 @@
                   {#if row.event.size !== null}
                     <span class="timeline-commit-stats">{fileEventSizeLabel(row.event.size)}</span>
                   {/if}
+                </div>
+              </div>
+            </div>
+          {:else if row.kind === 'planeItem'}
+            <div class="timeline-entry timeline-entry-commit">
+              <div class="timeline-entry-anchor">
+                <div class="timeline-entry-time">{new Date(row.item.updated_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
+              </div>
+              <div class="timeline-entry-card timeline-entry-card-commit">
+                <div class="timeline-entry-app timeline-entry-app-compact">
+                  <span class="timeline-commit-badge" title={t('timeline.planeItemBadge')}>🛩</span>
+                  <div class="timeline-entry-heading">
+                    <span class="timeline-entry-app-name timeline-entry-app-name-commit">{row.item.project_name}</span>
+                  </div>
+                </div>
+                <p class="timeline-entry-title timeline-entry-title-compact">{row.item.name}</p>
+                <div class="timeline-entry-tail timeline-entry-tail-compact">
+                  <span class="timeline-commit-stats">{row.item.state_name}</span>
                 </div>
               </div>
             </div>

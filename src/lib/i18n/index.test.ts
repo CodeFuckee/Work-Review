@@ -356,8 +356,10 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   const expected = collectLeafSignatures(firstDictionary).sort(byPath);
 
   // 第十轮评审删除 4 语言死键 updater.noInstallAvailable（后端已无对应状态消息）；
-  // Plane 集成每语言新增 20 键（settings.tabs.plane + settingsPlane 组）
-  assert.equal(expected.length, 1_262);
+  // Plane 集成每语言新增 20 键（settings.tabs.plane + settingsPlane 组）；
+  // 二期时间线徽标与项目过滤每语言新增 3 键（timeline.planeItemBadge +
+  // settingsPlane.filterLabel / filterHint）
+  assert.equal(expected.length, 1_265);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

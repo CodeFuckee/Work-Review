@@ -8,6 +8,7 @@
     url: string | null;
     api_key: string | null;
     workspace_slug: string | null;
+    project_filter: string[] | null;
   }
 
   interface PlanePreviewItem {
@@ -38,6 +39,7 @@
         url: null,
         api_key: null,
         workspace_slug: null,
+        project_filter: null,
       };
     }
     return config.plane;
@@ -62,6 +64,18 @@
   function onWorkspaceSlugInput(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value.trim();
     plane().workspace_slug = value === '' ? null : value;
+    handleChange();
+  }
+
+  // 项目允许列表：一行（或逗号分隔）一个项目名；空 = 全部项目。
+  // 与 GitLab 仓库过滤的输入解析一致。
+  function onFilterInput(event: Event) {
+    const value = (event.currentTarget as HTMLTextAreaElement).value;
+    const lines = value
+      .split(/[\n,]/)
+      .map((line) => line.trim())
+      .filter((line) => line !== '');
+    plane().project_filter = lines;
     handleChange();
   }
 
@@ -219,6 +233,18 @@
         />
         <span class="settings-muted">{t('settingsPlane.workspaceSlugHint')}</span>
       </label>
+    </div>
+
+    <div class="settings-block">
+      <span class="settings-text">{t('settingsPlane.filterLabel')}</span>
+      <textarea
+        rows="3"
+        placeholder="project-a&#10;project-b"
+        value={(plane().project_filter ?? []).join('\n')}
+        on:input={onFilterInput}
+        class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
+      />
+      <span class="settings-muted">{t('settingsPlane.filterHint')}</span>
     </div>
 
     <div class="settings-block">

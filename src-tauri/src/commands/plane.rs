@@ -1,7 +1,8 @@
-//! Plane 集成命令（设置页「测试连接」与工作项预览）。
+//! Plane 集成命令（设置页「测试连接」/「工作项预览」与时间线页工作项同步）。
 //!
-//! 一期范围仅为设置 + 连接测试 + 预览；时间线/日报联动为下一期。
-//! 端点与响应字段依据官方文档 <https://developers.plane.so>（api-reference）：
+//! 时间线/日报联动（二期）：时间线页按日补采入库（`plane_sync_work_items_for_date`），
+//! 日报小节直接读库构建（不现拉 API）。端点与响应字段依据官方文档
+//! <https://developers.plane.so>（api-reference）：
 //! - `GET /api/v1/workspaces/{workspace_slug}/projects/`（projects:read，
 //!   分页信封 `results`，项目对象含 `id` / `name`）；
 //! - `GET /api/v1/workspaces/{workspace_slug}/projects/{project_id}/work-items/`
@@ -10,20 +11,30 @@
 //! - 鉴权：请求头 `X-API-Key: <Personal Access Token>`。
 //!
 //! 工作区级「近期 issues」列表端点在 api/v1 无文档（仅有必须携带搜索词的
-//! search 端点），预览按「列项目 → 聚合前几个项目的近期工作项」实现。
+//! search 端点），预览/同步按「列项目 → 聚合各项目近期工作项」实现。
 
+use crate::AppState;
+use chrono::TimeZone as _;
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
+use tauri::State;
+use work_review_core::database::PlaneWorkItemRow;
 
 /// 连接测试超时（秒）
 const TEST_CONNECTION_TIMEOUT_SECS: u64 = 8;
 /// 预览拉取总超时（秒）：1 次项目列表 + 最多 MAX_PREVIEW_PROJECTS 次工作项请求
 const PREVIEW_TIMEOUT_SECS: u64 = 20;
-/// 项目列表单页条数（预览只取第一页，避免多页翻页失控）
-const PREVIEW_PROJECT_PAGE_SIZE: u32 = 100;
+/// 项目列表单页条数（只取第一页，避免多页翻页失控）
+const PROJECT_PAGE_SIZE: u32 = 100;
 /// 预览聚合的项目数上限（取项目列表前 N 个）
 const MAX_PREVIEW_PROJECTS: usize = 8;
-/// 每个项目最多拉取的工作项数（按 updated_at 倒序取前 N）
+/// 每个项目最多拉取的工作项数（按 updated_at 倒序取前 N；预览口径）
 const PER_PROJECT_WORK_ITEM_LIMIT: u32 = 10;
+/// 同步时每个项目拉取的工作项数（按 updated_at 倒序取前 N；100 条足以覆盖
+/// 单项目单日的更新量，更旧的条目落在目标日期窗口外，本就会被过滤）
+const PER_PROJECT_SYNC_LIMIT: u32 = 100;
+/// 同步拉取总预算（秒）：1 次项目列表 + 逐项目工作项请求（同一期预览口径）
+const SYNC_TIMEOUT_SECS: u64 = 20;
 /// 预览条数默认值
 pub const DEFAULT_PREVIEW_LIMIT: u32 = 20;
 
@@ -35,9 +46,10 @@ pub struct PlaneConnectionTestResult {
     pub message: Option<String>,
 }
 
-/// 工作项预览条目（名称 / 项目名 / 状态 / 更新时间）
+/// 工作项预览条目（id / 名称 / 项目名 / 状态 / 更新时间）
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanePreviewItem {
+    pub id: String,
     pub name: String,
     pub project: String,
     pub state: String,
@@ -191,18 +203,11 @@ impl PlaneClient {
         }
     }
 
-    /// 预览工作项：列项目（第一页）后取前 `MAX_PREVIEW_PROJECTS` 个项目，逐个
-    /// 拉近期工作项（`order_by=-updated_at` + `expand=state`）；单个项目失败仅
-    /// 跳过（log::warn，与 GitLab 的部分失败策略一致），全局按 updated_at 倒序
-    /// 截 limit。
-    async fn fetch_preview(&self, limit: usize) -> Result<Vec<PlanePreviewItem>, PlaneError> {
-        let projects_value = self
-            .get_json(&self.projects_url(PREVIEW_PROJECT_PAGE_SIZE))
-            .await?;
-        let projects = parse_results(&projects_value);
-        let selected: Vec<(String, String)> = projects
+    /// 列项目（第一页）：返回 (project_id, 显示名)；名称为空回退 identifier。
+    async fn list_projects(&self) -> Result<Vec<(String, String)>, PlaneError> {
+        let projects_value = self.get_json(&self.projects_url(PROJECT_PAGE_SIZE)).await?;
+        Ok(parse_results(&projects_value)
             .iter()
-            .take(MAX_PREVIEW_PROJECTS)
             .map(|project| {
                 (json_str(project, "id"), {
                     let name = json_str(project, "name");
@@ -214,12 +219,20 @@ impl PlaneClient {
                 })
             })
             .filter(|(id, _)| !id.is_empty())
-            .collect();
+            .collect())
+    }
 
+    /// 逐项目拉取近期工作项（`order_by=-updated_at` + `expand=state`）并聚合。
+    /// 单个项目失败仅跳过（log::warn，与 GitLab 的部分失败策略一致）。
+    async fn fetch_work_items(
+        &self,
+        selected: &[(String, String)],
+        per_project_limit: u32,
+    ) -> Result<Vec<PlanePreviewItem>, PlaneError> {
         let mut items: Vec<PlanePreviewItem> = Vec::new();
-        for (project_id, project_name) in &selected {
+        for (project_id, project_name) in selected {
             let url = self.api_url(&format!(
-                "/projects/{project_id}/work-items/?per_page={PER_PROJECT_WORK_ITEM_LIMIT}&order_by=-updated_at&expand=state"
+                "/projects/{project_id}/work-items/?per_page={per_project_limit}&order_by=-updated_at&expand=state"
             ));
             match self.get_json(&url).await {
                 Ok(value) => {
@@ -236,9 +249,38 @@ impl PlaneClient {
                 }
             }
         }
+        Ok(items)
+    }
+
+    /// 预览工作项：取项目列表前 `MAX_PREVIEW_PROJECTS` 个项目，逐个拉近期
+    /// 工作项后全局按 updated_at 倒序截 limit。不读配置、不做项目过滤
+    /// （设置页可在未保存前先预览，过滤口径属于保存后的同步/日报链路）。
+    async fn fetch_preview(&self, limit: usize) -> Result<Vec<PlanePreviewItem>, PlaneError> {
+        let projects = self.list_projects().await?;
+        let selected: Vec<(String, String)> =
+            projects.into_iter().take(MAX_PREVIEW_PROJECTS).collect();
+        let mut items = self
+            .fetch_work_items(&selected, PER_PROJECT_WORK_ITEM_LIMIT)
+            .await?;
         items.sort_by_key(|item| std::cmp::Reverse(updated_at_sort_key(item)));
         items.truncate(limit);
         Ok(items)
+    }
+
+    /// 同步拉取：项目按允许列表过滤（空 = 全部，匹配语义见
+    /// `project_matches_allowlist`）后聚合近期工作项。不排序不截断：
+    /// 日期窗口过滤由命令层按本地时区完成。
+    async fn fetch_work_items_for_sync(
+        &self,
+        project_filter: &[String],
+    ) -> Result<Vec<PlanePreviewItem>, PlaneError> {
+        let projects = self.list_projects().await?;
+        let selected: Vec<(String, String)> = projects
+            .into_iter()
+            .filter(|(_, name)| project_matches_allowlist(name, project_filter))
+            .collect();
+        self.fetch_work_items(&selected, PER_PROJECT_SYNC_LIMIT)
+            .await
     }
 }
 
@@ -259,7 +301,7 @@ fn json_str(value: &serde_json::Value, key: &str) -> String {
         .to_string()
 }
 
-/// 解析单个工作项：名称 / 项目名 / 状态名 / updated_at（缺 updated_at 时
+/// 解析单个工作项：id / 名称 / 项目名 / 状态名 / updated_at（缺 updated_at 时
 /// 回退 created_at，文档示例两字段均为 ISO8601 字符串；`expand=state` 时
 /// state 为含 `name` 的对象，未展开时是 UUID——后者状态名留空）。
 fn parse_work_item(value: &serde_json::Value, project_name: &str) -> PlanePreviewItem {
@@ -272,6 +314,7 @@ fn parse_work_item(value: &serde_json::Value, project_name: &str) -> PlanePrevie
         }
     };
     PlanePreviewItem {
+        id: json_str(value, "id"),
         name: json_str(value, "name"),
         project: project_name.to_string(),
         state: value
@@ -289,6 +332,81 @@ fn updated_at_sort_key(item: &PlanePreviewItem) -> i64 {
     chrono::DateTime::parse_from_rfc3339(&item.updated_at)
         .map(|dt| dt.timestamp_millis())
         .unwrap_or(i64::MIN)
+}
+
+/// 项目允许列表匹配（PlaneConfig.project_filter）：空列表 = 全部项目；
+/// 忽略大小写，条目与项目名精确相等或项目名以条目开头（前缀）均命中——
+/// Plane 项目名常带子团队/子产品后缀（如 "Alpha Web"），前缀可整组纳管。
+/// 空白条目直接忽略，杜绝 starts_with("") 式恒真命中；项目名为空不命中。
+fn project_matches_allowlist(project_name: &str, allowlist: &[String]) -> bool {
+    if allowlist.is_empty() {
+        return true;
+    }
+    let name = project_name.trim().to_lowercase();
+    if name.is_empty() {
+        return false;
+    }
+    allowlist
+        .iter()
+        .map(|entry| entry.trim().to_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| name == entry || name.starts_with(&entry))
+}
+
+/// 目标本地日期的 [当日 00:00, 次日 00:00) UTC 毫秒窗口（与仓库其他日期边界
+/// 口径一致：本地时区当日 00:00 起算，经本机固定偏移换算为 UTC）。
+fn local_date_window_millis(date: chrono::NaiveDate, offset: chrono::FixedOffset) -> (i64, i64) {
+    let day_start_local = date.and_hms_opt(0, 0, 0).expect("有效的 00:00");
+    let start: chrono::DateTime<chrono::Utc> = offset
+        .from_local_datetime(&day_start_local)
+        .single()
+        .expect("偏移换算必须唯一")
+        .with_timezone(&chrono::Utc);
+    let end = start + chrono::Duration::days(1);
+    (start.timestamp_millis(), end.timestamp_millis())
+}
+
+/// 剥离 API 返回文本中的 C0 控制字符（同 GitLab 提交标题的注入防护：名称/
+/// 项目/状态进入时间线与日报 markdown 时必须保持单行，否则被劫持的服务端
+/// 可用 `\n## …` 注入伪造小节；正常输入是恒等变换）。
+fn sanitize_single_line(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_control() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// 工作项 → 入库行：文本字段剥离控制字符，updated_at 毫秒转 UTC unix 秒
+/// （调用方已按日期窗口过滤，解析失败的条目不会走到这里）。
+fn work_item_to_row(item: &PlanePreviewItem) -> PlaneWorkItemRow {
+    PlaneWorkItemRow {
+        plane_item_id: sanitize_single_line(&item.id),
+        project_name: sanitize_single_line(&item.project),
+        name: sanitize_single_line(&item.name),
+        state_name: sanitize_single_line(&item.state),
+        updated_at: updated_at_sort_key(item) / 1000,
+        url: None,
+    }
+}
+
+/// 判断 Plane 配置是否齐全：开关开启且 url/api_key/workspace_slug 均非空白。
+/// 时间线同步与日报小节共用同一口径。
+pub(crate) fn plane_configured(plane: &work_review_core::config::PlaneConfig) -> bool {
+    plane.enabled
+        && [
+            plane.url.as_deref(),
+            plane.api_key.as_deref(),
+            plane.workspace_slug.as_deref(),
+        ]
+        .into_iter()
+        .all(|value| !value.unwrap_or("").trim().is_empty())
 }
 
 /// 验证 Plane 实例地址 + API Key + workspace slug 是否有效。
@@ -361,6 +479,114 @@ pub async fn plane_fetch_preview(
     }
 }
 
+/// 时间线页 Plane 工作项补采结果
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaneSyncResult {
+    pub ok: bool,
+    /// 本次落在目标日期窗口内并写入数据库的条数（0 也可能是"当天没有工作项更新"）
+    pub synced: usize,
+    pub message: Option<String>,
+}
+
+/// 拉取指定日期（本机时区）的 Plane 工作项并入库，供时间线页打开/切日期时补采
+/// （与日报小节同一数据源）。读取已保存配置：enabled + url/api_key/slug 齐全才
+/// 执行，否则返回空成功结果（不当失败，前端静默）。项目按 `project_filter`
+/// 允许列表过滤（空 = 全部），工作项按 updated_at 落在目标日期
+/// [当日 00:00, 次日 00:00)（本地时区）过滤，总预算 20 秒（同一期预览口径）。
+#[tauri::command]
+pub async fn plane_sync_work_items_for_date(
+    date: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<PlaneSyncResult, String> {
+    let Ok(date_local) = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d") else {
+        return Ok(PlaneSyncResult {
+            ok: false,
+            synced: 0,
+            message: Some(String::from("日期格式无效")),
+        });
+    };
+    // 读已保存配置并在持锁块内完成客户端构造，避免 State 跨 await
+    let (client, project_filter) = {
+        let state_guard = state.lock().map_err(|e| e.to_string())?;
+        let plane = &state_guard.config.plane;
+        if !plane_configured(plane) {
+            return Ok(PlaneSyncResult {
+                ok: true,
+                synced: 0,
+                message: None,
+            });
+        }
+        (
+            PlaneClient::new(
+                plane.url.as_deref().unwrap_or(""),
+                plane.workspace_slug.as_deref().unwrap_or(""),
+                plane.api_key.as_deref().unwrap_or(""),
+            ),
+            plane.project_filter.clone(),
+        )
+    };
+
+    let offset = work_review_core::gitlab::local_offset_now();
+    let (window_start_ms, window_end_ms) = local_date_window_millis(date_local, offset);
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(SYNC_TIMEOUT_SECS),
+        client.fetch_work_items_for_sync(&project_filter),
+    )
+    .await;
+
+    let items = match outcome {
+        Ok(Ok(items)) => items,
+        Ok(Err(error)) => {
+            return Ok(PlaneSyncResult {
+                ok: false,
+                synced: 0,
+                message: Some(error.message(&client.api_key)),
+            });
+        }
+        Err(_) => {
+            return Ok(PlaneSyncResult {
+                ok: false,
+                synced: 0,
+                message: Some(String::from("获取 Plane 工作项超时（20 秒）")),
+            });
+        }
+    };
+
+    let rows: Vec<PlaneWorkItemRow> = items
+        .iter()
+        .map(|item| (updated_at_sort_key(item), item))
+        // 按本地日期窗口过滤：updated_at 解析失败的条目（i64::MIN）自然落选
+        .filter(|(updated_ms, _)| *updated_ms >= window_start_ms && *updated_ms < window_end_ms)
+        .map(|(_, item)| work_item_to_row(item))
+        .collect();
+    let synced = rows.len();
+    let db = state.lock().map_err(|e| e.to_string())?;
+    match db.database.upsert_plane_work_items(&date, &rows) {
+        Ok(_) => Ok(PlaneSyncResult {
+            ok: true,
+            synced,
+            message: None,
+        }),
+        Err(error) => Ok(PlaneSyncResult {
+            ok: false,
+            synced: 0,
+            message: Some(error.to_string()),
+        }),
+    }
+}
+
+/// 读取已入库的指定日期 Plane 工作项（按更新时间倒序），时间线页合并展示用。
+#[tauri::command]
+pub fn get_plane_work_items_for_date(
+    date: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<PlaneWorkItemRow>, String> {
+    let db = state.lock().map_err(|e| e.to_string())?;
+    db.database
+        .get_plane_work_items_for_date(&date)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn 工作项解析应取名称项目状态与更新时间() {
+    fn 工作项解析应取id名称项目状态与更新时间() {
         let value: serde_json::Value = serde_json::from_str(
             r#"{
                 "id": "550e8400-...",
@@ -409,6 +635,7 @@ mod tests {
         )
         .unwrap();
         let item = parse_work_item(&value, "示例项目");
+        assert_eq!(item.id, "550e8400-...");
         assert_eq!(item.name, "修复登录页崩溃");
         assert_eq!(item.project, "示例项目");
         assert_eq!(item.state, "进行中");
@@ -435,18 +662,21 @@ mod tests {
     fn 预览排序应按更新时间倒序且非法时间排最后() {
         let items = vec![
             PlanePreviewItem {
+                id: "1".into(),
                 name: "old".into(),
                 project: "p".into(),
                 state: String::new(),
                 updated_at: "2026-09-01T00:00:00Z".into(),
             },
             PlanePreviewItem {
+                id: "2".into(),
                 name: "bad".into(),
                 project: "p".into(),
                 state: String::new(),
                 updated_at: "not-a-date".into(),
             },
             PlanePreviewItem {
+                id: "3".into(),
                 name: "new".into(),
                 project: "p".into(),
                 state: String::new(),
@@ -480,6 +710,85 @@ mod tests {
         assert!(not_found
             .message("k")
             .contains("实例地址或 workspace slug 不正确"));
+    }
+
+    #[test]
+    fn 项目允许列表应忽略大小写并支持精确与前缀匹配() {
+        // 空列表 = 全部项目
+        assert!(project_matches_allowlist("任意项目", &[]));
+        // 精确匹配（忽略大小写与首尾空白）
+        let exact = vec!["Alpha".to_string()];
+        assert!(project_matches_allowlist("alpha", &exact));
+        assert!(project_matches_allowlist("  ALPHA  ", &exact));
+        // 前缀匹配：子团队/子产品后缀整组纳管
+        let prefix = vec!["alpha".to_string()];
+        assert!(project_matches_allowlist("Alpha Web", &prefix));
+        assert!(project_matches_allowlist("ALPHA 管理后台", &prefix));
+        // 非前缀的中缀/后缀不命中
+        assert!(!project_matches_allowlist("Web Alpha", &prefix));
+        assert!(!project_matches_allowlist("Beta", &prefix));
+        // 空白条目被忽略，不会造成 starts_with("") 恒真命中
+        let blank = vec!["   ".to_string()];
+        assert!(!project_matches_allowlist("anything", &blank));
+        // 项目名为空不命中任何非空列表
+        assert!(!project_matches_allowlist("  ", &prefix));
+    }
+
+    #[test]
+    fn 本地日期窗口应换算为utc毫秒且右开区间() {
+        let offset = chrono::FixedOffset::east_opt(8 * 3600).expect("有效偏移");
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 24).expect("有效日期");
+        let (start, end) = local_date_window_millis(date, offset);
+        // 本地 2026-09-24 00:00 (+08:00) == UTC 2026-09-23 16:00
+        assert_eq!(start, 1_790_179_200_000);
+        assert_eq!(end - start, 24 * 60 * 60 * 1000, "窗口恰为一整天");
+    }
+
+    #[test]
+    fn 文本清洗应剥离控制字符保持单行() {
+        assert_eq!(sanitize_single_line("修复登录页崩溃"), "修复登录页崩溃");
+        assert_eq!(
+            sanitize_single_line("标题\n## 伪造小节"),
+            "标题 ## 伪造小节"
+        );
+        assert_eq!(sanitize_single_line("a\tb"), "a b");
+    }
+
+    #[test]
+    fn 工作项转入库行应清洗文本并把毫秒转为秒() {
+        let item = PlanePreviewItem {
+            id: "wi-1".into(),
+            name: "搭建设计稿\n评审流程".into(),
+            project: "Alpha".into(),
+            state: "进行中".into(),
+            updated_at: "2026-09-24T02:30:00Z".into(),
+        };
+        let row = work_item_to_row(&item);
+        assert_eq!(row.plane_item_id, "wi-1");
+        assert_eq!(row.name, "搭建设计稿 评审流程", "换行应替换为空格保持单行");
+        assert_eq!(row.project_name, "Alpha");
+        assert_eq!(row.state_name, "进行中");
+        assert_eq!(row.updated_at, 1_790_217_000, "ISO 时间应转为 UTC unix 秒");
+        assert_eq!(row.url, None);
+    }
+
+    #[test]
+    fn plane配置开关与任一凭据缺失都应视为未配置() {
+        let mut plane = work_review_core::config::PlaneConfig::default();
+        assert!(!plane_configured(&plane), "默认配置未启用");
+
+        plane.enabled = true;
+        assert!(!plane_configured(&plane), "缺凭据");
+
+        plane.url = Some("https://plane.example.com".to_string());
+        plane.api_key = Some("key".to_string());
+        assert!(!plane_configured(&plane), "缺 workspace slug");
+
+        plane.workspace_slug = Some("my-team".to_string());
+        assert!(plane_configured(&plane));
+
+        plane.api_key = Some("   ".to_string());
+        assert!(!plane_configured(&plane), "空白凭据视为缺失");
     }
 
     #[tokio::test]

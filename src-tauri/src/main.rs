@@ -3802,6 +3802,8 @@ async fn main() {
             commands::get_gitlab_project_stats,
             commands::plane_test_connection,
             commands::plane_fetch_preview,
+            commands::plane_sync_work_items_for_date,
+            commands::get_plane_work_items_for_date,
             commands::get_file_monitor_stats,
             commands::file_monitor_status,
             commands::generate_text_with_model,

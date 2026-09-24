@@ -72,6 +72,7 @@ pub trait Analyzer: Send + Sync {
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
         gitlab: &crate::gitlab::GitlabReportSupplement,
+        plane_markdown: &str,
     ) -> Result<GeneratedReport>;
 }
 
