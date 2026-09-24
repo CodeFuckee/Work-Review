@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **reinstall.sh 移除 GitHub latest 自动回退**：该发布链早已失效，静默装回陈旧版本比直接报错更糟；本地找不到 .deb 时给出 WR_DEB / WR_DEB_URL / GitLab 制品页指引，显式 `WR_DEB_URL` 覆盖仍支持（第九轮评审待确认 #22，用户裁决直接删）。
 
 ### 修复
+- **文件监控图标改单图标（P2）**：设置侧边栏的文件监控图标原为「文件夹+数据库」两枚 SVG 叠放，视觉杂乱；改为单枚「眼睛」图标表达监控语义（同款描边风格）。
 - **设置侧边栏「存储」图标空白（P2）**：图标分支链缺 `storage` 分支——八个标签页只有七个有图标定义，存储页图标渲染为空。补数据库圆柱图标（同款描边风格）。
 - **第十轮全量代码评审修复（第二批：前端 TS / CI / 打包脚本 / 文档，9 项，行为保持；完整清单见 `CODE_REVIEW_FINDINGS.md` 第十轮）**：
   - **设置页账号卡片整页显示裸 i18n 键名（P1）**：`settings.accountTitle/accountDesc/accountLoggedInAs/accountNotLoggedIn/accountServerLabel/accountServerHint` 6 个键在四语言 locale 中全部误嵌 `settingsStorage` 分组（与上一轮 8403aea 修复的 fileMonitor 键组误嵌同类回归），组件按 `t('settings.account*')` 取值两级回退均失败，账号卡片标题/描述/登录态/服务器地址标签全部渲染原始键名；四语言同步把 6 键移入 `settings` 组（总叶子数不变）。
