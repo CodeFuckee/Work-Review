@@ -768,6 +768,24 @@ pub struct GitlabConfig {
     pub report_enabled: bool,
 }
 
+/// 私有化 Plane 集成配置（一期：连接测试 + 工作项预览；时间线/日报联动下一期）
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct PlaneConfig {
+    /// 是否启用 Plane 集成（默认关闭）
+    #[serde(default)]
+    pub enabled: bool,
+    /// Plane 私有化部署地址（如 https://plane.example.com）
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 个人访问令牌（Plane 的 Profile Settings → Personal Access Tokens 生成；
+    /// 明文，与 GitlabConfig.token 相同的存储策略：仅存本机配置文件）
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// 工作区 slug（工作区 URL 中的标识，如 https://plane.example.com/my-team/ 中的 my-team）
+    #[serde(default)]
+    pub workspace_slug: Option<String>,
+}
+
 pub const DEFAULT_LOCALHOST_API_PORT: u16 = 47_831;
 
 fn default_localhost_api_port() -> u16 {
@@ -1262,6 +1280,9 @@ pub struct AppConfig {
     /// GitLab 私有化集成配置（日报补充今日提交）
     #[serde(default)]
     pub gitlab: GitlabConfig,
+    /// Plane 私有化集成配置（连接测试 + 工作项预览）
+    #[serde(default)]
+    pub plane: PlaneConfig,
     /// 本地文件监控配置（工作文件夹监听，概览页展示）
     #[serde(default)]
     pub file_monitor: FileMonitorConfig,
@@ -1369,6 +1390,7 @@ impl Default for AppConfig {
             remote_storage: RemoteStorageConfig::default(),
             config_synced_at: 0,
             gitlab: GitlabConfig::default(),
+            plane: PlaneConfig::default(),
             file_monitor: FileMonitorConfig::default(),
             daily_report_custom_prompt: String::new(),
             daily_report_prompt_presets: Vec::new(),
@@ -1495,6 +1517,10 @@ impl AppConfig {
             .excluded_keywords
             .retain(|k| !k.trim().is_empty());
         self.gitlab.work_authors = normalize_work_author_list(&self.gitlab.work_authors);
+        // 实例地址去首尾空白与结尾斜杠（用户粘贴带 `/` 的地址时避免拼出 `//api/v1`）
+        self.plane.url = normalize_base_url(self.plane.url.take());
+        self.plane.workspace_slug = normalize_optional_string(self.plane.workspace_slug.take());
+        self.plane.api_key = normalize_optional_string(self.plane.api_key.take());
         normalize_custom_categories(&mut self.custom_categories);
         normalize_app_category_rules(&mut self.app_category_rules, &self.custom_categories);
         // Seed defaults BEFORE rule validation so built-in categories are present
@@ -2108,6 +2134,11 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     })
 }
 
+/// 实例地址规范化：去首尾空白与全部结尾斜杠（`https://host///` → `https://host`）。
+fn normalize_base_url(value: Option<String>) -> Option<String> {
+    normalize_optional_string(value).map(|trimmed| trimmed.trim_end_matches('/').to_string())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::field_reassign_with_default)]
@@ -2154,6 +2185,34 @@ mod tests {
         ];
         config.normalize();
         assert_eq!(config.gitlab.work_authors, vec!["a@x.com".to_string()]);
+    }
+
+    #[test]
+    fn 配置规范化应去除plane实例地址空白与结尾斜杠() {
+        let mut config = AppConfig::default();
+        config.plane.url = Some(" https://plane.example.com/// ".to_string());
+        config.plane.workspace_slug = Some(" my-team ".to_string());
+        config.plane.api_key = Some(" plane_api_abc ".to_string());
+        config.normalize();
+        assert_eq!(
+            config.plane.url.as_deref(),
+            Some("https://plane.example.com"),
+            "去首尾空白与全部结尾斜杠"
+        );
+        assert_eq!(config.plane.workspace_slug.as_deref(), Some("my-team"));
+        assert_eq!(config.plane.api_key.as_deref(), Some("plane_api_abc"));
+
+        // 空白地址应清空为 None，而不是留下空串让请求拼出畸形 URL
+        config.plane.url = Some("   ".to_string());
+        config.normalize();
+        assert_eq!(config.plane.url, None);
+
+        // 默认配置不动：enabled=false 且各可选字段为空
+        let default = AppConfig::default();
+        assert!(!default.plane.enabled);
+        assert_eq!(default.plane.url, None);
+        assert_eq!(default.plane.api_key, None);
+        assert_eq!(default.plane.workspace_slug, None);
     }
 
     #[test]

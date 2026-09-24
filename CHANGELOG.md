@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增
+- **Plane 集成（一期：设置 + 连接测试 + 工作项预览）**：设置页新增「Plane」标签（GitLab 之后），可配置私有化部署的 Plane 实例（实例地址 / 个人访问令牌 / 工作区 Slug）并测试连接、拉取近期工作项预览。走官方 REST API（`X-API-Key` 请求头，端点与响应字段依据 developers.plane.so 文档；预览按「列项目 → 聚合前 8 个项目的近期工作项，`order_by=-updated_at` 倒序截 20 条」实现），不做代码合并（用户裁决，2026-09-24）。配套：`AppConfig.plane`（`PlaneConfig { enabled, url, api_key, workspace_slug }`，默认关闭，token 明文本机存储与 GitLab 同策略、url 规范化去尾斜杠）、命令 `plane_test_connection` / `plane_fetch_preview`（结构化返回不 panic、错误串剔除 API Key、reqwest 显式超时 + 禁重定向）、设置组件 SettingsPlane 与四语言 i18n（每语言 20 键）、连接/预览不可达地址回归测试与 url 规范化单测。时间线/日报联动、后台同步、项目过滤为下一期范围。
+
 ### 变更
 - **概览页文件活动与 GitLab 提交并排两列（P2）**：两张卡片原先各占整行，现放入分区网格同一行分两列展示（窄屏自动回落单列堆叠）。
 - **时间线页新增文件活动展示（P2）**：按所选日期拉取文件监控事件（上限 50 条），以紧凑行（📄 徽标 + 文件名 + 事件类型 + 时间 + 大小）与应用活动/GitLab 提交按时间戳交错排序；未启用文件监控或读取失败时静默为空，不影响时间线首屏。合并逻辑 `mergeTimelineRows` 扩展第三数据源（带交错排序与回退用例）。

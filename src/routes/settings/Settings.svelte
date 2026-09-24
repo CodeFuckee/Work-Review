@@ -13,6 +13,7 @@
   import SettingsAppearance from './components/SettingsAppearance.svelte';
   import SettingsAI from './components/SettingsAI.svelte';
   import SettingsGitlab from './components/SettingsGitlab.svelte';
+  import SettingsPlane from './components/SettingsPlane.svelte';
   import SettingsFileMonitor from './components/SettingsFileMonitor.svelte';
   import SettingsNodeGateway from './components/SettingsNodeGateway.svelte';
   import SettingsSystem from './components/SettingsSystem.svelte';
@@ -58,6 +59,7 @@
     & StorageConfig
     & RootSettingsFields
     & ComponentProps<SettingsGitlab>['config']
+    & ComponentProps<SettingsPlane>['config']
     & ComponentProps<SettingsFileMonitor>['config'];
 
   type NullableCredentialKey =
@@ -109,7 +111,7 @@
     ui_visual_style: string;
   };
 
-  type SettingsTabId = 'general' | 'appearance' | 'ai' | 'privacy' | 'storage' | 'node' | 'gitlab' | 'filemonitor';
+  type SettingsTabId = 'general' | 'appearance' | 'ai' | 'privacy' | 'storage' | 'node' | 'gitlab' | 'plane' | 'filemonitor';
 
   interface SettingsTab {
     id: SettingsTabId;
@@ -145,6 +147,7 @@
     { id: 'storage', labelKey: 'settings.tabs.storage', icon: 'storage' },
     { id: 'node', labelKey: 'settings.tabs.node', icon: 'node', beta: true },
     { id: 'gitlab', labelKey: 'settings.tabs.gitlab', icon: 'gitlab' },
+    { id: 'plane', labelKey: 'settings.tabs.plane', icon: 'plane' },
     { id: 'filemonitor', labelKey: 'settings.tabs.fileMonitor', icon: 'filemonitor' },
   ];
 
@@ -564,6 +567,8 @@
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
                 {:else if tab.icon === 'gitlab'}
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" /></svg>
+                {:else if tab.icon === 'plane'}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 12L3.269 3.125A59.769 59.769 0 0121.485 12 59.768 59.768 0 013.27 20.875L5.999 12zm0 0h7.5" /></svg>
                 {:else if tab.icon === 'filemonitor'}
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                 {/if}
@@ -613,6 +618,8 @@
           />
         {:else if activeTab === 'gitlab'}
           <SettingsGitlab bind:config on:change={() => dirty = true} />
+        {:else if activeTab === 'plane'}
+          <SettingsPlane bind:config on:change={() => dirty = true} />
         {:else if activeTab === 'filemonitor'}
           <SettingsFileMonitor bind:config on:change={() => dirty = true} />
         {/if}

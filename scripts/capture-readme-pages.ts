@@ -827,7 +827,7 @@ async function main(): Promise<void> {
       await capturePage(page, '/#/settings', '.settings-stage-shell .settings-card', outputPath('设置-通用'));
       // 索引对应 Settings.svelte tabs 数组（0=general 已随 /#/settings 首屏拍过）：
       // 1=appearance, 2=ai, 3=privacy, 4=storage, 5=node；桌宠移除后 6=gitlab、
-      // 7=filemonitor 暂不进 README
+      // 7=plane（2026-09 新增）、8=filemonitor 暂不进 README
       const settingsTabs: readonly (readonly [number, string])[] = [
         [1, '设置-外观'],
         [2, '设置-AI模型'],

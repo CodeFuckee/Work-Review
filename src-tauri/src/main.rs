@@ -3800,6 +3800,8 @@ async fn main() {
             commands::gitlab_sync_commits_for_date,
             commands::get_gitlab_commits_for_date,
             commands::get_gitlab_project_stats,
+            commands::plane_test_connection,
+            commands::plane_fetch_preview,
             commands::get_file_monitor_stats,
             commands::file_monitor_status,
             commands::generate_text_with_model,
