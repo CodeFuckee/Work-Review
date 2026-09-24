@@ -53,19 +53,19 @@
 
   function onUrlInput(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value.trim();
-    plane().url = value === '' ? null : value;
+    config.plane = { ...plane(), url: value === '' ? null : value };
     handleChange();
   }
 
   function onApiKeyInput(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value;
-    plane().api_key = value === '' ? null : value;
+    config.plane = { ...plane(), api_key: value === '' ? null : value };
     handleChange();
   }
 
   function onWorkspaceSlugInput(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value.trim();
-    plane().workspace_slug = value === '' ? null : value;
+    config.plane = { ...plane(), workspace_slug: value === '' ? null : value };
     handleChange();
   }
 
@@ -77,17 +77,21 @@
       .split(/[\n,]/)
       .map((line) => line.trim())
       .filter((line) => line !== '');
-    plane().project_filter = lines;
+    config.plane = { ...plane(), project_filter: lines };
     handleChange();
   }
 
+  // 注意：Svelte 4 对「函数调用表达式.属性 = x」这类赋值无法自动失效依赖，
+  // 必须以 config 根为赋值目标（config.plane = 新对象）视图才会更新
   function onEnabledToggle() {
-    plane().enabled = !plane().enabled;
+    const current = plane();
+    config.plane = { ...current, enabled: !current.enabled };
     handleChange();
   }
 
   function onAllowInsecureToggle() {
-    plane().allow_insecure_http = !plane().allow_insecure_http;
+    const current = plane();
+    config.plane = { ...current, allow_insecure_http: !current.allow_insecure_http };
     handleChange();
   }
 
@@ -183,12 +187,12 @@
         <button
           type="button"
           on:click={onEnabledToggle}
-          class="switch-track {plane().enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
+          class="switch-track {config.plane?.enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
           role="switch"
           aria-label={t('settingsPlane.enabledLabel')}
-          aria-checked={plane().enabled}
+          aria-checked={config.plane?.enabled}
         >
-          <span class="switch-thumb {plane().enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
+          <span class="switch-thumb {config.plane?.enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
         </button>
       </div>
     </div>
@@ -199,7 +203,7 @@
         <input
           type="url"
           placeholder="https://plane.example.com"
-          value={plane().url ?? ''}
+          value={config.plane?.url ?? ''}
           on:input={onUrlInput}
           class="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
         />
@@ -214,7 +218,7 @@
         <div class="mt-2 flex items-center gap-2">
           <input
             type={showKey ? 'text' : 'password'}
-            value={plane().api_key ?? ''}
+            value={config.plane?.api_key ?? ''}
             on:input={onApiKeyInput}
             class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
             autocomplete="off"
@@ -237,7 +241,7 @@
         <input
           type="text"
           placeholder="my-team"
-          value={plane().workspace_slug ?? ''}
+          value={config.plane?.workspace_slug ?? ''}
           on:input={onWorkspaceSlugInput}
           class="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
         />
@@ -254,12 +258,12 @@
         <button
           type="button"
           on:click={onAllowInsecureToggle}
-          class="switch-track {plane().allow_insecure_http ? 'bg-amber-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
+          class="switch-track {config.plane?.allow_insecure_http ? 'bg-amber-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
           role="switch"
           aria-label={t('settingsPlane.allowInsecureLabel')}
-          aria-checked={plane().allow_insecure_http}
+          aria-checked={config.plane?.allow_insecure_http}
         >
-          <span class="switch-thumb {plane().allow_insecure_http ? 'translate-x-5' : 'translate-x-0'}"></span>
+          <span class="switch-thumb {config.plane?.allow_insecure_http ? 'translate-x-5' : 'translate-x-0'}"></span>
         </button>
       </div>
     </div>
@@ -269,7 +273,7 @@
       <textarea
         rows="3"
         placeholder="project-a&#10;project-b"
-        value={(plane().project_filter ?? []).join('\n')}
+        value={(config.plane?.project_filter ?? []).join('\n')}
         on:input={onFilterInput}
         class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
       />

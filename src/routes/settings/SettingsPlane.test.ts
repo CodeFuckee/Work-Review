@@ -48,18 +48,26 @@ test('Plane 组件应提供工作项预览命令与预览列表', () => {
 test('Plane 组件应提供启用开关并按结构化结果展示连接状态', () => {
   const source = read(PLANE_COMPONENT);
   assert.match(source, /role="switch"/);
-  assert.match(source, /aria-checked=\{plane\(\)\.enabled\}/);
+  assert.match(source, /aria-checked=\{config\.plane\?\.enabled\}/);
   assert.match(source, /testResult\.ok/);
   assert.match(source, /previewError/);
+});
+
+test('Plane 开关赋值必须以 config 为根以触发 Svelte 失效（禁止 plane() 调用表达式赋值）', () => {
+  const source = read(PLANE_COMPONENT);
+  assert.match(source, /config\.plane = \{ \.\.\.current, enabled: !current\.enabled \}/);
+  assert.match(source, /config\.plane = \{ \.\.\.current, allow_insecure_http: !current\.allow_insecure_http \}/);
+  assert.doesNotMatch(source, /plane\(\)\.enabled = /);
+  assert.doesNotMatch(source, /plane\(\)\.allow_insecure_http = /);
 });
 
 test('Plane 组件应提供项目过滤 textarea 并随保存流程持久化', () => {
   const source = read(PLANE_COMPONENT);
   assert.match(source, /t\('settingsPlane\.filterLabel'\)/);
   assert.match(source, /t\('settingsPlane\.filterHint'\)/);
-  assert.match(source, /value=\{\(plane\(\)\.project_filter \?\? \[\]\)\.join\('\\n'\)\}/);
+  assert.match(source, /value=\{\(config\.plane\?\.project_filter \?\? \[\]\)\.join\('\\n'\)\}/);
   assert.match(source, /on:input=\{onFilterInput\}/);
-  assert.match(source, /plane\(\)\.project_filter = lines;/);
+  assert.match(source, /config\.plane = \{ \.\.\.plane\(\), project_filter: lines \};/);
 });
 
 test('设置页 Plane 图标分支应使用单枚描边 SVG', () => {
@@ -94,6 +102,10 @@ test('四个语言的 i18n 都应包含 plane tab 与完整 settingsPlane 文案
       'previewing',
       'previewEmpty',
       'previewFailed',
+      'allowInsecureLabel',
+      'allowInsecureHint',
+      'schemeHint',
+      'previewLimitHint',
     ]) {
       assert.match(file, new RegExp(`${key}: `), `locale ${locale} missing settingsPlane.${key}`);
     }
