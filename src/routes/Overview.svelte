@@ -40,6 +40,7 @@
     sumGitlabProjectRows,
     type GitlabProjectStat,
   } from './overviewGitlabPresentation.ts';
+  import { buildPlaneProjectOverview } from './overviewPlanePresentation.ts';
 
   // GitLab 项目进度条配色（与 AppUsageChart 的柱色保持一致）
   const GITLAB_BAR_COLORS = [
@@ -154,6 +155,12 @@
       enabled?: boolean;
       folders?: string[] | null;
     };
+    plane?: {
+      enabled?: boolean;
+      url?: string | null;
+      api_key?: string | null;
+      workspace_slug?: string | null;
+    };
   }
 
   interface FileMonitorEvent {
@@ -162,6 +169,16 @@
     size: number | null;
     occurred_at: number;
     date: string;
+  }
+
+  // Plane 工作项入库行（get_plane_work_items_for_date 返回，updated_at 倒序）
+  interface PlaneWorkItemRow {
+    plane_item_id: string;
+    project_name: string;
+    name: string;
+    state_name: string;
+    updated_at: number;
+    url: string | null;
   }
 
   // 事件类型徽标（文案 key 与配色）
@@ -348,6 +365,12 @@
   let fileEventsTotal = 0;
   let fileEvents: FileMonitorEvent[] = [];
   let fileEventsRequestId = 0;
+  // Plane 项目概览（按日入库工作项聚合）：配置了 Plane 才显示；读本地库零 API 请求，
+  // 打开/切日期时每日期后台补采一次（口径与时间线页一致）
+  let planeConfigured = false;
+  let planeWorkItems: PlaneWorkItemRow[] = [];
+  let planeItemsRequestId = 0;
+  let planeSyncAttemptedDates = new Set<string>();
 
   // 仓库头像（path -> data URL），随补采结果更新并落 localStorage 供下次秒出
   const GITLAB_AVATARS_KEY = 'yue-review-gitlab-avatars';
@@ -373,6 +396,10 @@
 
   $: gitlabRows = buildGitlabProjectRows(gitlabStats);
   $: gitlabTotals = sumGitlabProjectRows(gitlabRows);
+  // Plane 项目概览行：按项目聚合当日变动数 + 最近变动工作项
+  $: planeOverviewRows = buildPlaneProjectOverview(planeWorkItems);
+  // 进度条以变动数最多的项目为满格（与 GitLab 卡的柱宽口径一致）
+  $: planeBarMaxCount = Math.max(0, ...planeOverviewRows.map((row) => row.count));
   let lastCheckDate = currentTime.getDate();
   let appUsageViewMode: AppUsageViewMode = 'row';
   let domainUsageExpanded = false;
@@ -480,6 +507,18 @@
     selectedDateTo;
     if (fileMonitorConfigured) {
       void refreshFileEvents();
+    }
+  }
+
+  // 切换日期区间时刷新 Plane 项目概览；就绪后对区间内每个日期触发一次后台补采
+  // （每日期每次会话只采一次，失败静默；定时/可见性刷新只读库不重复补采）
+  $: {
+    planeConfigured;
+    selectedDateFrom;
+    selectedDateTo;
+    if (planeConfigured) {
+      void refreshPlaneOverview();
+      void syncPlaneWorkItemsForSelection();
     }
   }
 
@@ -1396,6 +1435,68 @@
     }
   }
 
+  // 读取指定日期区间已入库的 Plane 工作项（只读本地 plane_work_items 表，零 Plane API
+  // 请求）。同步命令按单日入库，区间内逐日读取后按工作项去重（同一工作项跨日重复
+  // 变动只保留最新一条），单日场景与「当日变动」口径完全一致。
+  function getPlaneOverviewDates(): string[] {
+    const dates: string[] = [];
+    let cursor = selectedDateFrom;
+    while (cursor <= selectedDateTo && dates.length < 62) {
+      dates.push(cursor);
+      cursor = shiftIsoDate(cursor, 1);
+    }
+    return dates;
+  }
+
+  async function refreshPlaneOverview(): Promise<void> {
+    if (!planeConfigured) return;
+    const requestId = ++planeItemsRequestId;
+    try {
+      const perDate = await Promise.all(
+        getPlaneOverviewDates().map((date) =>
+          invoke<PlaneWorkItemRow[]>('get_plane_work_items_for_date', { date })
+            .catch(() => [] as PlaneWorkItemRow[]),
+        ),
+      );
+      if (requestId !== planeItemsRequestId) return;
+      const latestByItemId = new Map<string, PlaneWorkItemRow>();
+      for (const item of perDate.flat()) {
+        const existing = latestByItemId.get(item.plane_item_id);
+        if (!existing || item.updated_at > existing.updated_at) {
+          latestByItemId.set(item.plane_item_id, item);
+        }
+      }
+      planeWorkItems = [...latestByItemId.values()];
+    } catch (e) {
+      console.warn('读取 Plane 工作项失败:', e);
+    }
+  }
+
+  // 后台补采当前选择区间内的每个日期（配置读取在后端：未配置/未启用返回空成功
+  // 结果）。每日期每次会话只触发一次，避免反复切日期时反复打 Plane API；补采成功
+  // 后重读本地库刷新展示（不阻塞界面，失败静默，口径与时间线页一致）。
+  async function syncPlaneWorkItemsForSelection(): Promise<void> {
+    for (const date of getPlaneOverviewDates()) {
+      if (planeSyncAttemptedDates.has(date)) continue;
+      planeSyncAttemptedDates.add(date);
+      void (async () => {
+        try {
+          const result = await invoke<{ ok: boolean; synced: number; message: string | null }>(
+            'plane_sync_work_items_for_date',
+            { date },
+          );
+          if (!result.ok) {
+            console.warn('Plane 工作项补采失败:', result.message);
+            return;
+          }
+          void refreshPlaneOverview();
+        } catch (e) {
+          console.warn('Plane 工作项补采失败:', e);
+        }
+      })();
+    }
+  }
+
   // 读取指定日期区间的 GitLab 项目统计（区间随概览日期选择联动）
   async function refreshGitlabStats(): Promise<void> {
     if (!gitlabConfigured) return;
@@ -1505,6 +1606,13 @@
         cfg.file_monitor?.enabled
         && (cfg.file_monitor.folders ?? []).some((folder) => folder.trim() !== '')
       );
+      // 与后端 plane_configured 同口径：开关开启且 url/api_key/workspace_slug 均非空白
+      planeConfigured = !!(
+        cfg.plane?.enabled
+        && cfg.plane.url?.trim()
+        && cfg.plane.api_key?.trim()
+        && cfg.plane.workspace_slug?.trim()
+      );
     } catch (e) {
       workGoalMinutes = null;
     }
@@ -1533,6 +1641,9 @@
         }
         if (fileMonitorConfigured) {
           void refreshFileEvents();
+        }
+        if (planeConfigured) {
+          void refreshPlaneOverview();
         }
       }, 30000);
     }
@@ -1563,6 +1674,12 @@
         refreshInterval = setInterval(() => {
           if (shouldAutoRefreshOverview()) {
             loadStats();
+          }
+          if (fileMonitorConfigured) {
+            void refreshFileEvents();
+          }
+          if (planeConfigured) {
+            void refreshPlaneOverview();
           }
         }, 30000);
         loadStats(true);
@@ -2181,6 +2298,53 @@
               <span class="font-mono font-medium text-emerald-600 dark:text-emerald-400">+{gitlabTotals.additions.toLocaleString()}</span>
               <span class="font-mono font-medium text-rose-500 dark:text-rose-400">−{gitlabTotals.deletions.toLocaleString()}</span>
             </div>
+          </div>
+        {/if}
+      </section>
+    {/if}
+
+    <!-- Plane 项目概览：当日变动按项目聚合（读按日入库数据，配置了 Plane 才显示） -->
+    {#if planeConfigured}
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">
+        <div class="mb-3 flex items-baseline justify-between gap-3">
+          <h3 class="page-section-title !mb-0">{t('overview.planeTitle')}</h3>
+          <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.planeItemCount', { count: planeWorkItems.length })}</span>
+        </div>
+        {#if planeOverviewRows.length === 0}
+          <div class="empty-state-compact">
+            <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+              <span class="text-xl">🛩</span>
+            </div>
+            <p class="empty-state-copy">{t('overview.planeEmpty')}</p>
+          </div>
+        {:else}
+          <div class="app-usage-chart__rows">
+            {#each planeOverviewRows as row (row.project)}
+              <div class="app-usage-chart__row">
+                <span class="app-usage-chart__heading">
+                  <span class="app-usage-chart__icon">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                    </svg>
+                  </span>
+                  <span class="app-usage-chart__copy">
+                    <span class="app-usage-chart__name" title={row.project}>{row.project}</span>
+                    <span class="app-usage-chart__meta">
+                      {row.latestName} · {row.latestState} · {formatLocalizedTime(new Date(row.latestUpdatedAt * 1000), { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </span>
+                </span>
+                <span class="app-usage-chart__track">
+                  <span
+                    class="app-usage-chart__bar"
+                    style="width: {planeBarMaxCount > 0 ? Math.max((row.count / planeBarMaxCount) * 100, 2) : 0}%; background-color: #0ea5e9; opacity: 0.8"
+                  ></span>
+                </span>
+                <span class="app-usage-chart__duration">
+                  {t('overview.planeItemCount', { count: row.count })}
+                </span>
+              </div>
+            {/each}
           </div>
         {/if}
       </section>
