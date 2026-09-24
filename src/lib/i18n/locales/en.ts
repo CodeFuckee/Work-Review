@@ -538,7 +538,7 @@ export default {
     },
     settingsPlane: {
       title: 'Plane Integration',
-      description: 'Connect to a self-hosted Plane instance (plane.so) to test connectivity, preview work items, and sync them into the timeline and daily report.',
+      description: 'Connect to a self-hosted Plane instance (plane.so) to test connectivity, preview work items, and sync them into the timeline.',
       enabledLabel: 'Enable Plane integration',
       enabledHint: 'Turn on to test the connection and preview work items below.',
       urlLabel: 'Instance URL',
@@ -550,7 +550,7 @@ export default {
       workspaceSlugLabel: 'Workspace Slug',
       workspaceSlugHint: 'The identifier in the workspace URL, e.g. my-team in https://plane.example.com/my-team/.',
       filterLabel: 'Project filter (allow list)',
-      filterHint: 'One project name per line. Empty = all projects; case-insensitive exact or prefix match (e.g. "Alpha" matches "Alpha Web").',
+      filterHint: 'One project name per line. Empty = all projects; case-insensitive exact match only.',
       testConnection: 'Test connection',
       testing: 'Testing…',
       testFailed: 'Connection failed',
@@ -558,6 +558,10 @@ export default {
       previewing: 'Fetching…',
       previewEmpty: 'No work items',
       previewFailed: 'Failed to load preview',
+      allowInsecureLabel: 'Allow insecure protocol (HTTP)',
+      allowInsecureHint: 'When enabled, http:// instance URLs are accepted. The API Key is sent in plaintext — trusted LANs only.',
+      schemeHint: 'Only HTTPS URLs are allowed by default; enable "Allow insecure protocol" for HTTP.',
+      previewLimitHint: 'Preview and sync cover the first 100 projects only, with the latest 100 work items per project.',
     },
     settingsGeneral: {
       title: 'General',

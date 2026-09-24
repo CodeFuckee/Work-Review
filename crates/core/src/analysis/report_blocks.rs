@@ -12,7 +12,7 @@ use crate::analysis::{
     format_duration_for_locale, generate_hourly_activity_summary_for_locale,
     translate_category_name, translate_semantic_category_name, AppLocale,
 };
-use crate::database::{DailyStats, DomainUsage, PlaneWorkItemRow};
+use crate::database::{DailyStats, DomainUsage};
 use std::collections::HashMap;
 
 pub const BLOCK_CATEGORY_TABLE: &str = "CATEGORY_TABLE";
@@ -25,7 +25,6 @@ pub const BLOCK_LOCAL_CATEGORY: &str = "LOCAL_CATEGORY";
 pub const BLOCK_LOCAL_APP_USAGE: &str = "LOCAL_APP_USAGE";
 pub const BLOCK_LOCAL_DOMAIN_USAGE: &str = "LOCAL_DOMAIN_USAGE";
 pub const BLOCK_GITLAB_TODAY: &str = "GITLAB_TODAY";
-pub const BLOCK_PLANE_TODAY: &str = "PLANE_TODAY";
 
 /// 段落积木枚举——每个变体对应一个可独立渲染的统计区块。
 /// 调用方（summary.rs / local.rs）构造 `Vec<StatsBlock>` 传入 `assemble()`，
@@ -55,9 +54,6 @@ pub enum StatsBlock {
     /// assemble 的 `gitlab_markdown` 参数注入，非 stats 驱动；未配置时为
     /// 空串、wrap_block 自动跳过该块）
     GitlabToday,
-    /// Plane 工作项（同 GitlabToday：pre-rendered markdown 经 assemble 的
-    /// `plane_markdown` 参数注入，非 stats 驱动；未配置时为空串、自动跳过）
-    PlaneToday,
 }
 
 impl StatsBlock {
@@ -73,7 +69,6 @@ impl StatsBlock {
             Self::LocalAppUsage => BLOCK_LOCAL_APP_USAGE,
             Self::LocalDomainUsage => BLOCK_LOCAL_DOMAIN_USAGE,
             Self::GitlabToday => BLOCK_GITLAB_TODAY,
-            Self::PlaneToday => BLOCK_PLANE_TODAY,
         }
     }
 
@@ -98,8 +93,6 @@ impl StatsBlock {
             }
             // GitLab 小节不由 stats 渲染：assemble 会用传入的 gitlab_markdown 替代
             Self::GitlabToday => String::new(),
-            // Plane 小节同上：assemble 会用传入的 plane_markdown 替代
-            Self::PlaneToday => String::new(),
         }
     }
 }
@@ -147,8 +140,8 @@ fn number_sections_from(markdown: &str, locale: AppLocale, first_index: usize) -
 /// 按给定顺序组装统计区块，返回带 WR_BLOCK 标记的 markdown 字符串。
 /// 标题序号由 assemble 动态分配（render 函数里的标题不含序号）。
 /// 空内容的块自动跳过（wrap_block 返回空串）。
-/// `gitlab_markdown` / `plane_markdown` 分别为「GitLab 今日提交」「Plane 工作
-/// 项」小节的 pre-rendered 内容（含无编号标题；未配置时传空串，该块自动跳过）。
+/// `gitlab_markdown` 为「GitLab 今日提交」小节的 pre-rendered 内容（含无编号
+/// 标题；未配置时传空串，该块自动跳过）。
 pub fn assemble(
     blocks: &[StatsBlock],
     stats: &DailyStats,
@@ -156,7 +149,6 @@ pub fn assemble(
     category_overrides: &HashMap<String, String>,
     semantic_overrides: &HashMap<String, String>,
     gitlab_markdown: &str,
-    plane_markdown: &str,
 ) -> String {
     assemble_with_section_count(
         blocks,
@@ -165,7 +157,6 @@ pub fn assemble(
         category_overrides,
         semantic_overrides,
         gitlab_markdown,
-        plane_markdown,
     )
     .0
 }
@@ -179,13 +170,11 @@ pub fn assemble_with_section_count(
     category_overrides: &HashMap<String, String>,
     semantic_overrides: &HashMap<String, String>,
     gitlab_markdown: &str,
-    plane_markdown: &str,
 ) -> (String, usize) {
     let mut out = String::new();
     for block in blocks {
         let rendered = match block {
             StatsBlock::GitlabToday => gitlab_markdown.to_string(),
-            StatsBlock::PlaneToday => plane_markdown.to_string(),
             _ => block.render(stats, locale, category_overrides, semantic_overrides),
         };
         let wrapped = wrap_block(block.block_name(), &rendered);
@@ -209,7 +198,6 @@ pub fn parse_block_name(name: &str) -> Option<StatsBlock> {
         "LOCAL_APP_USAGE" => Some(StatsBlock::LocalAppUsage),
         "LOCAL_DOMAIN_USAGE" => Some(StatsBlock::LocalDomainUsage),
         "GITLAB_TODAY" => Some(StatsBlock::GitlabToday),
-        "PLANE_TODAY" => Some(StatsBlock::PlaneToday),
         _ => None,
     }
 }
@@ -266,7 +254,6 @@ pub fn default_summary_order() -> Vec<StatsBlock> {
         StatsBlock::HourlySummary,
         StatsBlock::DomainUsageTable,
         StatsBlock::GitlabToday,
-        StatsBlock::PlaneToday,
     ]
 }
 
@@ -279,7 +266,6 @@ pub fn default_local_order() -> Vec<StatsBlock> {
         StatsBlock::HourlySummary,
         StatsBlock::LocalDomainUsage,
         StatsBlock::GitlabToday,
-        StatsBlock::PlaneToday,
     ]
 }
 
@@ -309,79 +295,6 @@ pub fn place_gitlab_before_hourly(
         .unwrap_or(blocks.len());
     blocks.insert(anchor, gitlab);
     blocks
-}
-
-/// 把 Plane 工作项块锚定到「按小时活跃度」之前（与 GitLab 小节同款锚定先例；
-/// 在 place_gitlab_before_hourly 之后调用时，落在 GitLab 小节之后、
-/// 按小时活跃度之前）。用户显式钉选 PLANE_TODAY 时视为主动布局，跳过重锚。
-pub fn place_plane_before_hourly(
-    mut blocks: Vec<StatsBlock>,
-    pinned: &[String],
-) -> Vec<StatsBlock> {
-    if pinned.iter().any(|p| p == BLOCK_PLANE_TODAY) {
-        return blocks;
-    }
-    let Some(from) = blocks
-        .iter()
-        .position(|b| matches!(b, StatsBlock::PlaneToday))
-    else {
-        return blocks;
-    };
-    let plane = blocks.remove(from);
-    let anchor = blocks
-        .iter()
-        .position(|b| matches!(b, StatsBlock::HourlySummary))
-        .unwrap_or(blocks.len());
-    blocks.insert(anchor, plane);
-    blocks
-}
-
-/// 构建「Plane 工作项」独立小节 markdown（含无编号标题，块系统会统一编号）。
-/// 与 GitLab 小节的占位先例一致：调用方在配置齐全时始终产出小节——
-/// 有工作项 = 每条一行的列表（状态 + 名称 + 项目 + 更新时间）；
-/// 无工作项 = 占位说明，不静默省略。数据来自当日入库行（时间线页补采写入）。
-pub fn build_plane_local_section(items: &[PlaneWorkItemRow], locale: AppLocale) -> String {
-    let mut lines: Vec<String> = items
-        .iter()
-        .map(|item| format!("- {}", format_plane_item_line(item)))
-        .collect();
-    if lines.is_empty() {
-        lines.push(plane_empty_hint(locale));
-    }
-    format!("## {}\n\n{}", plane_section_title(locale), lines.join("\n"))
-}
-
-/// 单条工作项的展示行，形如：`[进行中] 搭建设计稿评审流程 · Alpha · 14:30`
-fn format_plane_item_line(item: &PlaneWorkItemRow) -> String {
-    let updated_at = chrono::DateTime::from_timestamp(item.updated_at, 0)
-        .map(|dt| dt.with_timezone(&chrono::Local).format("%H:%M").to_string())
-        .unwrap_or_else(|| "??".to_string());
-    format!(
-        "[{state}] {name} · {project} · {updated_at}",
-        state = item.state_name,
-        name = item.name,
-        project = item.project_name,
-    )
-}
-
-/// 「Plane 工作项」小节标题（按 locale；与 gitlab_section_title 同款机制）
-fn plane_section_title(locale: AppLocale) -> &'static str {
-    match locale {
-        AppLocale::ZhCn | AppLocale::ZhTw => "Plane 工作项",
-        AppLocale::En => "Plane Work Items",
-        AppLocale::Ar => "عناصر عمل Plane",
-    }
-}
-
-/// 无工作项时的占位说明（按 locale；zh-TW 沿用简体「工作项」一词，
-/// 与 plane_section_title 保持同一小节标题口径）
-fn plane_empty_hint(locale: AppLocale) -> String {
-    match locale {
-        AppLocale::ZhCn => "今日无 Plane 工作项记录。".to_string(),
-        AppLocale::ZhTw => "今日無 Plane 工作項記錄。".to_string(),
-        AppLocale::En => "No Plane work items today.".to_string(),
-        AppLocale::Ar => "لا توجد عناصر عمل Plane اليوم.".to_string(),
-    }
 }
 
 const BLOCK_PREFIX_START: &str = "<!-- WR_BLOCK_START:";
@@ -1050,7 +963,6 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             "",
-            "",
         );
 
         assert_eq!(section_count, 2);
@@ -1069,7 +981,6 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             "",
-            "",
         );
 
         assert_eq!(section_count, 2);
@@ -1086,7 +997,6 @@ mod tests {
             AppLocale::ZhCn,
             &HashMap::new(),
             &HashMap::new(),
-            "",
             "",
         );
 
@@ -1121,7 +1031,6 @@ mod tests {
             AppLocale::En,
             &HashMap::new(),
             &HashMap::new(),
-            "",
             "",
         );
 
@@ -1194,7 +1103,6 @@ mod tests {
 
 - [g/p] [main] abc fix: x
 ",
-            "",
         );
         assert!(
             markdown.contains("## 三、GitLab 今日提交"),
@@ -1220,143 +1128,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             "",
-            "",
         );
         assert!(!markdown.contains("GITLAB_TODAY"), "未配置不应出现该块");
         assert_eq!(count, 4, "未配置时仍为四个数据小节");
-    }
-
-    #[test]
-    fn plane块应锚定在gitlab之后且在按小时活跃度之前() {
-        let blocks = place_plane_before_hourly(
-            place_gitlab_before_hourly(default_summary_order(), &[]),
-            &[],
-        );
-        let names: Vec<&str> = blocks.iter().map(|b| b.block_name()).collect();
-        let gitlab = names
-            .iter()
-            .position(|n| *n == BLOCK_GITLAB_TODAY)
-            .expect("应包含 GITLAB_TODAY");
-        let plane = names
-            .iter()
-            .position(|n| *n == BLOCK_PLANE_TODAY)
-            .expect("应包含 PLANE_TODAY");
-        let hourly = names
-            .iter()
-            .position(|n| *n == BLOCK_HOURLY_SUMMARY)
-            .expect("应包含 HOURLY_SUMMARY");
-        assert_eq!(
-            plane + 1,
-            hourly,
-            "Plane 应紧跟在按小时活跃度之前: {names:?}"
-        );
-        assert!(gitlab < plane, "Plane 应排在 GitLab 小节之后: {names:?}");
-    }
-
-    #[test]
-    fn plane块被显式钉选时应尊重钉选不再重锚() {
-        let pinned = [BLOCK_PLANE_TODAY.to_string()];
-        let blocks =
-            place_plane_before_hourly(apply_preferences(default_summary_order(), &pinned), &pinned);
-        assert_eq!(blocks[0].block_name(), BLOCK_PLANE_TODAY, "钉选应置顶");
-    }
-
-    #[test]
-    fn plane小节应含状态名称项目且无数据时给占位说明() {
-        use crate::database::PlaneWorkItemRow;
-
-        let item = |name: &str, updated_at: i64| PlaneWorkItemRow {
-            plane_item_id: "wi-1".to_string(),
-            project_name: "Alpha".to_string(),
-            name: name.to_string(),
-            state_name: "进行中".to_string(),
-            updated_at,
-            url: None,
-        };
-        let section = build_plane_local_section(
-            &[item("搭建设计稿评审流程", 1_790_217_000)],
-            AppLocale::ZhCn,
-        );
-        assert!(
-            section.starts_with("## Plane 工作项\n\n"),
-            "应含无编号标题: {section}"
-        );
-        assert!(
-            section.contains("- [进行中] 搭建设计稿评审流程 · Alpha · "),
-            "每条一行: {section}"
-        );
-        // 时间用 chrono::Local 渲染，期望值按同一时钟推导，避免对测试机时区的硬编码
-        let expected_time = chrono::DateTime::from_timestamp(1_790_217_000, 0)
-            .map(|dt| dt.with_timezone(&chrono::Local).format("%H:%M").to_string())
-            .unwrap_or_default();
-        assert!(
-            section.ends_with(&expected_time),
-            "应含本地更新时间 HH:MM: {section}"
-        );
-
-        let placeholder = build_plane_local_section(&[], AppLocale::En);
-        assert_eq!(
-            placeholder,
-            "## Plane Work Items\n\nNo Plane work items today."
-        );
-
-        // 多语言标题与占位（zh-TW / ar）
-        assert_eq!(plane_section_title(AppLocale::ZhTw), "Plane 工作项");
-        assert_eq!(plane_section_title(AppLocale::Ar), "عناصر عمل Plane");
-        assert!(
-            build_plane_local_section(&[], AppLocale::ZhTw).contains("今日無 Plane 工作項記錄。")
-        );
-        assert!(
-            build_plane_local_section(&[], AppLocale::Ar).contains("لا توجد عناصر عمل Plane اليوم.")
-        );
-    }
-
-    #[test]
-    fn plane小节经装配应被编号并带块标记() {
-        let stats = sample_stats_for_editorial_notes();
-        let markdown = assemble(
-            &place_plane_before_hourly(
-                place_gitlab_before_hourly(default_summary_order(), &[]),
-                &[],
-            ),
-            &stats,
-            AppLocale::ZhCn,
-            &HashMap::new(),
-            &HashMap::new(),
-            "## GitLab 今日提交\n\n- [g/p] [main] abc fix: x\n",
-            "## Plane 工作项\n\n- [进行中] 搭建设计稿评审流程 · Alpha · 14:30\n",
-        );
-        assert!(
-            markdown.contains("## 三、GitLab 今日提交") && markdown.contains("## 四、Plane 工作项"),
-            "Plane 应排在 GitLab 小节之后并按所在位置获得序号: {markdown}"
-        );
-        assert!(
-            markdown.contains("<!-- WR_BLOCK_START:PLANE_TODAY -->"),
-            "应带可钉选/隐藏的块标记"
-        );
-        assert!(
-            markdown.contains("## 五、按小时活跃度"),
-            "按小时活跃度应顺延编号"
-        );
-        assert!(
-            markdown.contains("## 六、网站访问明细"),
-            "网站访问明细应顺延编号"
-        );
-
-        // 未配置 Plane（空串）时整块跳过；GitLab 同样未传时只剩四个数据小节
-        let (markdown, count) = assemble_with_section_count(
-            &place_plane_before_hourly(
-                place_gitlab_before_hourly(default_summary_order(), &[]),
-                &[],
-            ),
-            &stats,
-            AppLocale::ZhCn,
-            &HashMap::new(),
-            &HashMap::new(),
-            "",
-            "",
-        );
-        assert!(!markdown.contains("PLANE_TODAY"), "未配置不应出现该块");
-        assert_eq!(count, 4);
     }
 }

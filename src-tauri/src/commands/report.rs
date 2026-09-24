@@ -237,27 +237,6 @@ pub(crate) async fn generate_report_inner(
     }
 
     // 「Plane 工作项」小节：读当日已入库数据（由时间线页补采写入，日报不现拉
-    // API、无额外网络依赖与超时预算）。配置齐全即产出小节（无数据为占位说明，
-    // 与 GitLab 小节的占位先例一致），未配置为空串（整块自动跳过）；读库失败
-    // 仅记日志不阻塞日报。
-    let plane_markdown = {
-        let state_guard = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-        if !super::plane::plane_configured(&state_guard.config.plane) {
-            String::new()
-        } else {
-            match state_guard.database.get_plane_work_items_for_date(&date) {
-                Ok(items) => work_review_core::analysis::report_blocks::build_plane_local_section(
-                    &items,
-                    report_locale,
-                ),
-                Err(error) => {
-                    log::warn!("读取当日 Plane 工作项失败（不影响日报生成）: {error}");
-                    String::new()
-                }
-            }
-        }
-    };
-
     let spawn_result = tokio::spawn(async move {
         analyzer
             .generate_report(
@@ -269,7 +248,6 @@ pub(crate) async fn generate_report_inner(
                 category_name_overrides,
                 semantic_name_overrides,
                 &gitlab_supplement,
-                &plane_markdown,
             )
             .await
     });

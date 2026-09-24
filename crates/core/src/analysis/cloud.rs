@@ -249,7 +249,6 @@ impl Analyzer for CloudAnalyzer {
         _category_name_overrides: HashMap<String, String>,
         _semantic_name_overrides: HashMap<String, String>,
         gitlab: &crate::gitlab::GitlabReportSupplement,
-        plane_markdown: &str,
     ) -> Result<GeneratedReport> {
         if self.api_key.is_empty() {
             return Err(AppError::Analysis("OpenAI API Key 未配置".to_string()));
@@ -319,9 +318,6 @@ impl Analyzer for CloudAnalyzer {
                 );
                 if !gitlab.local_section.is_empty() {
                     base.push_str(&format!("\n\n{}", gitlab.local_section));
-                }
-                if !plane_markdown.is_empty() {
-                    base.push_str(&format!("\n\n{plane_markdown}"));
                 }
                 base.push_str(&format!("\n\n---\n*{reason}*"));
                 (base, false, Some(reason))

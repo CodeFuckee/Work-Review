@@ -9,6 +9,7 @@
     api_key: string | null;
     workspace_slug: string | null;
     project_filter: string[] | null;
+    allow_insecure_http: boolean;
   }
 
   interface PlanePreviewItem {
@@ -40,6 +41,7 @@
         api_key: null,
         workspace_slug: null,
         project_filter: null,
+        allow_insecure_http: false,
       };
     }
     return config.plane;
@@ -84,6 +86,11 @@
     handleChange();
   }
 
+  function onAllowInsecureToggle() {
+    plane().allow_insecure_http = !plane().allow_insecure_http;
+    handleChange();
+  }
+
   function hasCredentials(): boolean {
     const current = plane();
     return Boolean(
@@ -104,6 +111,7 @@
         url: current.url ?? '',
         apiKey: current.api_key ?? '',
         workspaceSlug: current.workspace_slug ?? '',
+        allowInsecureHttp: current.allow_insecure_http === true,
       });
       if (result.ok) {
         testResult = {
@@ -145,6 +153,7 @@
         apiKey: current.api_key ?? '',
         workspaceSlug: current.workspace_slug ?? '',
         limit: 20,
+        allowInsecureHttp: current.allow_insecure_http === true,
       });
       if (!result.ok) {
         previewError = result.message ?? t('settingsPlane.previewFailed');
@@ -195,6 +204,7 @@
           class="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
         />
         <span class="settings-muted">{t('settingsPlane.urlHint')}</span>
+        <span class="settings-muted">{t('settingsPlane.schemeHint')}</span>
       </label>
     </div>
 
@@ -233,6 +243,25 @@
         />
         <span class="settings-muted">{t('settingsPlane.workspaceSlugHint')}</span>
       </label>
+    </div>
+
+    <div class="settings-block">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="settings-text">{t('settingsPlane.allowInsecureLabel')}</div>
+          <div class="settings-muted">{t('settingsPlane.allowInsecureHint')}</div>
+        </div>
+        <button
+          type="button"
+          on:click={onAllowInsecureToggle}
+          class="switch-track {plane().allow_insecure_http ? 'bg-amber-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
+          role="switch"
+          aria-label={t('settingsPlane.allowInsecureLabel')}
+          aria-checked={plane().allow_insecure_http}
+        >
+          <span class="switch-thumb {plane().allow_insecure_http ? 'translate-x-5' : 'translate-x-0'}"></span>
+        </button>
+      </div>
     </div>
 
     <div class="settings-block">
@@ -288,6 +317,8 @@
           {/if}
         </button>
       </div>
+
+      <p class="settings-muted mt-2">{t('settingsPlane.previewLimitHint')}</p>
 
       {#if previewError}
         <p class="mt-3 break-all rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">

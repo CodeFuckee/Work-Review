@@ -535,7 +535,7 @@ export default {
     },
     settingsPlane: {
       title: 'تكامل Plane',
-      description: 'الاتصال بخادم Plane المستضاف ذاتيًا (plane.so) لاختبار الاتصال ومعاينة عناصر العمل ومزامنتها مع الخط الزمني والتقرير اليومي.',
+      description: 'الاتصال بخادم Plane المستضاف ذاتيًا (plane.so) لاختبار الاتصال ومعاينة عناصر العمل ومزامنتها مع الخط الزمني.',
       enabledLabel: 'تفعيل تكامل Plane',
       enabledHint: 'بعد التفعيل يمكنك اختبار الاتصال ومعاينة عناصر العمل أدناه.',
       urlLabel: 'عنوان الخادم',
@@ -547,7 +547,7 @@ export default {
       workspaceSlugLabel: 'مُعرّف مساحة العمل',
       workspaceSlugHint: 'المعرّف في رابط مساحة العمل، مثل my-team في https://plane.example.com/my-team/.',
       filterLabel: 'تصفية المشاريع (قائمة السماح)',
-      filterHint: 'اسم مشروع واحد لكل سطر. فارغ = كل المشاريع؛ مطابقة تامة أو بالبادئة دون حساسية لحالة الأحرف (مثل "Alpha" تطابق "Alpha Web").',
+      filterHint: 'اسم مشروع واحد لكل سطر. فارغ = كل المشاريع؛ مطابقة تامة فقط دون حساسية لحالة الأحرف.',
       testConnection: 'اختبار الاتصال',
       testing: 'جارٍ الاختبار…',
       testFailed: 'فشل الاتصال',
@@ -555,6 +555,10 @@ export default {
       previewing: 'جارٍ الجلب…',
       previewEmpty: 'لا توجد عناصر عمل',
       previewFailed: 'فشل جلب المعاينة',
+      allowInsecureLabel: 'السماح ببروتوكول غير آمن (HTTP)',
+      allowInsecureHint: 'عند التفعيل، يُسمح بعناوين http://. سيُرسل مفتاح API بشكل غير مشفر — للشبكات الداخلية الموثوقة فقط.',
+      schemeHint: 'يُسمح فقط بعناوين HTTPS افتراضيًا؛ فعّل "السماح ببروتوكول غير آمن" لاستخدام HTTP.',
+      previewLimitHint: 'تغطي المعاينة والمزامنة أول 100 مشروع فقط، مع آخر 100 عنصر عمل لكل مشروع.',
     },
     settingsGeneral: {
       title: 'عام',

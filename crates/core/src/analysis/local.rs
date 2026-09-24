@@ -1,6 +1,6 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_local_order, format_section_heading,
-    place_gitlab_before_hourly, place_plane_before_hourly,
+    place_gitlab_before_hourly,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -375,7 +375,6 @@ impl Analyzer for LocalAnalyzer {
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
         gitlab: &crate::gitlab::GitlabReportSupplement,
-        plane_markdown: &str,
     ) -> Result<GeneratedReport> {
         log::info!("生成本地日报（尝试调用 Ollama）");
 
@@ -389,11 +388,8 @@ impl Analyzer for LocalAnalyzer {
         let mut fallback_reason = None;
 
         let (stats_sections, mut section_count) = assemble_with_section_count(
-            &place_plane_before_hourly(
-                place_gitlab_before_hourly(
-                    apply_preferences(default_local_order(), &self.pinned_blocks),
-                    &self.pinned_blocks,
-                ),
+            &place_gitlab_before_hourly(
+                apply_preferences(default_local_order(), &self.pinned_blocks),
                 &self.pinned_blocks,
             ),
             stats,
@@ -401,7 +397,6 @@ impl Analyzer for LocalAnalyzer {
             &category_name_overrides,
             &semantic_name_overrides,
             &gitlab.local_section,
-            plane_markdown,
         );
         report.push_str(&stats_sections);
 

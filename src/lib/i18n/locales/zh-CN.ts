@@ -644,7 +644,7 @@ export default {
     },
     settingsPlane: {
       title: 'Plane 集成',
-      description: '连接私有化部署的 Plane（plane.so），测试连通性、预览工作项，并同步到时间线与日报。',
+      description: '连接私有化部署的 Plane（plane.so），测试连通性、预览工作项，并同步到时间线。',
       enabledLabel: '启用 Plane 集成',
       enabledHint: '开启后可在下方测试连接并预览工作项。',
       urlLabel: '实例地址',
@@ -656,7 +656,7 @@ export default {
       workspaceSlugLabel: '工作区 Slug',
       workspaceSlugHint: '工作区 URL 中的标识，如 https://plane.example.com/my-team/ 中的 my-team。',
       filterLabel: '项目过滤（允许列表）',
-      filterHint: '每行一个项目名。留空 = 全部项目；忽略大小写，支持精确或前缀匹配（如 "Alpha" 命中 "Alpha Web"）。',
+      filterHint: '每行一个项目名。留空 = 全部项目；忽略大小写，仅精确匹配。',
       testConnection: '测试连接',
       testing: '测试中…',
       testFailed: '连接失败',
@@ -664,6 +664,10 @@ export default {
       previewing: '拉取中…',
       previewEmpty: '暂无工作项',
       previewFailed: '预览获取失败',
+      allowInsecureLabel: '允许不安全协议（HTTP）',
+      allowInsecureHint: '勾选后允许 http:// 实例地址。API Key 会明文出网，仅限可信内网环境。',
+      schemeHint: '默认仅允许 HTTPS 地址；如需 HTTP 请勾选「允许不安全协议」。',
+      previewLimitHint: '预览与同步仅覆盖前 100 个项目，每个项目仅取最近 100 条工作项。',
     },
     settingsGeneral: {
       title: '基本设置',

@@ -528,7 +528,7 @@ export default {
     },
     settingsPlane: {
       title: 'Plane 整合',
-      description: '連線私有化部署的 Plane（plane.so），測試連線、預覽工作項，並同步到時間線與日報。',
+      description: '連線私有化部署的 Plane（plane.so），測試連線、預覽工作項，並同步到時間線。',
       enabledLabel: '啟用 Plane 整合',
       enabledHint: '開啟後可在下方測試連線並預覽工作項。',
       urlLabel: '實例位址',
@@ -540,7 +540,7 @@ export default {
       workspaceSlugLabel: '工作區 Slug',
       workspaceSlugHint: '工作區 URL 中的標識，如 https://plane.example.com/my-team/ 中的 my-team。',
       filterLabel: '專案過濾（允許清單）',
-      filterHint: '每行一個專案名稱。留空 = 全部專案；忽略大小寫，支援精確或前綴比對（如 "Alpha" 命中 "Alpha Web"）。',
+      filterHint: '每行一個專案名稱。留空 = 全部專案；忽略大小寫，僅精確比對。',
       testConnection: '測試連線',
       testing: '測試中…',
       testFailed: '連線失敗',
@@ -548,6 +548,10 @@ export default {
       previewing: '擷取中…',
       previewEmpty: '暫無工作項',
       previewFailed: '預覽擷取失敗',
+      allowInsecureLabel: '允許不安全協定（HTTP）',
+      allowInsecureHint: '勾選後允許 http:// 實例地址。API Key 會明文出網，僅限可信內網環境。',
+      schemeHint: '預設僅允許 HTTPS 位址；如需 HTTP 請勾選「允許不安全協定」。',
+      previewLimitHint: '預覽與同步僅覆蓋前 100 個專案，每個專案僅取最近 100 筆工作項。',
     },
     settingsGeneral: {
       title: '基本設定',

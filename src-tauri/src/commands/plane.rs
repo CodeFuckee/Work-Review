@@ -27,7 +27,7 @@ const PREVIEW_TIMEOUT_SECS: u64 = 20;
 /// 项目列表单页条数（只取第一页，避免多页翻页失控）
 const PROJECT_PAGE_SIZE: u32 = 100;
 /// 预览聚合的项目数上限（取项目列表前 N 个）
-const MAX_PREVIEW_PROJECTS: usize = 8;
+const MAX_PREVIEW_PROJECTS: usize = 100;
 /// 每个项目最多拉取的工作项数（按 updated_at 倒序取前 N；预览口径）
 const PER_PROJECT_WORK_ITEM_LIMIT: u32 = 10;
 /// 同步时每个项目拉取的工作项数（按 updated_at 倒序取前 N；100 条足以覆盖
@@ -335,9 +335,8 @@ fn updated_at_sort_key(item: &PlanePreviewItem) -> i64 {
 }
 
 /// 项目允许列表匹配（PlaneConfig.project_filter）：空列表 = 全部项目；
-/// 忽略大小写，条目与项目名精确相等或项目名以条目开头（前缀）均命中——
-/// Plane 项目名常带子团队/子产品后缀（如 "Alpha Web"），前缀可整组纳管。
-/// 空白条目直接忽略，杜绝 starts_with("") 式恒真命中；项目名为空不命中。
+/// 忽略大小写的**精确相等**匹配（用户裁决 2026-09-24：不做前缀命中，
+/// 避免「API」误纳「API-docs」）。空白条目直接忽略；项目名为空不命中。
 fn project_matches_allowlist(project_name: &str, allowlist: &[String]) -> bool {
     if allowlist.is_empty() {
         return true;
@@ -350,7 +349,27 @@ fn project_matches_allowlist(project_name: &str, allowlist: &[String]) -> bool {
         .iter()
         .map(|entry| entry.trim().to_lowercase())
         .filter(|entry| !entry.is_empty())
-        .any(|entry| name == entry || name.starts_with(&entry))
+        .any(|entry| name == entry)
+}
+
+/// 实例地址协议门禁（用户裁决 2026-09-24）：默认仅允许 HTTPS；用户在设置页
+/// 显式勾选「允许不安全协议」后才放行 http——API Key 随请求头明文出网，
+/// 仅限可信内网环境。地址缺协议（未写 https:// 或 http:// 前缀）一并拒绝。
+fn validate_endpoint_url(url: &str, allow_insecure_http: bool) -> Result<(), String> {
+    let trimmed = url.trim().to_lowercase();
+    let has_scheme = trimmed.starts_with("https://") || trimmed.starts_with("http://");
+    let scheme_ok = has_scheme && (allow_insecure_http || trimmed.starts_with("https://"));
+    if scheme_ok {
+        Ok(())
+    } else if !has_scheme {
+        Err(String::from(
+            "实例地址需以 https:// 开头（勾选「允许不安全协议」后可用 http://）",
+        ))
+    } else {
+        Err(String::from(
+            "当前仅允许 HTTPS 地址；如需使用 http（API Key 明文出网，仅限可信内网），请先勾选「允许不安全协议」并保存",
+        ))
+    }
 }
 
 /// 目标本地日期的 [当日 00:00, 次日 00:00) UTC 毫秒窗口（与仓库其他日期边界
@@ -416,7 +435,15 @@ pub async fn plane_test_connection(
     url: String,
     api_key: String,
     workspace_slug: String,
+    allow_insecure_http: bool,
 ) -> Result<PlaneConnectionTestResult, String> {
+    if let Err(message) = validate_endpoint_url(&url, allow_insecure_http) {
+        return Ok(PlaneConnectionTestResult {
+            ok: false,
+            workspace_name: String::new(),
+            message: Some(message),
+        });
+    }
     let client = PlaneClient::new(&url, &workspace_slug, &api_key);
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(TEST_CONNECTION_TIMEOUT_SECS),
@@ -451,7 +478,15 @@ pub async fn plane_fetch_preview(
     api_key: String,
     workspace_slug: String,
     limit: Option<u32>,
+    allow_insecure_http: bool,
 ) -> Result<PlanePreviewResult, String> {
+    if let Err(message) = validate_endpoint_url(&url, allow_insecure_http) {
+        return Ok(PlanePreviewResult {
+            ok: false,
+            items: Vec::new(),
+            message: Some(message),
+        });
+    }
     let limit = limit.unwrap_or(DEFAULT_PREVIEW_LIMIT).clamp(1, 50) as usize;
     let client = PlaneClient::new(&url, &workspace_slug, &api_key);
     let outcome = tokio::time::timeout(
@@ -514,6 +549,16 @@ pub async fn plane_sync_work_items_for_date(
                 ok: true,
                 synced: 0,
                 message: None,
+            });
+        }
+        if let Err(message) = validate_endpoint_url(
+            plane.url.as_deref().unwrap_or(""),
+            plane.allow_insecure_http,
+        ) {
+            return Ok(PlaneSyncResult {
+                ok: false,
+                synced: 0,
+                message: Some(message),
             });
         }
         (
@@ -713,18 +758,30 @@ mod tests {
     }
 
     #[test]
-    fn 项目允许列表应忽略大小写并支持精确与前缀匹配() {
+    fn 实例地址协议门禁应按开关放行https与勾选后的http() {
+        // 默认仅 HTTPS
+        assert!(validate_endpoint_url("https://plane.example.com", false).is_ok());
+        assert!(validate_endpoint_url("http://plane.example.com", false).is_err());
+        // 勾选「允许不安全协议」后 http 放行，https 依旧放行
+        assert!(validate_endpoint_url("http://192.168.1.10:8080", true).is_ok());
+        assert!(validate_endpoint_url("https://plane.example.com", true).is_ok());
+        // 缺协议一并拒绝（两种开关状态都拒绝）
+        assert!(validate_endpoint_url("plane.example.com", false).is_err());
+        assert!(validate_endpoint_url("plane.example.com", true).is_err());
+    }
+
+    #[test]
+    fn 项目允许列表应忽略大小写并仅支持精确匹配() {
         // 空列表 = 全部项目
         assert!(project_matches_allowlist("任意项目", &[]));
         // 精确匹配（忽略大小写与首尾空白）
         let exact = vec!["Alpha".to_string()];
         assert!(project_matches_allowlist("alpha", &exact));
         assert!(project_matches_allowlist("  ALPHA  ", &exact));
-        // 前缀匹配：子团队/子产品后缀整组纳管
+        // 仅精确匹配（用户裁决：不做前缀命中，避免「API」误纳「API-docs」）
         let prefix = vec!["alpha".to_string()];
-        assert!(project_matches_allowlist("Alpha Web", &prefix));
-        assert!(project_matches_allowlist("ALPHA 管理后台", &prefix));
-        // 非前缀的中缀/后缀不命中
+        assert!(!project_matches_allowlist("Alpha Web", &prefix));
+        assert!(!project_matches_allowlist("ALPHA 管理后台", &prefix));
         assert!(!project_matches_allowlist("Web Alpha", &prefix));
         assert!(!project_matches_allowlist("Beta", &prefix));
         // 空白条目被忽略，不会造成 starts_with("") 恒真命中
@@ -792,12 +849,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 连接测试未勾选允许不安全协议时应拒绝http地址且不发起请求() {
+        let result = plane_test_connection(
+            "http://127.0.0.1:1".to_string(),
+            "stub-key".to_string(),
+            "stub-workspace".to_string(),
+            false,
+        )
+        .await
+        .expect("命令不应直接失败");
+        assert!(!result.ok, "http 地址在未勾选时应判定为失败");
+        assert!(
+            result.message.unwrap_or_default().contains("HTTPS"),
+            "失败原因应指向协议门禁"
+        );
+    }
+
+    #[tokio::test]
     async fn 连接测试指向不可达地址应返回结构化失败而不是panic() {
         // 127.0.0.1:1 上无服务，连接立即失败；命令必须返回 ok=false + message
         let result = plane_test_connection(
             "http://127.0.0.1:1".to_string(),
             "stub-key".to_string(),
             "stub-workspace".to_string(),
+            true,
         )
         .await
         .expect("命令不应直接失败");
@@ -815,6 +890,7 @@ mod tests {
             "stub-key".to_string(),
             "stub-workspace".to_string(),
             Some(20),
+            true,
         )
         .await
         .expect("命令不应直接失败");

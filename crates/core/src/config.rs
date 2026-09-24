@@ -784,11 +784,15 @@ pub struct PlaneConfig {
     /// 工作区 slug（工作区 URL 中的标识，如 https://plane.example.com/my-team/ 中的 my-team）
     #[serde(default)]
     pub workspace_slug: Option<String>,
-    /// 项目名允许列表（一行一个；空 = 全部项目）。匹配忽略大小写，条目精确相等
-    /// 或项目名以条目开头（前缀）均命中——Plane 项目名常带子团队/子产品后缀，
-    /// 前缀可整组纳管（如 "Alpha" 命中 "Alpha Web"）；匹配语义见同步命令实现。
+    /// 项目名允许列表（一行一个；空 = 全部项目）。匹配忽略大小写、**仅精确
+    /// 相等**（用户裁决：不做前缀命中，避免「API」误纳「API-docs」）；
+    /// 匹配语义见同步命令实现。
     #[serde(default)]
     pub project_filter: Vec<String>,
+    /// 允许不安全协议（HTTP）。默认 false：实例地址必须以 https:// 开头——
+    /// API Key 随请求头明文出网，仅限可信内网环境在设置页显式勾选放行
+    #[serde(default)]
+    pub allow_insecure_http: bool,
 }
 
 pub const DEFAULT_LOCALHOST_API_PORT: u16 = 47_831;
