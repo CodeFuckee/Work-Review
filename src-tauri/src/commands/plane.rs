@@ -73,6 +73,9 @@ enum PlaneError {
     Api(u16, String),
     /// JSON 解析失败
     Json(serde_json::Error),
+    /// 2xx 但响应体不是 JSON（典型：命中了 Web 前端的 SPA 兜底页——
+    /// 实例地址填成了 Web 界面子路径，而 API 在根路径或另一前缀下）
+    NonJson(u16, String),
 }
 
 /// 错误串剔除 api_key：密钥只应出现在请求头，正常不会进入错误消息，
@@ -107,6 +110,12 @@ impl PlaneError {
                 format!(
                     "解析 Plane 响应失败: {}",
                     redact_api_key(&e.to_string(), api_key)
+                )
+            }
+            PlaneError::NonJson(status, snippet) => {
+                format!(
+                    "实例返回了非 JSON 内容（HTTP {status}）——通常是把 Web 界面地址填进了实例地址（Web 子路径不是 API 根路径），请去掉界面路径前缀后重试: {snippet}",
+                    snippet = redact_api_key(snippet, api_key)
                 )
             }
         }
@@ -172,35 +181,28 @@ impl PlaneClient {
                 String::from_utf8_lossy(&bytes).into_owned(),
             ));
         }
-        serde_json::from_slice(&bytes).map_err(PlaneError::Json)
+        match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                let head: String = String::from_utf8_lossy(&bytes).chars().take(120).collect();
+                let looks_like_html = head.trim_start().starts_with('<');
+                if looks_like_html {
+                    Err(PlaneError::NonJson(status.as_u16(), head))
+                } else {
+                    Err(PlaneError::Json(error))
+                }
+            }
+        }
     }
 
-    /// 连接测试：优先 `GET /api/v1/workspaces/{slug}/`（旧版实例的端点，可取回
-    /// 工作区名）；现行版本已移除该端点，404 时回退用文档列出的项目列表端点
-    /// `GET /api/v1/workspaces/{slug}/projects/?per_page=1` 验证（工作区名回退
-    /// 为 slug）。两种路径下 401 → Key 无效、最终 404 → 地址或 slug 不正确。
+    /// 连接测试：`GET /api/v1/workspaces/{slug}/projects/?per_page=1`
+    /// （文档明确列出的端点；实测 2xx JSON 即连通，Key 对该工作区有效）。
+    /// 不再优先打旧版工作区详情端点——现行 API 已移除，且部分实例该路由
+    /// 仅接受会话认证（X-API-Key 会得到 401），易被误判为 Key 无效。
+    /// 工作区名回退为 slug（可后续从项目列表的 workspace 字段富化）。
     async fn test_connection(&self) -> Result<String, PlaneError> {
-        let workspace_url = self.api_url("/");
-        match self.get_json(&workspace_url).await {
-            Ok(value) => {
-                let name = value
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                Ok(if name.is_empty() {
-                    self.workspace_slug.clone()
-                } else {
-                    name
-                })
-            }
-            Err(PlaneError::Api(404, _)) => {
-                self.get_json(&self.projects_url(1)).await?;
-                Ok(self.workspace_slug.clone())
-            }
-            Err(error) => Err(error),
-        }
+        self.get_json(&self.projects_url(1)).await?;
+        Ok(self.workspace_slug.clone())
     }
 
     /// 列项目（第一页）：返回 (project_id, 显示名)；名称为空回退 identifier。

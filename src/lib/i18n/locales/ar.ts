@@ -539,7 +539,7 @@ export default {
       enabledLabel: 'تفعيل تكامل Plane',
       enabledHint: 'بعد التفعيل يمكنك اختبار الاتصال ومعاينة عناصر العمل أدناه.',
       urlLabel: 'عنوان الخادم',
-      urlHint: 'عنوان النسخة المحلية، مثل https://plane.example.com (بدون لاحقة /api/v1)',
+      urlHint: 'عنوان النسخة المحلية (جذر API، بدون /api/v1). إذا كانت واجهة الويب في مسار فرعي (مثل /yjk/)، فاملأ العنوان الجذر فقط.',
       apiKeyLabel: 'مفتاح API',
       apiKeyHint: 'رمز وصول شخصي من Plane (يُنشأ من Profile Settings ← Personal Access Tokens). يُخزَّن كنص عادي في الإعدادات المحلية.',
       showKey: 'إظهار',

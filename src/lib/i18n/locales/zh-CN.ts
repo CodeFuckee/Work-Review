@@ -648,7 +648,7 @@ export default {
       enabledLabel: '启用 Plane 集成',
       enabledHint: '开启后可在下方测试连接并预览工作项。',
       urlLabel: '实例地址',
-      urlHint: '私有化部署地址，如 https://plane.example.com（无需 /api/v1 后缀）',
+      urlHint: '私有化部署地址，填 API 根地址（无需 /api/v1 后缀）。注意：若 Web 界面部署在子路径（如 /yjk/），实例地址仍填根地址，不要带界面路径。',
       apiKeyLabel: 'API Key',
       apiKeyHint: 'Plane 个人访问令牌（在 Profile Settings → Personal Access Tokens 生成）。明文保存在本机配置中。',
       showKey: '显示',

@@ -542,7 +542,7 @@ export default {
       enabledLabel: 'Enable Plane integration',
       enabledHint: 'Turn on to test the connection and preview work items below.',
       urlLabel: 'Instance URL',
-      urlHint: 'Self-hosted Plane URL, e.g. https://plane.example.com (no /api/v1 suffix needed)',
+      urlHint: 'Self-hosted Plane base URL, e.g. https://plane.example.com (no /api/v1 suffix). Use the API root, not a web-UI sub-path.',
       apiKeyLabel: 'API Key',
       apiKeyHint: 'Plane personal access token (created under Profile Settings → Personal Access Tokens). Stored in plain text in the local config.',
       showKey: 'Show',

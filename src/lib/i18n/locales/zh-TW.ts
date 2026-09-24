@@ -532,7 +532,7 @@ export default {
       enabledLabel: '啟用 Plane 整合',
       enabledHint: '開啟後可在下方測試連線並預覽工作項。',
       urlLabel: '實例位址',
-      urlHint: '私有化部署位址，如 https://plane.example.com（無需 /api/v1 後綴）',
+      urlHint: '私有化部署位址，填 API 根位址（無需 /api/v1 後綴）。注意：若 Web 介面部署在子路徑（如 /yjk/），實例位址仍填根位址，不要帶介面路徑。',
       apiKeyLabel: 'API Key',
       apiKeyHint: 'Plane 個人存取權杖（於 Profile Settings → Personal Access Tokens 產生）。明文保存在本機設定中。',
       showKey: '顯示',
