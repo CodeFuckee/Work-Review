@@ -2083,10 +2083,10 @@
       {/if}
     </section>
 
-    <!-- GitLab 提交统计：按项目聚合提交次数与代码行数变更（配置了 GitLab 才显示），
+    <!-- GitLab 提交统计：按项目聚合提交次数与代码行数变更（配置了 GitLab 才显示） -->
     <!-- 文件活动：本地文件监控事件列表（配置了文件监控才显示） -->
     {#if fileMonitorConfigured}
-      <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle">
         <div class="mb-3 flex items-baseline justify-between gap-3">
           <h3 class="page-section-title !mb-0">{t('overview.fileEventsTitle')}</h3>
           <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.fileEventsTotal', { count: fileEventsTotal })}</span>
@@ -2125,9 +2125,8 @@
         {/if}
       </section>
     {/if}
-         行布局复用 app-usage-chart 同款网格（名称+次数下标 | 进度条 | 行数变更） -->
     {#if gitlabConfigured}
-      <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle">
         <div class="mb-3 flex items-baseline justify-between gap-3">
           <h3 class="page-section-title !mb-0">{t('overview.gitlabTitle')}</h3>
           <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.gitlabByProject')}</span>

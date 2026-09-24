@@ -15,24 +15,35 @@ export interface GitlabCommitRow {
   author_email: string;
 }
 
+export interface FileEventRow {
+  path: string;
+  event_type: string;
+  size: number | null;
+  occurred_at: number;
+  date: string;
+}
+
 export type MergedTimelineRow<TActivity extends { timestamp: number }> =
   | { kind: 'activity'; key: number; activity: TActivity }
-  | { kind: 'commit'; key: number; commit: GitlabCommitRow };
+  | { kind: 'commit'; key: number; commit: GitlabCommitRow }
+  | { kind: 'fileEvent'; key: number; event: FileEventRow };
 
 export function mergeTimelineRows<TActivity extends { timestamp: number }>(
   activities: readonly TActivity[],
   commits: readonly GitlabCommitRow[],
+  fileEvents: readonly FileEventRow[] = [],
 ): MergedTimelineRow<TActivity>[] {
   const rows: MergedTimelineRow<TActivity>[] = [
     ...activities.map((activity) => ({ kind: 'activity' as const, key: activity.timestamp, activity })),
     ...commits.map((commit) => ({ kind: 'commit' as const, key: commit.committed_at, commit })),
+    ...fileEvents.map((event) => ({ kind: 'fileEvent' as const, key: event.occurred_at, event })),
   ];
   // 时间线页为「最新在最上」（prepareTimelineActivities 的既有约定），合并后
-  // 必须延续降序；同 key 时提交行在前（提交结束才轮到截图活动）。
+  // 必须延续降序；同 key 时提交行在前、活动行次之、文件事件行最后。
+  const kindOrder = (kind: MergedTimelineRow<TActivity>['kind']): number =>
+    kind === 'commit' ? -1 : kind === 'fileEvent' ? 1 : 0;
   rows.sort(
-    (left, right) =>
-      right.key - left.key ||
-      (left.kind === 'commit' ? -1 : 0) - (right.kind === 'commit' ? -1 : 0),
+    (left, right) => right.key - left.key || kindOrder(left.kind) - kindOrder(right.kind),
   );
   return rows;
 }

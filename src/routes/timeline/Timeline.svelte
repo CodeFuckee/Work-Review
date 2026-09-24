@@ -38,6 +38,7 @@
   import { formatBrowserUrlForDisplay } from '../../lib/utils/browserUrl.ts';
   import {
     mergeTimelineRows,
+    type FileEventRow,
     type GitlabCommitRow,
   } from './timelineGitlab.ts';
   import { getViewportPopoverPlacement } from '../../lib/utils/popoverPosition.ts';
@@ -121,8 +122,35 @@
 
   let activities: TimelineActivity[] = [];
   let gitlabCommits: GitlabCommitRow[] = [];
+  let fileEvents: FileEventRow[] = [];
   let gitlabSyncStartedDates = new Set<string>();
-  $: timelineRows = mergeTimelineRows(activities, gitlabCommits);
+  $: timelineRows = mergeTimelineRows(activities, gitlabCommits, fileEvents);
+
+  // 文件事件类型 → 徽标文案（复用概览页的 overview.fileEvent* 键）
+  function fileEventBadgeKey(eventType: string): string {
+    switch (eventType) {
+      case 'created':
+        return 'overview.fileEventCreated';
+      case 'deleted':
+        return 'overview.fileEventDeleted';
+      case 'renamed':
+        return 'overview.fileEventRenamed';
+      default:
+        return 'overview.fileEventModified';
+    }
+  }
+
+  function fileEventName(path: string): string {
+    const normalized = path.split('\\').join('/');
+    const fileName = normalized.split('/').pop() ?? path;
+    return fileName || path;
+  }
+
+  function fileEventSizeLabel(size: number): string {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
   let hourlySummaries: HourlySummaryRecord[] = [];
   let loading = true;
   let error: string | null = null;
@@ -820,7 +848,7 @@
     clearImageCaches();
 
     try {
-      const [activitiesData, summariesData, commitsData] = await Promise.all([
+      const [activitiesData, summariesData, commitsData, fileEventsData] = await Promise.all([
         timelineGateway.getPage({
           date: requestDate,
           limit: PAGE_SIZE,
@@ -828,6 +856,14 @@
         }),
         timelineGateway.getHourlySummaries(requestDate),
         invoke<GitlabCommitRow[]>('get_gitlab_commits_for_date', { date: requestDate }),
+        // 文件活动（未启用监控时后端返回空列表；失败不拖垮时间线首屏）
+        invoke<{ total: number; events: FileEventRow[] }>('get_file_monitor_stats', {
+          dateFrom: requestDate,
+          dateTo: requestDate,
+          limit: 50,
+        })
+          .then((stats) => stats.events)
+          .catch(() => [] as FileEventRow[]),
       ]);
 
       if (requestId !== loadTimelineRequestId || requestDate !== selectedDate) return;
@@ -838,6 +874,7 @@
 
       activities = preparedActivities;
       gitlabCommits = commitsData;
+      fileEvents = fileEventsData;
 
       hourlySummaries = summariesData;
       offset = activities.length;
@@ -1618,6 +1655,27 @@
                 <p class="timeline-entry-title timeline-entry-title-compact">{row.commit.title}</p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
                   <span class="timeline-commit-stats">{row.commit.additions !== null && row.commit.deletions !== null ? `+${row.commit.additions}/-${row.commit.deletions}` : ''}</span>
+                </div>
+              </div>
+            </div>
+          {:else if row.kind === 'fileEvent'}
+            <div class="timeline-entry timeline-entry-commit">
+              <div class="timeline-entry-anchor">
+                <div class="timeline-entry-time">{new Date(row.event.occurred_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
+              </div>
+              <div class="timeline-entry-card timeline-entry-card-commit">
+                <div class="timeline-entry-app timeline-entry-app-compact">
+                  <span class="timeline-commit-badge" title={t('overview.fileEventsTitle')}>📄</span>
+                  <div class="timeline-entry-heading">
+                    <span class="timeline-entry-app-name timeline-entry-app-name-commit" title={row.event.path}>{fileEventName(row.event.path)}</span>
+                  </div>
+                </div>
+                <p class="timeline-entry-title timeline-entry-title-compact">{t(fileEventBadgeKey(row.event.event_type))}</p>
+                <div class="timeline-entry-tail timeline-entry-tail-compact">
+                  {#if row.event.size !== null}
+                    <span class="timeline-commit-stats">{fileEventSizeLabel(row.event.size)}</span>
+                  {/if}
                 </div>
               </div>
             </div>

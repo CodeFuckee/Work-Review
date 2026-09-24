@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   formatCommitStatsSuffix,
   mergeTimelineRows,
+  type FileEventRow,
   type GitlabCommitRow,
 } from './timelineGitlab.ts';
 
@@ -70,4 +71,34 @@ test('统计后缀应有数值才输出', () => {
   assert.equal(formatCommitStatsSuffix(12, 3), ' (+12/-3)');
   assert.equal(formatCommitStatsSuffix(0, 0), ' (+0/-0)');
   assert.equal(formatCommitStatsSuffix(null, null), '');
+});
+
+function fileEvent(occurredAt: number, path = 'src/app.ts'): FileEventRow {
+  return {
+    path,
+    event_type: 'modified',
+    size: 1024,
+    occurred_at: occurredAt,
+    date: '2026-09-17',
+  };
+}
+
+test('文件事件行应与活动/提交行按时间戳交错，同时间戳时排在提交与活动之后', () => {
+  const rows = mergeTimelineRows(
+    [activity(200)],
+    [commit('c', 200)],
+    [fileEvent(200), fileEvent(300, 'src/b.ts')],
+  );
+  assert.deepEqual(
+    rows.map((row) => `${row.kind}:${row.key}`),
+    ['fileEvent:300', 'commit:200', 'activity:200', 'fileEvent:200'],
+  );
+});
+
+test('不传文件事件时保持原有两源合并行为', () => {
+  const rows = mergeTimelineRows([activity(100)], [commit('c', 50)]);
+  assert.deepEqual(
+    rows.map((row) => row.kind),
+    ['activity', 'commit'],
+  );
 });
