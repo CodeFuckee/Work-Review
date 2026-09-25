@@ -112,6 +112,7 @@
     session_end: number;
     plane_item_id: string;
     display_key: string;
+    project_name: string;
     name: string;
     score: number;
     evidence: string;
@@ -1832,7 +1833,8 @@
                   </div>
                   <p class="timeline-entry-title timeline-entry-title-featured" title={activity.window_title}>
                     {#if planeBadge}
-                      <span class="timeline-plane-badge" title={planeBadge.name}>{planeBadge.display_key}</span>
+                      <span class="timeline-plane-badge" title={planeBadge.name + ' · ' + planeBadge.project_name}>{planeBadge.display_key} {planeBadge.name}</span>
+                      <span class="timeline-commit-stats">· {planeBadge.project_name}</span>
                     {/if}
                     {timelineTitle}
                   </p>
@@ -1863,7 +1865,8 @@
                 </div>
                 <p class="timeline-entry-title timeline-entry-title-compact" title={activity.window_title}>
                   {#if planeBadge}
-                    <span class="timeline-plane-badge" title={planeBadge.name}>{planeBadge.display_key}</span>
+                    <span class="timeline-plane-badge" title={planeBadge.name + ' · ' + planeBadge.project_name}>{planeBadge.display_key} {planeBadge.name}</span>
+                    <span class="timeline-commit-stats">· {planeBadge.project_name}</span>
                   {/if}
                   {timelineTitle}
                 </p>

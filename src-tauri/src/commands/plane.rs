@@ -944,6 +944,7 @@ pub(crate) async fn compute_plane_attributions(
                                 key
                             }
                         },
+                        project_name: candidate.project_name.clone(),
                         name: candidate.name.clone(),
                         score: AI_FALLBACK_SCORE,
                         evidence: String::from("ai"),
@@ -1026,11 +1027,12 @@ pub(crate) fn plane_attribution_report_section(
                     .unwrap_or_else(|| "??".to_string())
             };
             format!(
-                "- {start}-{end} [{key}] {name}{open}{source}{close}",
+                "- {start}-{end} [{key}] {name} · {project}{open}{source}{close}",
                 start = format_time(a.session_start),
                 end = format_time(a.session_end),
                 key = a.display_key,
                 name = sanitize_single_line(&a.name),
+                project = sanitize_single_line(&a.project_name),
                 source = attribution_source_label(a.source, locale),
             )
         })
@@ -1314,6 +1316,7 @@ mod tests {
             session_end: 1_790_220_600,   // 2026-09-24 03:30 UTC
             plane_item_id: "wi-1".to_string(),
             display_key: "ABC-123".to_string(),
+            project_name: "示例项目".to_string(),
             name: "修复登录页\n崩溃".to_string(),
             score: 90,
             evidence: "identifier".to_string(),
@@ -1330,11 +1333,11 @@ mod tests {
         ];
         let zh = plane_attribution_report_section(&attributions, offset, AppLocale::ZhCn);
         assert!(zh.starts_with("## 工作项归因\n\n"));
-        assert!(zh.contains("- 10:30-11:30 [ABC-123] 修复登录页 崩溃（确定性）"));
+        assert!(zh.contains("- 10:30-11:30 [ABC-123] 修复登录页 崩溃 · 示例项目（确定性）"));
         assert!(zh.contains("（AI）"));
         assert_eq!(
             plane_attribution_report_section(&attributions, offset, AppLocale::ZhTw),
-            "## 工作項歸因\n\n- 10:30-11:30 [ABC-123] 修复登录页 崩溃（確定性）\n- 10:30-11:30 [ABC-123] 修复登录页 崩溃（AI）"
+            "## 工作項歸因\n\n- 10:30-11:30 [ABC-123] 修复登录页 崩溃 · 示例项目（確定性）\n- 10:30-11:30 [ABC-123] 修复登录页 崩溃 · 示例项目（AI）"
         );
         let en = plane_attribution_report_section(&attributions, offset, AppLocale::En);
         assert!(en.starts_with("## Work Item Attribution\n\n"));

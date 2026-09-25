@@ -78,6 +78,8 @@ pub struct PlaneAttribution {
     pub plane_item_id: String,
     /// 展示 key（如 ABC-123；无 identifier 的候选回退 UUID 前 8 位）
     pub display_key: String,
+    /// 工作项所属的 Plane 项目名
+    pub project_name: String,
     /// 工作项名称
     pub name: String,
     pub score: i32,
@@ -139,6 +141,7 @@ pub fn attribute_sessions(
             session_end: *end,
             plane_item_id: best.candidate.plane_item_id.clone(),
             display_key: attribution_display_key(best.candidate),
+            project_name: best.candidate.project_name.clone(),
             name: best.candidate.name.clone(),
             score: best.score,
             evidence: best.evidence.to_string(),
