@@ -225,7 +225,44 @@ pub(crate) async fn generate_report_inner(
     // 拉取该日报日期（默认今日）的私有化 GitLab 提交，作为日报补充内容。
     // 已配置即生成「GitLab 今日提交」独立小节（失败/无提交为占位说明），
     // 未配置为空补充；失败不阻塞日报生成。
-    let gitlab_supplement = fetch_gitlab_supplement(&config, &date, report_locale).await;
+    let mut gitlab_supplement = fetch_gitlab_supplement(&config, &date, report_locale).await;
+
+    // 「工作项归因」小节：Plane 工作项与当天活动/GitLab 提交的混合归因
+    // （确定性优先 + AI 兜底），按日随用随算、不建表不入库。追加进 GitLab
+    // 补充的 local_section 尾部——两者同属模板固定小节，共用 GITLAB_TODAY 块
+    // 容器渲染（前端隐藏 GitLab 块时会一并隐藏归因小节，属预期合并语义；
+    // GitLab 未配置时归因小节也会借用该块容器展示）。不为此扩分析器参数。
+    // 总预算 45 秒（候选 20 秒 + AI 兜底余量），超时/失败静默放弃本小节。
+    let plane_section = match tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        super::plane::compute_plane_attributions(&date, state),
+    )
+    .await
+    {
+        Ok(outcome) if outcome.ok => super::plane::plane_attribution_report_section(
+            &outcome.attributions,
+            work_review_core::gitlab::local_offset_now(),
+            report_locale,
+        ),
+        Ok(outcome) => {
+            if let Some(message) = outcome.message {
+                log::info!("Plane 工作项归因跳过（日报不含归因小节）: {message}");
+            }
+            String::new()
+        }
+        Err(_) => {
+            log::info!("Plane 工作项归因超时（45 秒），日报跳过归因小节");
+            String::new()
+        }
+    };
+    if !plane_section.is_empty() {
+        if gitlab_supplement.local_section.is_empty() {
+            gitlab_supplement.local_section = plane_section;
+        } else {
+            gitlab_supplement.local_section.push_str("\n\n");
+            gitlab_supplement.local_section.push_str(&plane_section);
+        }
+    }
 
     // 提交入库（时间线页与日报时间线共用数据源）；入库失败仅记日志不阻塞日报
     if !gitlab_supplement.entries.is_empty() {

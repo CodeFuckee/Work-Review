@@ -16,9 +16,13 @@
 use crate::AppState;
 use chrono::TimeZone as _;
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::State;
+use work_review_core::analysis::AppLocale;
 use work_review_core::database::PlaneWorkItemRow;
+use work_review_core::plane_match::{
+    PlaneAttribution, PlaneAttributionSource, PlaneCandidate, AI_FALLBACK_SCORE,
+};
 
 /// 连接测试超时（秒）
 const TEST_CONNECTION_TIMEOUT_SECS: u64 = 8;
@@ -35,6 +39,12 @@ const PER_PROJECT_WORK_ITEM_LIMIT: u32 = 10;
 const PER_PROJECT_SYNC_LIMIT: u32 = 100;
 /// 同步拉取总预算（秒）：1 次项目列表 + 逐项目工作项请求（同一期预览口径）
 const SYNC_TIMEOUT_SECS: u64 = 20;
+/// 归因候选拉取总预算（秒，与同步口径一致）
+const ATTRIBUTION_FETCH_TIMEOUT_SECS: u64 = 20;
+/// 归因候选内存缓存 TTL：时间线徽标与日报小节同日各算一次时避免重复全量拉取
+const CANDIDATE_CACHE_TTL_SECS: u64 = 600;
+/// 归因时每日活动读取上限（get_activities_in_range 内部钳到 10_000）
+const ATTRIBUTION_ACTIVITY_LIMIT: usize = 10_000;
 /// 预览条数默认值
 pub const DEFAULT_PREVIEW_LIMIT: u32 = 20;
 
@@ -54,6 +64,8 @@ pub struct PlanePreviewItem {
     pub project: String,
     pub state: String,
     pub updated_at: String,
+    /// 工作项在项目内的序号（「ABC-123」中的 123；缺失/非法时为 0）
+    pub sequence_id: i64,
 }
 
 /// 工作项预览拉取结果
@@ -205,22 +217,26 @@ impl PlaneClient {
         Ok(self.workspace_slug.clone())
     }
 
-    /// 列项目（第一页）：返回 (project_id, 显示名)；名称为空回退 identifier。
-    async fn list_projects(&self) -> Result<Vec<(String, String)>, PlaneError> {
+    /// 列项目（第一页）：返回 (project_id, 显示名, identifier)；名称为空回退
+    /// identifier。identifier 是工作项展示 key（`{identifier}-{sequence_id}`，
+    /// 如 ABC-123）的组成项，归因链路必须保留。
+    async fn list_projects(&self) -> Result<Vec<(String, String, String)>, PlaneError> {
         let projects_value = self.get_json(&self.projects_url(PROJECT_PAGE_SIZE)).await?;
         Ok(parse_results(&projects_value)
             .iter()
             .map(|project| {
-                (json_str(project, "id"), {
+                let identifier = json_str(project, "identifier");
+                let name = {
                     let name = json_str(project, "name");
                     if name.is_empty() {
-                        json_str(project, "identifier")
+                        identifier.clone()
                     } else {
                         name
                     }
-                })
+                };
+                (json_str(project, "id"), name, identifier)
             })
-            .filter(|(id, _)| !id.is_empty())
+            .filter(|(id, _, _)| !id.is_empty())
             .collect())
     }
 
@@ -228,11 +244,11 @@ impl PlaneClient {
     /// 单个项目失败仅跳过（log::warn，与 GitLab 的部分失败策略一致）。
     async fn fetch_work_items(
         &self,
-        selected: &[(String, String)],
+        selected: &[(String, String, String)],
         per_project_limit: u32,
     ) -> Result<Vec<PlanePreviewItem>, PlaneError> {
         let mut items: Vec<PlanePreviewItem> = Vec::new();
-        for (project_id, project_name) in selected {
+        for (project_id, project_name, _identifier) in selected {
             let url = self.api_url(&format!(
                 "/projects/{project_id}/work-items/?per_page={per_project_limit}&order_by=-updated_at&expand=state"
             ));
@@ -259,7 +275,7 @@ impl PlaneClient {
     /// （设置页可在未保存前先预览，过滤口径属于保存后的同步/日报链路）。
     async fn fetch_preview(&self, limit: usize) -> Result<Vec<PlanePreviewItem>, PlaneError> {
         let projects = self.list_projects().await?;
-        let selected: Vec<(String, String)> =
+        let selected: Vec<(String, String, String)> =
             projects.into_iter().take(MAX_PREVIEW_PROJECTS).collect();
         let mut items = self
             .fetch_work_items(&selected, PER_PROJECT_WORK_ITEM_LIMIT)
@@ -277,12 +293,48 @@ impl PlaneClient {
         project_filter: &[String],
     ) -> Result<Vec<PlanePreviewItem>, PlaneError> {
         let projects = self.list_projects().await?;
-        let selected: Vec<(String, String)> = projects
+        let selected: Vec<(String, String, String)> = projects
             .into_iter()
-            .filter(|(_, name)| project_matches_allowlist(name, project_filter))
+            .filter(|(_, name, _)| project_matches_allowlist(name, project_filter))
             .collect();
         self.fetch_work_items(&selected, PER_PROJECT_SYNC_LIMIT)
             .await
+    }
+
+    /// 归因候选拉取（时间线徽标 + 日报小节共用输入）：项目按允许列表过滤后，
+    /// 逐项目取第一页 100 条近期工作项（`order_by=-updated_at&expand=state`，
+    /// 候选只需覆盖「当天活跃的工作项」）。单个项目失败仅跳过（与同步一致）；
+    /// 总预算 20 秒由调用方 `fetch_candidates_cached` 施加。
+    async fn fetch_candidates(
+        &self,
+        project_filter: &[String],
+    ) -> Result<Vec<PlaneCandidate>, PlaneError> {
+        let projects = self.list_projects().await?;
+        let selected: Vec<(String, String, String)> = projects
+            .into_iter()
+            .filter(|(_, name, _)| project_matches_allowlist(name, project_filter))
+            .collect();
+        let mut candidates: Vec<PlaneCandidate> = Vec::new();
+        for (project_id, project_name, identifier) in &selected {
+            let url = self.api_url(&format!(
+                "/projects/{project_id}/work-items/?per_page={PER_PROJECT_SYNC_LIMIT}&order_by=-updated_at&expand=state"
+            ));
+            match self.get_json(&url).await {
+                Ok(value) => {
+                    for work_item in parse_results(&value) {
+                        candidates.push(parse_candidate(work_item, project_name, identifier));
+                    }
+                }
+                Err(error) => {
+                    // 部分失败不能静默：该项目候选无声丢失会直接劣化归因命中率
+                    log::warn!(
+                        "拉取 Plane 项目 {project_name} 工作项候选失败，已跳过: {}",
+                        error.message(&self.api_key)
+                    );
+                }
+            }
+        }
+        Ok(candidates)
     }
 }
 
@@ -306,6 +358,7 @@ fn json_str(value: &serde_json::Value, key: &str) -> String {
 /// 解析单个工作项：id / 名称 / 项目名 / 状态名 / updated_at（缺 updated_at 时
 /// 回退 created_at，文档示例两字段均为 ISO8601 字符串；`expand=state` 时
 /// state 为含 `name` 的对象，未展开时是 UUID——后者状态名留空）。
+/// `sequence_id` 是「ABC-123」中的数字序号，归因链路依赖它拼展示 key。
 fn parse_work_item(value: &serde_json::Value, project_name: &str) -> PlanePreviewItem {
     let updated_at = {
         let updated = json_str(value, "updated_at");
@@ -326,6 +379,55 @@ fn parse_work_item(value: &serde_json::Value, project_name: &str) -> PlanePrevie
             .unwrap_or("")
             .to_string(),
         updated_at,
+        sequence_id: value
+            .get("sequence_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+    }
+}
+
+/// 工作项 → 归因候选（附带项目 identifier 以拼 `{identifier}-{sequence_id}` key；
+/// updated_at 毫秒转 UTC unix 秒，与 PlaneWorkItemRow 口径一致；文本字段剥离
+/// 控制字符防止破坏日报 markdown 的单行结构）。
+fn parse_candidate(
+    value: &serde_json::Value,
+    project_name: &str,
+    project_identifier: &str,
+) -> PlaneCandidate {
+    let preview = parse_work_item(value, project_name);
+    PlaneCandidate {
+        plane_item_id: sanitize_single_line(&preview.id),
+        sequence_id: preview.sequence_id,
+        project_identifier: sanitize_single_line(project_identifier),
+        project_name: sanitize_single_line(project_name),
+        name: sanitize_single_line(&preview.name),
+        state_name: sanitize_single_line(&preview.state),
+        updated_at: updated_at_sort_key(&preview) / 1000,
+    }
+}
+
+/// 从实例地址提取 host（小写），供归因引擎识别「浏览器正开着 Plane 工作项页」。
+/// 解析失败返回 None（此时跳过 URL 锁定信号，不影响其余信号）。仅取 `//` 后、
+/// 路径分隔符前的 authority 并去掉端口；userinfo(`user@host`) 与 IPv6 字面量
+/// 属边缘部署形态，直接按普通 host 串尽力解析。
+fn endpoint_host(base_url: &str) -> Option<String> {
+    let trimmed = base_url.trim().to_lowercase();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(&trimmed);
+    let authority = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('@');
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or("");
+    let host = host.trim().to_lowercase();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
     }
 }
 
@@ -634,6 +736,308 @@ pub fn get_plane_work_items_for_date(
         .map_err(|e| e.to_string())
 }
 
+/// 指定日期的 Plane 工作项归因结果（时间线徽标与日报小节共用数据源）。
+/// 按日随用随算、不建表不入库；未配置 Plane 返回空成功（前端静默）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaneAttributionResult {
+    pub ok: bool,
+    pub attributions: Vec<PlaneAttribution>,
+    /// 本次是否用到了 AI 兜底（确定性信号已覆盖全部会话时为 false）
+    pub ai_used: bool,
+    pub message: Option<String>,
+}
+
+/// 归因候选的进程内缓存条目（抓取时刻 + 候选列表）
+type CandidateCacheEntry = (std::time::Instant, Vec<PlaneCandidate>);
+
+/// 归因候选的进程内缓存（10 分钟 TTL）：时间线与日报同日各调一次归因时，
+/// 避免重复「列项目 + 逐项目工作项」全量拉取。只缓存成功结果，超时/失败不缓存。
+fn candidate_cache() -> &'static Mutex<Option<CandidateCacheEntry>> {
+    static CACHE: OnceLock<Mutex<Option<CandidateCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// 归因计算完整产出（report 路径与命令路径共用）
+pub(crate) struct PlaneAttributionOutcome {
+    pub ok: bool,
+    pub attributions: Vec<PlaneAttribution>,
+    pub ai_used: bool,
+    pub message: Option<String>,
+}
+
+impl PlaneAttributionOutcome {
+    fn empty(ok: bool, message: Option<String>) -> Self {
+        Self {
+            ok,
+            attributions: Vec::new(),
+            ai_used: false,
+            message,
+        }
+    }
+}
+
+/// 带缓存地拉取归因候选（网络等待在锁外进行；错误转可展示消息）。
+async fn fetch_candidates_cached(
+    client: &PlaneClient,
+    project_filter: &[String],
+) -> Result<Vec<PlaneCandidate>, String> {
+    {
+        let guard = candidate_cache().lock().map_err(|e| e.to_string())?;
+        if let Some((fetched_at, items)) = guard.as_ref() {
+            if fetched_at.elapsed() < std::time::Duration::from_secs(CANDIDATE_CACHE_TTL_SECS) {
+                return Ok(items.clone());
+            }
+        }
+    }
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(ATTRIBUTION_FETCH_TIMEOUT_SECS),
+        client.fetch_candidates(project_filter),
+    )
+    .await
+    {
+        Ok(Ok(items)) => Ok(items),
+        Ok(Err(error)) => Err(error.message(&client.api_key)),
+        Err(_) => Err(format!(
+            "获取 Plane 工作项候选超时（{ATTRIBUTION_FETCH_TIMEOUT_SECS} 秒）"
+        )),
+    };
+    if let Ok(items) = &result {
+        if let Ok(mut guard) = candidate_cache().lock() {
+            *guard = Some((std::time::Instant::now(), items.clone()));
+        }
+    }
+    result
+}
+
+/// 计算 `date`（本机时区）的 Plane 工作项归因：确定性信号优先，未达阈值
+/// （`plane_match::ATTRIBUTION_THRESHOLD`）的会话打包为一次 AI 调用兜底。
+///
+/// 隐私边界：归因读库统一走 `load_filtered_activities_in_range`（忽略应用/
+/// 排除域名的活动根本不参与归因）；AI prompt 只含窗口标题与候选工作项
+/// key/名称——`plane_match::extract_session_title_texts` 在类型层面就不携带
+/// ocr_text/browser_url，OCR 文本只在本地确定性匹配中使用、永不出网。
+pub(crate) async fn compute_plane_attributions(
+    date: &str,
+    state: &Arc<Mutex<AppState>>,
+) -> PlaneAttributionOutcome {
+    if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
+        return PlaneAttributionOutcome::empty(false, Some(String::from("日期格式无效")));
+    }
+    // 当日活动窗口换算交给 get_activities_in_range（同款本地时区 [00:00, 次日 00:00)）
+
+    // 持锁块：读配置 + 取当日隐私过滤后的活动与 commits + 文本模型；锁不跨 await
+    let (client, project_filter, model_config, activities, commits) = {
+        let state_guard = match state.lock() {
+            Ok(guard) => guard,
+            Err(error) => return PlaneAttributionOutcome::empty(false, Some(error.to_string())),
+        };
+        let plane = &state_guard.config.plane;
+        if !plane_configured(plane) {
+            return PlaneAttributionOutcome::empty(true, None);
+        }
+        if let Err(message) = validate_endpoint_url(
+            plane.url.as_deref().unwrap_or(""),
+            plane.allow_insecure_http,
+        ) {
+            return PlaneAttributionOutcome::empty(false, Some(message));
+        }
+        let client = PlaneClient::new(
+            plane.url.as_deref().unwrap_or(""),
+            plane.workspace_slug.as_deref().unwrap_or(""),
+            plane.api_key.as_deref().unwrap_or(""),
+        );
+        let activities = match super::shared::load_filtered_activities_in_range(
+            &state_guard,
+            Some(date),
+            Some(date),
+            ATTRIBUTION_ACTIVITY_LIMIT,
+        ) {
+            Ok(activities) => activities,
+            Err(error) => return PlaneAttributionOutcome::empty(false, Some(error.to_string())),
+        };
+        let commits = match state_guard.database.get_gitlab_commits_by_date(date) {
+            Ok(commits) => commits,
+            Err(error) => return PlaneAttributionOutcome::empty(false, Some(error.to_string())),
+        };
+        let model_config =
+            work_review_core::config::effective_text_model(&state_guard.config.text_model);
+        (
+            client,
+            plane.project_filter.clone(),
+            model_config,
+            activities,
+            commits,
+        )
+    };
+
+    let candidates = match fetch_candidates_cached(&client, &project_filter).await {
+        Ok(candidates) => candidates,
+        Err(message) => return PlaneAttributionOutcome::empty(false, Some(message)),
+    };
+    if candidates.is_empty() {
+        return PlaneAttributionOutcome::empty(true, None);
+    }
+
+    let instance_host = endpoint_host(&client.base_url);
+    let sessions = work_review_core::plane_match::build_activity_sessions(&activities);
+    let mut attributions = work_review_core::plane_match::attribute_sessions(
+        &sessions,
+        &activities,
+        &candidates,
+        &commits,
+        instance_host.as_deref(),
+    );
+
+    // AI 兜底：确定性未达阈值的会话打包为一次单轮文本模型调用；
+    // 未配置模型 / 调用失败 / 回复解析失败一律静默跳过（归因本就不承诺全覆盖）。
+    let mut ai_used = false;
+    let all_title_texts =
+        work_review_core::plane_match::extract_session_title_texts(&sessions, &activities);
+    let unmatched: Vec<(usize, (i64, i64), Vec<String>)> = sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, (start, end))| {
+            !attributions
+                .iter()
+                .any(|a| a.session_start == *start && a.session_end == *end)
+        })
+        .filter_map(|(index, (start, end))| {
+            let titles = all_title_texts.get(index)?.clone();
+            Some((index, (*start, *end), titles))
+        })
+        .collect();
+    if !unmatched.is_empty() {
+        let session_titles: Vec<Vec<String>> = unmatched
+            .iter()
+            .map(|(_, _, titles)| titles.clone())
+            .collect();
+        let prompt = work_review_core::plane_match::build_ai_attribution_prompt(
+            &session_titles,
+            &candidates,
+        );
+        let system_prompt = "你是工作项归因助手。只输出 JSON 数组，不要任何解释文字。";
+        match super::ask::generate_text_answer_with_model(&model_config, system_prompt, &prompt)
+            .await
+        {
+            Ok(answer) => {
+                for (ordinal, key) in
+                    work_review_core::plane_match::parse_ai_attribution_reply(&answer)
+                {
+                    let Some((_, (start, end), _)) = unmatched.get(ordinal) else {
+                        continue;
+                    };
+                    let key_lc = key.to_lowercase();
+                    let Some(candidate) = candidates.iter().find(|c| {
+                        !c.display_key().is_empty() && c.display_key().to_lowercase() == key_lc
+                    }) else {
+                        continue;
+                    };
+                    attributions.push(PlaneAttribution {
+                        session_start: *start,
+                        session_end: *end,
+                        plane_item_id: candidate.plane_item_id.clone(),
+                        display_key: {
+                            let key = candidate.display_key();
+                            if key.is_empty() {
+                                candidate.plane_item_id.chars().take(8).collect()
+                            } else {
+                                key
+                            }
+                        },
+                        name: candidate.name.clone(),
+                        score: AI_FALLBACK_SCORE,
+                        evidence: String::from("ai"),
+                        source: PlaneAttributionSource::Ai,
+                    });
+                    ai_used = true;
+                }
+            }
+            Err(error) => log::info!("Plane 归因 AI 兜底跳过: {error}"),
+        }
+    }
+
+    attributions.sort_by_key(|a| a.session_start);
+    PlaneAttributionOutcome {
+        ok: true,
+        attributions,
+        ai_used,
+        message: None,
+    }
+}
+
+/// 时间线页归因命令：时间线加载完成后按日调用（随用随算不入库）。
+/// 未配置 Plane 返回空成功；拉取/计算失败返回 ok=false + message（前端静默）。
+#[tauri::command]
+pub async fn plane_attributions_for_date(
+    date: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<PlaneAttributionResult, String> {
+    let outcome = compute_plane_attributions(&date, state.inner()).await;
+    Ok(PlaneAttributionResult {
+        ok: outcome.ok,
+        attributions: outcome.attributions,
+        ai_used: outcome.ai_used,
+        message: outcome.message,
+    })
+}
+
+/// 日报「工作项归因」小节标题（四语言，同 gitlab_section_title 机制）
+fn plane_section_title(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => "工作项归因",
+        AppLocale::ZhTw => "工作項歸因",
+        AppLocale::En => "Work Item Attribution",
+        AppLocale::Ar => "إسناد بنود العمل",
+    }
+}
+
+/// 归因来源的展示标签（四语言）
+fn attribution_source_label(source: PlaneAttributionSource, locale: AppLocale) -> &'static str {
+    match (source, locale) {
+        (PlaneAttributionSource::Ai, _) => "AI",
+        (PlaneAttributionSource::Deterministic, AppLocale::ZhCn) => "确定性",
+        (PlaneAttributionSource::Deterministic, AppLocale::ZhTw) => "確定性",
+        (PlaneAttributionSource::Deterministic, AppLocale::En) => "deterministic",
+        (PlaneAttributionSource::Deterministic, AppLocale::Ar) => "حتمي",
+    }
+}
+
+/// 把归因结果渲染成日报「工作项归因」小节 markdown（无归因 = 空串不产出小节）。
+/// 行形如：`- 10:00-10:40 [ABC-123] 修复登录页崩溃（确定性）`。
+pub(crate) fn plane_attribution_report_section(
+    attributions: &[PlaneAttribution],
+    offset: chrono::FixedOffset,
+    locale: AppLocale,
+) -> String {
+    if attributions.is_empty() {
+        return String::new();
+    }
+    // 括号随语言：中繁用全角，英/阿用半角
+    let (open, close) = match locale {
+        AppLocale::ZhCn | AppLocale::ZhTw => ("（", "）"),
+        AppLocale::En | AppLocale::Ar => (" (", ")"),
+    };
+    let lines: Vec<String> = attributions
+        .iter()
+        .map(|a| {
+            let format_time = |ts: i64| {
+                chrono::DateTime::from_timestamp(ts, 0)
+                    .map(|dt| dt.with_timezone(&offset).format("%H:%M").to_string())
+                    .unwrap_or_else(|| "??".to_string())
+            };
+            format!(
+                "- {start}-{end} [{key}] {name}{open}{source}{close}",
+                start = format_time(a.session_start),
+                end = format_time(a.session_end),
+                key = a.display_key,
+                name = sanitize_single_line(&a.name),
+                source = attribution_source_label(a.source, locale),
+            )
+        })
+        .collect();
+    format!("## {}\n\n{}", plane_section_title(locale), lines.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,12 +1074,13 @@ mod tests {
     }
 
     #[test]
-    fn 工作项解析应取id名称项目状态与更新时间() {
+    fn 工作项解析应取id名称项目状态序号与更新时间() {
         let value: serde_json::Value = serde_json::from_str(
             r#"{
                 "id": "550e8400-...",
                 "name": "修复登录页崩溃",
                 "priority": "high",
+                "sequence_id": 123,
                 "state": {"id": "s1", "name": "进行中", "group": "started"},
                 "updated_at": "2026-09-24T02:30:00.000Z"
             }"#,
@@ -687,6 +1092,7 @@ mod tests {
         assert_eq!(item.project, "示例项目");
         assert_eq!(item.state, "进行中");
         assert_eq!(item.updated_at, "2026-09-24T02:30:00.000Z");
+        assert_eq!(item.sequence_id, 123);
     }
 
     #[test]
@@ -703,6 +1109,54 @@ mod tests {
         let item = parse_work_item(&value, "p");
         assert_eq!(item.state, "");
         assert_eq!(item.updated_at, "2026-09-24T01:00:00.000Z");
+        assert_eq!(item.sequence_id, 0, "缺 sequence_id 时为 0");
+    }
+
+    #[test]
+    fn 归因候选解析应携带identifier序号并把时间转为秒() {
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{
+                "id": "550e8400-...",
+                "name": "修复登录页崩溃",
+                "sequence_id": 456,
+                "state": {"id": "s1", "name": "进行中", "group": "started"},
+                "updated_at": "2026-09-24T02:30:00.000Z"
+            }"#,
+        )
+        .unwrap();
+        let candidate = parse_candidate(&value, "示例项目", "ABC");
+        assert_eq!(candidate.plane_item_id, "550e8400-...");
+        assert_eq!(candidate.sequence_id, 456);
+        assert_eq!(candidate.project_identifier, "ABC");
+        assert_eq!(candidate.project_name, "示例项目");
+        assert_eq!(candidate.name, "修复登录页崩溃");
+        assert_eq!(candidate.state_name, "进行中");
+        assert_eq!(
+            candidate.updated_at, 1_790_217_000,
+            "ISO 时间应转为 UTC unix 秒"
+        );
+        assert_eq!(candidate.display_key(), "ABC-456");
+    }
+
+    #[test]
+    fn 实例地址应能提取host供归因url信号使用() {
+        assert_eq!(
+            endpoint_host("https://plane.example.com"),
+            Some("plane.example.com".to_string())
+        );
+        assert_eq!(
+            endpoint_host("https://plane.example.com/"),
+            Some("plane.example.com".to_string())
+        );
+        assert_eq!(
+            endpoint_host("http://192.168.1.10:8080"),
+            Some("192.168.1.10".to_string())
+        );
+        assert_eq!(
+            endpoint_host("HTTPS://Plane.Example.COM/path"),
+            Some("plane.example.com".to_string())
+        );
+        assert_eq!(endpoint_host("  "), None);
     }
 
     #[test]
@@ -714,6 +1168,7 @@ mod tests {
                 project: "p".into(),
                 state: String::new(),
                 updated_at: "2026-09-01T00:00:00Z".into(),
+                sequence_id: 1,
             },
             PlanePreviewItem {
                 id: "2".into(),
@@ -721,6 +1176,7 @@ mod tests {
                 project: "p".into(),
                 state: String::new(),
                 updated_at: "not-a-date".into(),
+                sequence_id: 2,
             },
             PlanePreviewItem {
                 id: "3".into(),
@@ -728,6 +1184,7 @@ mod tests {
                 project: "p".into(),
                 state: String::new(),
                 updated_at: "2026-09-24T00:00:00Z".into(),
+                sequence_id: 3,
             },
         ];
         let mut items = items;
@@ -821,6 +1278,7 @@ mod tests {
             project: "Alpha".into(),
             state: "进行中".into(),
             updated_at: "2026-09-24T02:30:00Z".into(),
+            sequence_id: 7,
         };
         let row = work_item_to_row(&item);
         assert_eq!(row.plane_item_id, "wi-1");
@@ -848,6 +1306,48 @@ mod tests {
 
         plane.api_key = Some("   ".to_string());
         assert!(!plane_configured(&plane), "空白凭据视为缺失");
+    }
+
+    fn attribution_fixture(source: PlaneAttributionSource) -> PlaneAttribution {
+        PlaneAttribution {
+            session_start: 1_790_217_000, // 2026-09-24 02:30 UTC
+            session_end: 1_790_220_600,   // 2026-09-24 03:30 UTC
+            plane_item_id: "wi-1".to_string(),
+            display_key: "ABC-123".to_string(),
+            name: "修复登录页\n崩溃".to_string(),
+            score: 90,
+            evidence: "identifier".to_string(),
+            source,
+        }
+    }
+
+    #[test]
+    fn 日报工作项归因小节应四语言成节并清洗换行() {
+        let offset = chrono::FixedOffset::east_opt(8 * 3600).expect("有效偏移");
+        let attributions = vec![
+            attribution_fixture(PlaneAttributionSource::Deterministic),
+            attribution_fixture(PlaneAttributionSource::Ai),
+        ];
+        let zh = plane_attribution_report_section(&attributions, offset, AppLocale::ZhCn);
+        assert!(zh.starts_with("## 工作项归因\n\n"));
+        assert!(zh.contains("- 10:30-11:30 [ABC-123] 修复登录页 崩溃（确定性）"));
+        assert!(zh.contains("（AI）"));
+        assert_eq!(
+            plane_attribution_report_section(&attributions, offset, AppLocale::ZhTw),
+            "## 工作項歸因\n\n- 10:30-11:30 [ABC-123] 修复登录页 崩溃（確定性）\n- 10:30-11:30 [ABC-123] 修复登录页 崩溃（AI）"
+        );
+        let en = plane_attribution_report_section(&attributions, offset, AppLocale::En);
+        assert!(en.starts_with("## Work Item Attribution\n\n"));
+        assert!(en.contains("(deterministic)"));
+        let ar = plane_attribution_report_section(&attributions, offset, AppLocale::Ar);
+        assert!(ar.starts_with("## إسناد بنود العمل\n\n"));
+        assert!(ar.contains("(AI)"));
+    }
+
+    #[test]
+    fn 无归因时日报不应产出工作项归因小节() {
+        let offset = chrono::FixedOffset::east_opt(0).expect("有效偏移");
+        assert!(plane_attribution_report_section(&[], offset, AppLocale::ZhCn).is_empty());
     }
 
     #[tokio::test]

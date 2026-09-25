@@ -3804,6 +3804,7 @@ async fn main() {
             commands::plane_fetch_preview,
             commands::plane_sync_work_items_for_date,
             commands::get_plane_work_items_for_date,
+            commands::plane_attributions_for_date,
             commands::get_file_monitor_stats,
             commands::file_monitor_status,
             commands::generate_text_with_model,

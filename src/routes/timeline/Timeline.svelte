@@ -106,6 +106,18 @@
     deleted?: number;
   }
 
+  // Plane 工作项归因（后端 plane_attributions_for_date 按日现算，不入库）
+  interface PlaneAttributionItem {
+    session_start: number;
+    session_end: number;
+    plane_item_id: string;
+    display_key: string;
+    name: string;
+    score: number;
+    evidence: string;
+    source: 'deterministic' | 'ai';
+  }
+
   const invokeAppIcon: AppIconInvoke = (command, args) =>
     invoke<string>(command, {
       appName: args.appName,
@@ -125,9 +137,43 @@
   let gitlabCommits: GitlabCommitRow[] = [];
   let fileEvents: FileEventRow[] = [];
   let planeWorkItems: PlaneWorkItemRow[] = [];
+  let planeAttributions: PlaneAttributionItem[] = [];
   let gitlabSyncStartedDates = new Set<string>();
   let planeSyncStartedDates = new Set<string>();
   $: timelineRows = mergeTimelineRows(activities, gitlabCommits, fileEvents, planeWorkItems);
+
+  // 活动行 → 所在会话的 Plane 归因（活动时间戳落入归因会话窗口 [start,end]
+  // 内即标注该工作项；线性扫描即可，归因条目很少）。
+  function planeBadgeFor(activity: TimelineActivity): PlaneAttributionItem | null {
+    for (const attr of planeAttributions) {
+      if (activity.timestamp >= attr.session_start && activity.timestamp <= attr.session_end) {
+        return attr;
+      }
+    }
+    return null;
+  }
+
+  // Plane 工作项归因：时间线主数据加载完成后按日现算（随用随算不入库；
+  // 未配置 Plane 时后端返回空成功）。失败静默，不影响时间线首屏。
+  async function loadPlaneAttributions(date: string): Promise<void> {
+    planeAttributions = [];
+    try {
+      const result = await invoke<{
+        ok: boolean;
+        attributions: PlaneAttributionItem[];
+        ai_used: boolean;
+        message: string | null;
+      }>('plane_attributions_for_date', { date });
+      if (date !== selectedDate) return;
+      if (!result.ok) {
+        if (result.message) console.warn('Plane 工作项归因失败:', result.message);
+        return;
+      }
+      planeAttributions = result.attributions;
+    } catch (e) {
+      console.warn('Plane 工作项归因失败:', e);
+    }
+  }
 
   // 文件事件类型 → 徽标文案（复用概览页的 overview.fileEvent* 键）
   function fileEventBadgeKey(eventType: string): string {
@@ -918,6 +964,9 @@
     void syncGitlabCommits(requestDate);
     // 后台补采：拉取该日 Plane 工作项入库后刷新（同款模式；未配置时后端返回空结果）
     void syncPlaneWorkItems(requestDate);
+    // 后台归因：把该日活动归因到 Plane 工作项供行内徽标标注（随用随算不入库；
+    // 未配置时后端返回空成功，失败静默）
+    void loadPlaneAttributions(requestDate);
   }
 
   // 拉取指定日期的 GitLab 提交入库（口径与日报一致），成功后刷新展示。
@@ -1734,6 +1783,7 @@
           {@const info = getCategoryMeta(activity.category)}
           {@const featured = activity.id !== null && featuredActivityIds.has(activity.id)}
           {@const timelineTitle = getTimelineTitle(activity)}
+          {@const planeBadge = planeBadgeFor(activity)}
           <button
             class={`timeline-entry ${featured ? 'timeline-entry-featured' : 'timeline-entry-compact'}`}
             on:click={(event) => viewActivity(activity, event.currentTarget)}
@@ -1781,6 +1831,9 @@
                     <div class="timeline-entry-duration-chip">{formatDuration(activity.duration)}</div>
                   </div>
                   <p class="timeline-entry-title timeline-entry-title-featured" title={activity.window_title}>
+                    {#if planeBadge}
+                      <span class="timeline-plane-badge" title={planeBadge.name}>{planeBadge.display_key}</span>
+                    {/if}
                     {timelineTitle}
                   </p>
                   {#if activity.browser_url}
@@ -1809,6 +1862,9 @@
                   </div>
                 </div>
                 <p class="timeline-entry-title timeline-entry-title-compact" title={activity.window_title}>
+                  {#if planeBadge}
+                    <span class="timeline-plane-badge" title={planeBadge.name}>{planeBadge.display_key}</span>
+                  {/if}
                   {timelineTitle}
                 </p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
@@ -2869,6 +2925,26 @@
   }
   :global(.dark) .timeline-commit-stats {
     color: rgb(125 133 144);
+  }
+
+  /* Plane 工作项归因徽标：同 timeline-commit-badge 思路的轻量文字徽标，
+     紫色区分 GitLab 橙；文字 = {identifier}-{sequence_id}，title = 工作项名 */
+  .timeline-plane-badge {
+    display: inline-block;
+    margin-inline-end: 0.4rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--radius-md);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    vertical-align: middle;
+    color: rgb(139 92 246);
+    background: rgb(139 92 246 / 0.12);
+  }
+  :global(.dark) .timeline-plane-badge {
+    color: rgb(196 181 253);
+    background: rgb(139 92 246 / 0.2);
   }
 
   .timeline-entry-duration {

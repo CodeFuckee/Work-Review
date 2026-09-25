@@ -8,6 +8,7 @@ pub mod file_monitor;
 pub mod generation_params;
 pub mod gitlab;
 pub mod knowledge;
+pub mod plane_match;
 pub mod policy;
 pub mod privacy;
 pub mod work_intelligence;
