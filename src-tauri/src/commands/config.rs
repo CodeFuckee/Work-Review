@@ -61,6 +61,16 @@ pub async fn save_config(
     for cached in config.text_model_provider_cache.values() {
         super::ai::validate_model_endpoint(&cached.endpoint)?;
     }
+    // 诊断日志：保存时记录 Plane 配置摘要（不含 api_key），用于定位
+    // 「保存后集成配置丢失」类问题（2026-09-24 用户报告）
+    log::info!(
+        "save_config: plane[enabled={}, url={}, slug={}] gitlab[enabled={}, url={}]",
+        config.plane.enabled,
+        config.plane.url.is_some(),
+        config.plane.workspace_slug.is_some(),
+        config.gitlab.report_enabled,
+        config.gitlab.url.is_some(),
+    );
     persist_app_config(config, app, state.inner())
 }
 

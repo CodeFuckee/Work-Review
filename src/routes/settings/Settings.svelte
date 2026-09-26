@@ -124,6 +124,7 @@
   let loading = true;
   let saving = false;
   let dirty = false;
+  let configLoaded = false;
   let error: string | null = null;
   let success = false;
   let providers: AiProvider[] = [];
@@ -296,6 +297,9 @@
 
       config = loadedConfig as SettingsConfig;
       cache.setConfig(config);
+      // 后端配置已加载：此后缓存 store 的旧快照不得再覆盖 config
+      //（防御「缓存里的旧配置整体写回、抹掉新增设置项」类回归）
+      configLoaded = true;
     } catch (e) {
       error = formatUserError(e, t('common.loadFailedRetry'));
       console.error('加载配置失败:', e);
