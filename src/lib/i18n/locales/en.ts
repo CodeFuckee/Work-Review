@@ -239,6 +239,8 @@ export default {
         screenshotAlt: 'Screenshot',
         screenshotLoadFailed: 'Failed to load screenshot',
         screenshotMissing: 'No screenshot was stored for this record',
+        ocr: 'OCR Text',
+        ocrEmpty: 'No OCR result was stored for this record',
         windowTitle: 'Window Title',
         recordTime: 'Recorded At',
         duration: 'Duration',

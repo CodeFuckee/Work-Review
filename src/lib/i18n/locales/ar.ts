@@ -238,6 +238,8 @@ export default {
         screenshotAlt: 'لقطة شاشة',
         screenshotLoadFailed: 'فشل تحميل لقطة الشاشة',
         screenshotMissing: 'لم يتم حفظ لقطة شاشة لهذا السجل',
+        ocr: 'نص OCR',
+        ocrEmpty: 'لا توجد نتيجة OCR محفوظة لهذا السجل',
         windowTitle: 'عنوان النافذة',
         recordTime: 'وقت التسجيل',
         duration: 'المدة',

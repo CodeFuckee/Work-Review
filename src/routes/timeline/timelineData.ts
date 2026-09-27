@@ -51,6 +51,13 @@ export function parseTimelineActivities(value: unknown): TimelineActivity[] {
   return value;
 }
 
+/// 详情抽屉的 OCR 展示文本：null / 空串 / 纯空白一律归一为 null（由调用方
+/// 显示占位），其余去掉首尾空白；内部换行结构保留，截断交给样式滚动。
+export function getOcrDisplayText(ocrText: string | null): string | null {
+  const trimmed = ocrText?.trim() ?? '';
+  return trimmed === '' ? null : trimmed;
+}
+
 function getActivityGroupKey(activity: TimelineActivity): string {
   const appName = activity.app_name || '';
   const browserUrl = activity.browser_url;

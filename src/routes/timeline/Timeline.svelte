@@ -44,6 +44,7 @@
   } from './timelineGitlab.ts';
   import { getViewportPopoverPlacement } from '../../lib/utils/popoverPosition.ts';
   import {
+    getOcrDisplayText,
     isTimelineActivity,
     prepareTimelineActivities,
     upsertTimelineActivity,
@@ -1924,6 +1925,7 @@
 <!-- 活动详情右侧抽屉 -->
 {#if selectedActivity}
   {@const info = getCategoryMeta(selectedActivity.category)}
+  {@const ocrDisplay = getOcrDisplayText(selectedActivity.ocr_text)}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
@@ -2020,6 +2022,19 @@
               </div>
             {/if}
           </div>
+        </section>
+
+        <section class="timeline-detail-ocr">
+          <div class="timeline-detail-section-heading">
+            <span>{t('timeline.detail.ocr')}</span>
+          </div>
+          {#if ocrDisplay}
+            <div class="timeline-detail-ocr-text">{ocrDisplay}</div>
+          {:else}
+            <div class="timeline-detail-preview-state text-slate-400 dark:text-[#7d8590]">
+              <span>{t('timeline.detail.ocrEmpty')}</span>
+            </div>
+          {/if}
         </section>
 
         <section class="timeline-detail-meta">
@@ -3106,6 +3121,22 @@
     object-fit: contain;
   }
 
+  .timeline-detail-ocr-text {
+    max-height: 14rem;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: var(--radius-md);
+    background: rgba(148, 163, 184, 0.08);
+    color: #292524;
+    font-size: 0.8rem;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
   .timeline-detail-preview-loading-indicator {
     position: absolute;
     top: 0.65rem;
@@ -3579,6 +3610,12 @@
 
   :global(.dark) .timeline-detail-preview-frame {
     background: rgba(48, 54, 61, 0.38);
+  }
+
+  :global(.dark) .timeline-detail-ocr-text {
+    border-color: rgba(48, 54, 61, 0.8);
+    background: rgba(48, 54, 61, 0.38);
+    color: #e6edf3;
   }
 
   :global(.dark) .timeline-detail-preview-loading-indicator {

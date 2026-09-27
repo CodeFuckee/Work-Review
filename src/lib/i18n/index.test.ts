@@ -360,8 +360,9 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   // 二期时间线徽标与项目过滤每语言新增 3 键（timeline.planeItemBadge +
   // settingsPlane.filterLabel / filterHint）；
   // 概览页 Plane 项目概览卡每语言新增 3 键（overview.planeTitle /
-  // overview.planeItemCount / overview.planeEmpty）
-  assert.equal(expected.length, 1_272);
+  // overview.planeItemCount / overview.planeEmpty）；
+  // 时间线详情抽屉 OCR 区块每语言新增 2 键（timeline.detail.ocr / ocrEmpty）
+  assert.equal(expected.length, 1_274);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

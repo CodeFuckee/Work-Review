@@ -237,6 +237,8 @@ export default {
         screenshotAlt: '屏幕截图',
         screenshotLoadFailed: '截图加载失败',
         screenshotMissing: '本次记录未保存截图',
+        ocr: 'OCR 文本',
+        ocrEmpty: '本次记录没有 OCR 结果',
         windowTitle: '窗口标题',
         recordTime: '记录时间',
         duration: '持续时长',
