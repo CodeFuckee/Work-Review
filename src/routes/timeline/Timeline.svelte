@@ -1917,8 +1917,8 @@
                 </div>
                 <p class="timeline-entry-title timeline-entry-title-compact" title={row.commit.title}>
                   {#if row.attribution}
-                    <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
-                    <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
+                    <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
                   {/if}
                   {row.commit.title}
                 </p>
@@ -1948,8 +1948,8 @@
                 </div>
                 <p class="timeline-entry-title timeline-entry-title-compact" title={row.event.path}>
                   {#if row.attribution}
-                    <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
-                    <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
+                    <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
                   {/if}
                   {row.event.path}
                 </p>
@@ -2035,8 +2035,8 @@
                   </div>
                   <p class="timeline-entry-title timeline-entry-title-featured" title={activity.window_title}>
                     {#if row.attribution}
-                      <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
-                      <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
+                      <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                      <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
                     {/if}
                     {timelineTitle}
                   </p>
@@ -2067,8 +2067,8 @@
                 </div>
                 <p class="timeline-entry-title timeline-entry-title-compact" title={activity.window_title}>
                   {#if row.attribution}
-                    <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
-                    <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
+                    <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
                   {/if}
                   {timelineTitle}
                 </p>
@@ -3543,6 +3543,26 @@
   :global(.dark) .timeline-plane-badge {
     color: rgb(196 181 253);
     background: rgb(139 92 246 / 0.2);
+  }
+
+  /* Plane 归因项目徽标（与工作项徽标并排）：蓝色区分紫色工作项，
+     文字 = 纯项目名（不带 ID），title = 项目名 */
+  .timeline-project-badge {
+    display: inline-block;
+    margin-inline-end: 0.4rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--radius-md);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    vertical-align: middle;
+    color: rgb(37 99 235);
+    background: rgb(37 99 235 / 0.12);
+  }
+  :global(.dark) .timeline-project-badge {
+    color: rgb(147 197 253);
+    background: rgb(37 99 235 / 0.2);
   }
 
   .timeline-entry-duration {

@@ -151,6 +151,30 @@ test('GitLab 提交行应显示 Plane 归因徽标（提交时间落入归因窗
   assert.match(derivation, /attachAttribution/);
 });
 
+test('时间线归因应为双徽标并排：紫色工作项徽标 + 蓝色项目徽标（纯项目名）', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+  const start = source.indexOf("row.kind === 'commit'");
+  const end = source.indexOf("row.kind === 'fileEvent'");
+  const section = source.slice(start, end);
+
+  // 项目徽标：独立样式类 + 直接显示项目名称（不带 · 前缀小字，避免与工作项徽标旁重复）
+  assert.match(section, /timeline-project-badge/);
+  assert.match(section, /\{row\.attribution\.project_name\}/);
+  assert.doesNotMatch(section, /· \{row\.attribution\.project_name\}/);
+  // 双徽标并存：工作项徽标仍在
+  assert.match(section, /timeline-plane-badge/);
+
+  // 全部四类行渲染点统一双徽标（commit/fileEvent/activity-featured/activity-compact）
+  const badgeSpans = source.match(/timeline-project-badge"/g) ?? [];
+  assert.ok(badgeSpans.length >= 4, `项目徽标应出现在 4 处渲染点，实际 ${badgeSpans.length}`);
+
+  // 蓝色项目徽标样式：亮暗两套配色，圆角沿用 radius 令牌
+  const style = source.slice(source.indexOf('.timeline-project-badge {'));
+  assert.match(style, /rgb\(37 99 235\)/);
+  assert.match(style, /:global\(\.dark\) \.timeline-project-badge/);
+  assert.match(style, /var\(--radius-md\)/);
+});
+
 test('修改文件与外跳文案应在四语言词典中齐备且非空', async () => {
   const localeNames = ['zh-CN', 'en', 'zh-TW', 'ar'] as const;
   for (const localeName of localeNames) {

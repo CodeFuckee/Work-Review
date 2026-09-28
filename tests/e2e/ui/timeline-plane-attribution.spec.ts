@@ -175,12 +175,13 @@ test.describe('时间线 Plane 归因徽标', () => {
     await expect(badge).toBeVisible();
     await expect(badge).toContainText('PROJ-12');
     await expect(badge).toContainText('修复登录跳转');
-    // 徽标旁的项目名次要文案（行内 .timeline-commit-stats 同类样式有两个：
-    // 归因项目名与 +增/-删统计，用文本过滤区分）
-    await expect(commitRow.locator('.timeline-commit-stats', { hasText: 'Plane演示项目' })).toBeVisible();
-    await expect(commitRow.locator('.timeline-commit-stats', { hasText: '+12/-3' })).toBeVisible();
+    // 双徽标并排：蓝色项目徽标直接显示纯项目名（不再有「· 项目名」小字）
+    const projectBadge = commitRow.locator('.timeline-project-badge');
+    await expect(projectBadge).toBeVisible();
+    await expect(projectBadge).toHaveText('Plane演示项目');
     // 提交自身信息不受徽标影响
     await expect(commitRow).toContainText('修复登录页白屏');
+    await expect(commitRow.locator('.timeline-commit-stats', { hasText: '+12/-3' })).toBeVisible();
     await reviewHold(page);
   });
 
@@ -213,6 +214,9 @@ test.describe('时间线 Plane 归因徽标', () => {
     const badge = activityRow.locator('.timeline-plane-badge');
     await expect(badge).toBeVisible();
     await expect(badge).toContainText('PROJ-12');
+    const projectBadge = activityRow.locator('.timeline-project-badge');
+    await expect(projectBadge).toBeVisible();
+    await expect(projectBadge).toHaveText('Plane演示项目');
     await reviewHold(page);
   });
 
@@ -230,6 +234,9 @@ test.describe('时间线 Plane 归因徽标', () => {
     await expect(badge).toBeVisible();
     await expect(badge).toContainText('PROJ-12');
     await expect(badge).toContainText('修复登录跳转');
+    const projectBadge = fileRow.locator('.timeline-project-badge');
+    await expect(projectBadge).toBeVisible();
+    await expect(projectBadge).toHaveText('Plane演示项目');
     await reviewHold(page);
   });
 
