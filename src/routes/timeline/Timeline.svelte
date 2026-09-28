@@ -214,6 +214,10 @@
   let summaryTrigger: HTMLButtonElement | null = null;
   let detailTrigger: HTMLButtonElement | null = null;
   let detailCloseButton: HTMLButtonElement | null = null;
+  // GitLab 提交详情抽屉（与应用活动抽屉同壳、互斥打开）
+  let selectedCommit: GitlabCommitRow | null = null;
+  let commitDetailTrigger: HTMLButtonElement | null = null;
+  let commitDetailCloseButton: HTMLButtonElement | null = null;
   let categoryTrigger: HTMLButtonElement | null = null;
   let categoryPopover: HTMLElement | null = null;
   let categoryPopoverStyle = '';
@@ -317,6 +321,7 @@
     }
 
     selectedActivity = null;
+    selectedCommit = null;
     if (selectedDate === nextDate) {
       loadTimeline();
       return;
@@ -1221,6 +1226,7 @@
     trigger: HTMLButtonElement | null = null,
   ): Promise<void> {
     await closeSummaryDrawer(false);
+    selectedCommit = null;
     detailTrigger = trigger;
     showCategoryPopover = false;
     const requestId = ++viewActivityRequestId;
@@ -1357,6 +1363,39 @@
       detailTrigger?.focus();
     }
     detailTrigger = null;
+  }
+
+  // 打开 GitLab 提交详情（行内已带全部字段，无需回库刷新）
+  async function viewCommit(
+    commit: GitlabCommitRow,
+    trigger: HTMLButtonElement | null = null,
+  ): Promise<void> {
+    await closeSummaryDrawer(false);
+    selectedActivity = null;
+    commitDetailTrigger = trigger;
+    selectedCommit = commit;
+    await tick();
+    commitDetailCloseButton?.focus();
+  }
+
+  // 关闭提交详情并把焦点交还给打开详情的时间线记录。
+  async function closeCommitDetail(restoreFocus = true): Promise<void> {
+    selectedCommit = null;
+    if (restoreFocus) {
+      await tick();
+      commitDetailTrigger?.focus();
+    }
+    commitDetailTrigger = null;
+  }
+
+  function handleCommitDetailDismiss(): void {
+    void closeCommitDetail();
+  }
+
+  function handleCommitDetailOverlayKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    handleCommitDetailDismiss();
   }
 
   // 删除单条活动记录（连带截图）
@@ -1722,7 +1761,10 @@
         <div class="timeline-rail" aria-hidden="true"></div>
         {#each timelineRows as row, i}
           {#if row.kind === 'commit'}
-            <div class="timeline-entry timeline-entry-commit">
+            <button
+              class="timeline-entry timeline-entry-commit"
+              on:click={(event) => viewCommit(row.commit, event.currentTarget)}
+            >
               <div class="timeline-entry-anchor">
                 <div class="timeline-entry-time">{new Date(row.commit.committed_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                 <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
@@ -1744,9 +1786,12 @@
                 <p class="timeline-entry-title timeline-entry-title-compact" title={row.commit.title}>{row.commit.title}</p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
                   <span class="timeline-commit-stats">{row.commit.additions !== null && row.commit.deletions !== null ? `+${row.commit.additions}/-${row.commit.deletions}` : ''}</span>
+                  <svg class="timeline-entry-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
                 </div>
               </div>
-            </div>
+            </button>
           {:else if row.kind === 'fileEvent'}
             <div class="timeline-entry timeline-entry-commit">
               <div class="timeline-entry-anchor">
@@ -2268,6 +2313,88 @@
             }[(selectedActivity._privacyLevel || 'full')] || ''}
           </p>
         </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+{/if}
+
+<!-- GitLab 提交详情右侧抽屉 -->
+{#if selectedCommit}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="timeline-detail-overlay fixed inset-0 z-[140] bg-slate-950/52 backdrop-blur-md flex items-center justify-end p-4 animate-fadeIn"
+    role="presentation"
+    on:click|self={handleCommitDetailDismiss}
+    on:keydown={handleCommitDetailOverlayKeydown}
+  >
+    <aside
+      class="timeline-detail-drawer"
+      use:trapFocus
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="timeline-commit-detail-title"
+    >
+      <!-- 头部 -->
+      <div class="timeline-detail-header">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="timeline-app-icon timeline-app-icon-lg timeline-app-icon-gitlab" aria-hidden="true">
+              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="4"></circle>
+                <line x1="1.05" y1="12" x2="7" y2="12"></line>
+                <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+              </svg>
+            </div>
+            <div>
+              <h3 id="timeline-commit-detail-title" class="text-lg font-semibold text-slate-900 dark:text-[#e6edf3]" title={selectedCommit.project}>{selectedCommit.project}</h3>
+              <p class="text-sm text-slate-500 dark:text-[#7d8590]">{t('overview.gitlabTitle')}</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-1">
+            <button bind:this={commitDetailCloseButton} class="btn btn-ghost" aria-label={t('window.close')} on:click={() => closeCommitDetail()}>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 内容 -->
+      <div class="timeline-detail-body">
+        <section class="timeline-detail-hero" aria-label={t('timeline.detail.recordTime')}>
+          <div class="timeline-detail-hero-item">
+            <span>{t('timeline.detail.recordTime')}</span>
+            <strong>{formatTime(selectedCommit.committed_at)}</strong>
+          </div>
+          <span class="timeline-detail-hero-divider" aria-hidden="true"></span>
+          <div class="timeline-detail-hero-item">
+            <span>{t('timeline.detail.commitStats')}</span>
+            <strong>{selectedCommit.additions !== null && selectedCommit.deletions !== null ? `+${selectedCommit.additions}/-${selectedCommit.deletions}` : '--'}</strong>
+          </div>
+        </section>
+
+        <section class="timeline-detail-meta">
+          <div class="timeline-detail-meta-row">
+            <span>{t('timeline.detail.commitMessage')}</span>
+            <p>{selectedCommit.title}</p>
+          </div>
+          <div class="timeline-detail-meta-row">
+            <span>{t('timeline.detail.commitBranch')}</span>
+            <p>{selectedCommit.branch}</p>
+          </div>
+          <div class="timeline-detail-meta-row">
+            <span>{t('timeline.detail.commitHash')}</span>
+            <p>{selectedCommit.short_id}</p>
+          </div>
+          {#if selectedCommit.author_name}
+            <div class="timeline-detail-meta-row">
+              <span>{t('timeline.detail.commitAuthor')}</span>
+              <p>{selectedCommit.author_name}</p>
+            </div>
+          {/if}
         </section>
       </div>
     </aside>
