@@ -19,7 +19,7 @@ use crate::database::{Activity, GitlabCommitRow};
 use serde::Serialize;
 use std::collections::HashSet;
 
-/// 会话切分间隔：排序后相邻活动时间戳差超过 30 分钟切新段
+/// 会话切分间隔上限：排序后相邻活动时间戳差超过 30 分钟切新段（应用切换另行切新段）
 pub const SESSION_GAP_SECONDS: i64 = 30 * 60;
 /// 产出确定性归因的最低分；相似度封顶 30 分永远达不到
 pub const ATTRIBUTION_THRESHOLD: i32 = 40;
@@ -88,16 +88,31 @@ pub struct PlaneAttribution {
     pub source: PlaneAttributionSource,
 }
 
-/// 按时间戳排序后把活动切成连续会话：间隔超过 [`SESSION_GAP_SECONDS`] 切新段，
-/// 同段内首尾活动时间戳即为会话边界（含两端）。
+/// 按时间戳排序后把活动切成连续会话：间隔超过 [`SESSION_GAP_SECONDS`]、或
+/// **应用切换**（`app_name` 变化）均切新段，同段内首尾活动时间戳即为会话边界
+/// （含两端）。应用信号是必须的：活动采集很密集（相邻间隔 ≤1 分钟占绝对多数），
+/// 穿插多任务的一天几乎不会出现 30 分钟空白，纯间隔切分会把整天连成一个会话、
+/// 只归因到一个工作项；跨应用切换（编辑器↔浏览器↔终端↔IDE）是区分穿插任务
+/// 最可靠的确定性信号（2026-09-28 实测：纯间隔 1 段 → 加应用切换 12 段）。
+/// 同一应用内连续做多件事仍切不开，依赖段内 identifier/gitlab 打分与 AI 兜底；
+/// 人工纠偏反馈闭环为二期演进方向（切分粒度是纠偏可学习性的地基）。
 pub fn build_activity_sessions(activities: &[Activity]) -> Vec<(i64, i64)> {
-    let mut timestamps: Vec<i64> = activities.iter().map(|a| a.timestamp).collect();
-    timestamps.sort_unstable();
+    let mut sorted: Vec<(&str, i64)> = activities
+        .iter()
+        .map(|activity| (activity.app_name.as_str(), activity.timestamp))
+        .collect();
+    sorted.sort_unstable_by_key(|(_, timestamp)| *timestamp);
     let mut sessions: Vec<(i64, i64)> = Vec::new();
-    for ts in timestamps {
+    let mut session_app: &str = "";
+    for (app, timestamp) in sorted {
         match sessions.last_mut() {
-            Some((_, end)) if ts - *end <= SESSION_GAP_SECONDS => *end = ts,
-            _ => sessions.push((ts, ts)),
+            Some((_, end)) if timestamp - *end <= SESSION_GAP_SECONDS && app == session_app => {
+                *end = timestamp;
+            }
+            _ => {
+                sessions.push((timestamp, timestamp));
+                session_app = app;
+            }
         }
     }
     sessions
@@ -683,5 +698,84 @@ mod tests {
             session_similarity("完全不相关的内容", "", &cjk) == 0,
             "无重合时得 0 分"
         );
+    }
+
+    fn activity_with_app(timestamp: i64, app_name: &str, window_title: &str) -> Activity {
+        Activity {
+            app_name: app_name.to_string(),
+            ..activity(timestamp, window_title, None, None)
+        }
+    }
+
+    #[test]
+    fn 跨应用穿插工作应在应用切换处切分会话() {
+        // 真实场景（2026-09-28 实测数据画像）：活动采集密集（相邻间隔 ≤1 分钟占 90%），
+        // 一天在多个应用间穿插做多件事，任何相邻间隔都远小于 30 分钟——
+        // 纯时间间隔切分会把全天连成一个会话，只能归因到一个工作项。
+        let mut activities = Vec::new();
+        // 09:00-09:20 任务 A：应用 X，标题带 ABC-123，每分钟一条
+        for i in 0..20 {
+            activities.push(activity_with_app(
+                9 * 3600 + i * 60,
+                "AppX",
+                "ABC-123 修复登录 - X",
+            ));
+        }
+        // 09:21-09:40 任务 B：应用 Y，标题带 DEF-456（间隔仅 1 分钟，未超 30 分钟）
+        for i in 0..20 {
+            activities.push(activity_with_app(
+                9 * 3600 + 21 * 60 + i * 60,
+                "AppY",
+                "DEF-456 导出报表 - Y",
+            ));
+        }
+        // 09:41-10:00 回到任务 A：应用 X
+        for i in 0..20 {
+            activities.push(activity_with_app(
+                9 * 3600 + 41 * 60 + i * 60,
+                "AppX",
+                "ABC-123 修复登录 - X",
+            ));
+        }
+
+        let sessions = build_activity_sessions(&activities);
+        assert_eq!(
+            sessions.len(),
+            3,
+            "应用切换应切分会话（穿插多任务的天不能连成一团），实际: {sessions:?}"
+        );
+    }
+
+    #[test]
+    fn 穿插多任务的整天应产出多个工作项归因() {
+        let mut activities = Vec::new();
+        for i in 0..20 {
+            activities.push(activity_with_app(
+                9 * 3600 + i * 60,
+                "AppX",
+                "ABC-123 修复登录 - X",
+            ));
+        }
+        for i in 0..20 {
+            activities.push(activity_with_app(
+                9 * 3600 + 21 * 60 + i * 60,
+                "AppY",
+                "DEF-456 导出报表 - Y",
+            ));
+        }
+        let candidates = vec![
+            candidate("ABC", 123, "修复登录"),
+            candidate("DEF", 456, "导出报表"),
+        ];
+        let sessions = build_activity_sessions(&activities);
+        let result = attribute_sessions(&sessions, &activities, &candidates, &[], None);
+
+        assert_eq!(
+            result.len(),
+            2,
+            "两个任务段应各产出一条归因，实际: {result:?}"
+        );
+        assert_eq!(result[0].display_key, "ABC-123");
+        assert_eq!(result[1].display_key, "DEF-456");
     }
 }
