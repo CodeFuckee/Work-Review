@@ -2185,7 +2185,7 @@ mod tests {
         commit_pending_config, config_backup_path, default_ui_visual_style,
         normalize_app_category_rules, normalize_string_list, normalize_ui_visual_style,
         update_config_backup_with_sync, AiProvider, AppCategoryRule, AppConfig, ConfigLoadStatus,
-        GitlabConfig, PendingConfigFile, PlaneConfig, RemoteStorageProvider, ScreenshotDisplayMode,
+        PendingConfigFile, PlaneConfig, RemoteStorageProvider, ScreenshotDisplayMode,
         WebsiteSemanticRule, DEFAULT_LOCALHOST_API_PORT,
     };
     use std::io::{self, Write};
