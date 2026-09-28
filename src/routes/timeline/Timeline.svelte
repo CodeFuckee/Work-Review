@@ -1727,14 +1727,21 @@
                 <div class="timeline-entry-time">{new Date(row.commit.committed_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                 <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
               </div>
-              <div class="timeline-entry-card timeline-entry-card-commit">
+              <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
                 <div class="timeline-entry-app timeline-entry-app-compact">
-                  <span class="timeline-commit-badge" title="GitLab">⎇</span>
+                  <div class="timeline-app-icon timeline-app-icon-gitlab" aria-hidden="true">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <circle cx="12" cy="12" r="4"></circle>
+                      <line x1="1.05" y1="12" x2="7" y2="12"></line>
+                      <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+                    </svg>
+                  </div>
                   <div class="timeline-entry-heading">
-                    <span class="timeline-entry-app-name timeline-entry-app-name-commit">{row.commit.project}</span>
+                    <span class="timeline-entry-app-name" title={row.commit.project}>{row.commit.project}</span>
+                    <span class="timeline-entry-category timeline-entry-category-pill">{t('overview.gitlabTitle')}</span>
                   </div>
                 </div>
-                <p class="timeline-entry-title timeline-entry-title-compact">{row.commit.title}</p>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.commit.title}>{row.commit.title}</p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
                   <span class="timeline-commit-stats">{row.commit.additions !== null && row.commit.deletions !== null ? `+${row.commit.additions}/-${row.commit.deletions}` : ''}</span>
                 </div>
@@ -1746,14 +1753,17 @@
                 <div class="timeline-entry-time">{new Date(row.event.occurred_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                 <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
               </div>
-              <div class="timeline-entry-card timeline-entry-card-commit">
+              <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
                 <div class="timeline-entry-app timeline-entry-app-compact">
-                  <span class="timeline-commit-badge" title={t('overview.fileEventsTitle')}>📄</span>
+                  <div class="timeline-app-icon timeline-app-icon-fileevent" aria-hidden="true">
+                    <span>📄</span>
+                  </div>
                   <div class="timeline-entry-heading">
-                    <span class="timeline-entry-app-name timeline-entry-app-name-commit" title={row.event.path}>{fileEventName(row.event.path)}</span>
+                    <span class="timeline-entry-app-name" title={row.event.path}>{fileEventName(row.event.path)}</span>
+                    <span class="timeline-entry-category timeline-entry-category-pill">{t(fileEventBadgeKey(row.event.event_type))}</span>
                   </div>
                 </div>
-                <p class="timeline-entry-title timeline-entry-title-compact">{t(fileEventBadgeKey(row.event.event_type))}</p>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.event.path}>{row.event.path}</p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
                   {#if row.event.size !== null}
                     <span class="timeline-commit-stats">{fileEventSizeLabel(row.event.size)}</span>
@@ -1767,14 +1777,17 @@
                 <div class="timeline-entry-time">{new Date(row.item.updated_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                 <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
               </div>
-              <div class="timeline-entry-card timeline-entry-card-commit">
+              <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
                 <div class="timeline-entry-app timeline-entry-app-compact">
-                  <span class="timeline-commit-badge" title={t('timeline.planeItemBadge')}>🛩</span>
+                  <div class="timeline-app-icon timeline-app-icon-plane" aria-hidden="true">
+                    <span>🛩</span>
+                  </div>
                   <div class="timeline-entry-heading">
-                    <span class="timeline-entry-app-name timeline-entry-app-name-commit">{row.item.project_name}</span>
+                    <span class="timeline-entry-app-name" title={row.item.project_name}>{row.item.project_name}</span>
+                    <span class="timeline-entry-category timeline-entry-category-pill">{t('timeline.planeItemBadge')}</span>
                   </div>
                 </div>
-                <p class="timeline-entry-title timeline-entry-title-compact">{row.item.name}</p>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.item.name}>{row.item.name}</p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
                   <span class="timeline-commit-stats">{row.item.state_name}</span>
                 </div>
@@ -2902,39 +2915,22 @@
     align-self: end;
   }
 
-  /* GitLab 提交行：项目名作应用列的轻量卡片（与活动行同布局栅格） */
-  .timeline-entry-card-commit {
-    display: grid;
-    grid-template-columns: minmax(0, 16rem) minmax(0, 1fr) auto;
-    gap: 0.75rem;
-    align-items: center;
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgb(226 232 240 / 0.8);
-    border-radius: var(--radius-md);
-    background: rgb(248 250 252 / 0.6);
+  /* GitLab/文件/Plane 外部行：与活动行同款紧凑栅格卡片 + 2.75rem 图标方块，
+     淡色底与内容色区分来源（提交橙 / 文件灰蓝 / Plane 靛） */
+  .timeline-app-icon-gitlab {
+    color: #ea580c;
+    background: rgba(251, 146, 60, 0.14);
   }
-  :global(.dark) .timeline-entry-card-commit {
-    border-color: rgb(45 56 67 / 0.8);
-    background: rgb(22 27 34 / 0.5);
+  .timeline-app-icon-fileevent {
+    color: #475569;
+    background: rgba(148, 163, 184, 0.18);
+  }
+  .timeline-app-icon-plane {
+    color: #4f46e5;
+    background: rgba(99, 102, 241, 0.14);
   }
   .timeline-entry-marker-commit {
     background: rgb(251 146 60);
-  }
-  .timeline-commit-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.75rem;
-    height: 1.75rem;
-    border-radius: var(--radius-md);
-    font-size: 0.9rem;
-    color: rgb(251 146 60);
-    background: rgb(251 146 60 / 0.12);
-  }
-  .timeline-entry-app-name-commit {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.8rem;
   }
   .timeline-commit-stats {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2944,8 +2940,17 @@
   :global(.dark) .timeline-commit-stats {
     color: rgb(125 133 144);
   }
+  :global(.dark) .timeline-app-icon-gitlab {
+    color: #fb923c;
+  }
+  :global(.dark) .timeline-app-icon-fileevent {
+    color: #94a3b8;
+  }
+  :global(.dark) .timeline-app-icon-plane {
+    color: #818cf8;
+  }
 
-  /* Plane 工作项归因徽标：同 timeline-commit-badge 思路的轻量文字徽标，
+  /* Plane 工作项归因徽标：轻量文字徽标，
      紫色区分 GitLab 橙；文字 = {identifier}-{sequence_id}，title = 工作项名 */
   .timeline-plane-badge {
     display: inline-block;
