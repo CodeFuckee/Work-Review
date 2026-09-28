@@ -43,6 +43,7 @@
     type DiffLine,
     type FileEventRow,
     type GitlabCommitRow,
+    type MergedTimelineRow,
     type PlaneWorkItemRow,
   } from './timelineGitlab.ts';
   import { getViewportPopoverPlacement } from '../../lib/utils/popoverPosition.ts';
@@ -54,6 +55,7 @@
     type TimelineActivity,
   } from './timelineData.ts';
   import { type HourlySummaryRecord } from './summaryPresentation.ts';
+  import { attachAttribution } from './timelineAttribution.ts';
   import { timelineGateway } from './timelineGateway.ts';
   import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
   import HourlySummaryDrawer from './HourlySummaryDrawer.svelte';
@@ -145,18 +147,31 @@
   let planeAttributions: PlaneAttributionItem[] = [];
   let gitlabSyncStartedDates = new Set<string>();
   let planeSyncStartedDates = new Set<string>();
-  $: timelineRows = mergeTimelineRows(activities, gitlabCommits, fileEvents, planeWorkItems);
 
-  // 活动行 → 所在会话的 Plane 归因（活动时间戳落入归因会话窗口 [start,end]
-  // 内即标注该工作项；线性扫描即可，归因条目很少）。
-  function planeBadgeFor(activity: TimelineActivity): PlaneAttributionItem | null {
-    for (const attr of planeAttributions) {
-      if (activity.timestamp >= attr.session_start && activity.timestamp <= attr.session_end) {
-        return attr;
-      }
+  // 合并行时间戳统一提取（attachAttribution 回调用）
+  function timelineRowTimestamp(row: MergedTimelineRow<TimelineActivity>): number {
+    switch (row.kind) {
+      case 'commit':
+        return row.commit.committed_at;
+      case 'fileEvent':
+        return row.event.occurred_at;
+      case 'planeItem':
+        return row.item.updated_at;
+      default:
+        return row.activity.timestamp;
     }
-    return null;
   }
+
+  // 应用活动行 / GitLab 提交行 / 文件事件行 / Plane 工作项行合并后统一附加
+  // Plane 归因（行时间戳落入归因会话窗口 [start,end] 内即标注该工作项）。
+  // 归因 join 必须在这个派生层做（词法引用 planeAttributions）：归因按日现算、
+  // 晚于行渲染到达，若在模板行内调函数读归因列表，Svelte 追踪不到依赖，
+  // 归因到达后徽标不会出现（响应式缺失缺陷，2026-09-28）。
+  $: timelineRows = attachAttribution(
+    mergeTimelineRows(activities, gitlabCommits, fileEvents, planeWorkItems),
+    planeAttributions,
+    timelineRowTimestamp,
+  );
 
   // Plane 工作项归因：时间线主数据加载完成后按日现算（随用随算不入库；
   // 未配置 Plane 时后端返回空成功）。失败静默，不影响时间线首屏。
@@ -1900,7 +1915,13 @@
                     <span class="timeline-entry-category timeline-entry-category-pill">{t('overview.gitlabTitle')}</span>
                   </div>
                 </div>
-                <p class="timeline-entry-title timeline-entry-title-compact" title={row.commit.title}>{row.commit.title}</p>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.commit.title}>
+                  {#if row.attribution}
+                    <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
+                  {/if}
+                  {row.commit.title}
+                </p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
                   <span class="timeline-commit-stats">{row.commit.additions !== null && row.commit.deletions !== null ? `+${row.commit.additions}/-${row.commit.deletions}` : ''}</span>
                   <svg class="timeline-entry-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -1925,7 +1946,13 @@
                     <span class="timeline-entry-category timeline-entry-category-pill">{t(fileEventBadgeKey(row.event.event_type))}</span>
                   </div>
                 </div>
-                <p class="timeline-entry-title timeline-entry-title-compact" title={row.event.path}>{row.event.path}</p>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.event.path}>
+                  {#if row.attribution}
+                    <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
+                  {/if}
+                  {row.event.path}
+                </p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
                   {#if row.event.size !== null}
                     <span class="timeline-commit-stats">{fileEventSizeLabel(row.event.size)}</span>
@@ -1960,7 +1987,6 @@
           {@const info = getCategoryMeta(activity.category)}
           {@const featured = activity.id !== null && featuredActivityIds.has(activity.id)}
           {@const timelineTitle = getTimelineTitle(activity)}
-          {@const planeBadge = planeBadgeFor(activity)}
           <button
             class={`timeline-entry ${featured ? 'timeline-entry-featured' : 'timeline-entry-compact'}`}
             on:click={(event) => viewActivity(activity, event.currentTarget)}
@@ -2008,9 +2034,9 @@
                     <div class="timeline-entry-duration-chip">{formatDuration(activity.duration)}</div>
                   </div>
                   <p class="timeline-entry-title timeline-entry-title-featured" title={activity.window_title}>
-                    {#if planeBadge}
-                      <span class="timeline-plane-badge" title={planeBadge.name + ' · ' + planeBadge.project_name}>{planeBadge.display_key} {planeBadge.name}</span>
-                      <span class="timeline-commit-stats">· {planeBadge.project_name}</span>
+                    {#if row.attribution}
+                      <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
+                      <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
                     {/if}
                     {timelineTitle}
                   </p>
@@ -2040,9 +2066,9 @@
                   </div>
                 </div>
                 <p class="timeline-entry-title timeline-entry-title-compact" title={activity.window_title}>
-                  {#if planeBadge}
-                    <span class="timeline-plane-badge" title={planeBadge.name + ' · ' + planeBadge.project_name}>{planeBadge.display_key} {planeBadge.name}</span>
-                    <span class="timeline-commit-stats">· {planeBadge.project_name}</span>
+                  {#if row.attribution}
+                    <span class="timeline-plane-badge" title={row.attribution.name + ' · ' + row.attribution.project_name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-commit-stats">· {row.attribution.project_name}</span>
                   {/if}
                   {timelineTitle}
                 </p>

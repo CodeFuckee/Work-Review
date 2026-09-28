@@ -134,6 +134,23 @@ test('打开提交抽屉时应触发 diff 加载，同 sha 会话内命中缓存
   assert.match(viewCommitBody, /loadCommitDiff/);
 });
 
+test('GitLab 提交行应显示 Plane 归因徽标（提交时间落入归因窗口即 join）', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+  const start = source.indexOf("row.kind === 'commit'");
+  const end = source.indexOf("row.kind === 'fileEvent'");
+  assert.ok(start > 0 && end > start, 'commit 行分支应存在');
+  const section = source.slice(start, end);
+
+  // 提交行徽标读派生层附加的 row.attribution（归因 join 在 timelineRows 派生层完成，
+  // 归因按日现算晚于行渲染到达，行内调函数 Svelte 追踪不到依赖、徽标不会出现）
+  assert.match(section, /row\.attribution/);
+  assert.match(section, /timeline-plane-badge/);
+  // join 统一在派生层：timelineRows 赋值语句应词法引用 planeAttributions
+  const derivation = source.slice(source.indexOf('$: timelineRows'), source.indexOf('$: timelineRows') + 400);
+  assert.match(derivation, /planeAttributions/);
+  assert.match(derivation, /attachAttribution/);
+});
+
 test('修改文件与外跳文案应在四语言词典中齐备且非空', async () => {
   const localeNames = ['zh-CN', 'en', 'zh-TW', 'ar'] as const;
   for (const localeName of localeNames) {
