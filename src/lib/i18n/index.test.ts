@@ -363,8 +363,11 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   // overview.planeItemCount / overview.planeEmpty）；
   // 时间线详情抽屉 OCR 区块每语言新增 2 键（timeline.detail.ocr / ocrEmpty）；
   // GitLab 提交详情抽屉每语言新增 5 键（timeline.detail.commitStats /
-  // commitMessage / commitBranch / commitHash / commitAuthor）
-  assert.equal(expected.length, 1_279);
+  // commitMessage / commitBranch / commitHash / commitAuthor）；
+  // 提交详情修改文件区块每语言新增 9 键（commitFiles / commitFilesEmpty /
+  // commitFilesFailed / commitFileAdded / commitFileModified /
+  // commitFileDeleted / commitFileRenamed / commitDiffTruncated / openInGitlab）
+  assert.equal(expected.length, 1_288);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

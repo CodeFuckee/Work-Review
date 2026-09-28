@@ -3798,6 +3798,7 @@ async fn main() {
             commands::gitlab_list_projects,
             commands::gitlab_list_authors,
             commands::gitlab_sync_commits_for_date,
+            commands::gitlab_commit_diff,
             commands::get_gitlab_commits_for_date,
             commands::get_gitlab_project_stats,
             commands::plane_test_connection,

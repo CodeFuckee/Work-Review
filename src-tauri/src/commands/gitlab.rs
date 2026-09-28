@@ -315,6 +315,58 @@ pub fn get_gitlab_project_stats(
         .map_err(|e| e.to_string())
 }
 
+/// 时间线页 GitLab 提交详情抽屉的修改文件结果
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabCommitDiffResult {
+    pub ok: bool,
+    pub files: Vec<work_review_core::gitlab::GitlabCommitDiffFile>,
+    pub message: Option<String>,
+}
+
+/// 现拉单条提交的文件级 diff（时间线详情抽屉「修改文件」区块）。
+/// 不读已保存配置：前端从 get_config 取 url/token 透传（与补采命令同口径）；
+/// 20 秒超时（单端点一次调用，比同步命令预算收紧）。
+#[tauri::command]
+pub async fn gitlab_commit_diff(
+    url: String,
+    token: String,
+    project: String,
+    sha: String,
+) -> Result<GitlabCommitDiffResult, String> {
+    let sha = sha.trim().to_string();
+    if project.trim().is_empty() || sha.is_empty() {
+        return Ok(GitlabCommitDiffResult {
+            ok: false,
+            files: Vec::new(),
+            message: Some(String::from("提交信息不完整，无法获取修改文件")),
+        });
+    }
+    let client = GitlabClient::new(&url, &token);
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        client.fetch_commit_diff(project.trim(), &sha),
+    )
+    .await;
+
+    match outcome {
+        Ok(Ok(files)) => Ok(GitlabCommitDiffResult {
+            ok: true,
+            files,
+            message: None,
+        }),
+        Ok(Err(error)) => Ok(GitlabCommitDiffResult {
+            ok: false,
+            files: Vec::new(),
+            message: Some(error.to_string()),
+        }),
+        Err(_) => Ok(GitlabCommitDiffResult {
+            ok: false,
+            files: Vec::new(),
+            message: Some(String::from("获取修改文件超时（20 秒）")),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,5 +412,36 @@ mod tests {
         assert!(!result.truncated, "失败时不应标记截断");
         let message = result.message.unwrap_or_default();
         assert!(!message.is_empty(), "失败时应给出可展示的原因");
+    }
+
+    #[tokio::test]
+    async fn 修改文件指向不可达地址应返回结构化失败而不是panic() {
+        let result = gitlab_commit_diff(
+            "http://127.0.0.1:1".to_string(),
+            "stub-token".to_string(),
+            "group/repo".to_string(),
+            "abc12345".to_string(),
+        )
+        .await
+        .expect("命令不应直接失败");
+        assert!(!result.ok, "不可达地址应判定为失败");
+        assert!(result.files.is_empty(), "失败时不应携带文件数据");
+        let message = result.message.unwrap_or_default();
+        assert!(!message.is_empty(), "失败时应给出可展示的原因");
+    }
+
+    #[tokio::test]
+    async fn 修改文件参数缺失应直接判失败而不是发起网络请求() {
+        let result = gitlab_commit_diff(
+            "http://127.0.0.1:1".to_string(),
+            "stub-token".to_string(),
+            "  ".to_string(),
+            "".to_string(),
+        )
+        .await
+        .expect("命令不应直接失败");
+        assert!(!result.ok, "空 project/sha 应判定失败");
+        assert!(result.files.is_empty());
+        assert!(!result.message.unwrap_or_default().is_empty());
     }
 }

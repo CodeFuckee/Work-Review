@@ -70,3 +70,64 @@ export function formatCommitStatsSuffix(
   if (additions === null || deletions === null) return '';
   return ` (+${additions}/-${deletions})`;
 }
+
+// ---- 提交详情抽屉「修改文件」区块：diff 解析与状态判定 ----
+
+export interface GitlabDiffFileLike {
+  new_file: boolean;
+  renamed_file: boolean;
+  deleted_file: boolean;
+}
+
+export type DiffLineKind = 'add' | 'del' | 'hunk' | 'ctx' | 'meta';
+
+export interface DiffLine {
+  kind: DiffLineKind;
+  text: string;
+}
+
+export function diffFileState(file: GitlabDiffFileLike): 'added' | 'deleted' | 'renamed' | 'modified' {
+  if (file.new_file) return 'added';
+  if (file.deleted_file) return 'deleted';
+  if (file.renamed_file) return 'renamed';
+  return 'modified';
+}
+
+// unified diff 逐行归类：+/− 增删（`+++`/`---` 文件头除外）、@@ hunk 头、
+// `\ No newline` 提示与文件头行归 meta，其余上下文；纯空白行（含 diff 末尾
+// 换行产生的空行）也归 meta 保持行数对齐。maxLines 截断防超长 diff
+// （minified 文件等）撑爆 webview，截断数随结果返回。
+export function parseDiffLines(
+  diff: string,
+  maxLines: number,
+): { lines: DiffLine[]; truncated: number } {
+  if (diff.trim() === '') {
+    return { lines: [], truncated: 0 };
+  }
+  const raw = diff.split('\n');
+  const lines: DiffLine[] = [];
+  for (const text of raw) {
+    let kind: DiffLineKind;
+    if (text.startsWith('+++') || text.startsWith('---') || text.startsWith('\\')) {
+      kind = 'meta';
+    } else if (text.startsWith('@@')) {
+      kind = 'hunk';
+    } else if (text.startsWith('+')) {
+      kind = 'add';
+    } else if (text.startsWith('-')) {
+      kind = 'del';
+    } else if (text.trim() === '') {
+      // 纯空白/空行：diff 末尾通常带一个换行产生的空行，跳过；
+      // 上下文空行（首空格）保留为 ctx
+      kind = text.startsWith(' ') ? 'ctx' : 'meta';
+    } else {
+      kind = 'ctx';
+    }
+    if (lines.length >= maxLines) {
+      const truncated = raw.length - lines.length;
+      return { lines, truncated: Math.max(truncated, 0) };
+    }
+    lines.push({ kind, text });
+  }
+  return { lines, truncated: 0 };
+}

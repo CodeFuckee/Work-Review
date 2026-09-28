@@ -37,7 +37,10 @@
   import { resolveAppIconSrc } from '../../lib/utils/appVisuals.ts';
   import { formatBrowserUrlForDisplay } from '../../lib/utils/browserUrl.ts';
   import {
+    diffFileState,
     mergeTimelineRows,
+    parseDiffLines,
+    type DiffLine,
     type FileEventRow,
     type GitlabCommitRow,
     type PlaneWorkItemRow,
@@ -218,6 +221,116 @@
   let selectedCommit: GitlabCommitRow | null = null;
   let commitDetailTrigger: HTMLButtonElement | null = null;
   let commitDetailCloseButton: HTMLButtonElement | null = null;
+
+  // 提交「修改文件」：点击时现拉 + 会话级缓存（sha → 结果），同 sha 不重复请求。
+  interface CommitDiffFile {
+    old_path: string;
+    new_path: string;
+    diff: string;
+    new_file: boolean;
+    renamed_file: boolean;
+    deleted_file: boolean;
+  }
+  interface CommitDiffCacheEntry {
+    ok: boolean;
+    files: CommitDiffFile[];
+    message?: string;
+  }
+  const COMMIT_DIFF_MAX_LINES = 400;
+  const commitDiffCache = new Map<string, CommitDiffCacheEntry>();
+  let commitDiffFiles: CommitDiffFile[] = [];
+  let commitDiffLoading = false;
+  let commitDiffError: string | null = null;
+  let commitDiffRequestId = 0;
+  let expandedDiffFiles = new Set<string>();
+  // 外跳按钮用的实例地址（抽屉打开时随配置读取）
+  let commitGitlabUrl = '';
+
+  // 外跳地址：实例 URL + 项目路径（URL 编码）+ commit/sha（GitLab Web 约定）
+  function commitWebUrl(commit: GitlabCommitRow): string {
+    const base = commitGitlabUrl.trim().replace(/\/+$/, '');
+    const encoded = commit.project.split('/').map(encodeURIComponent).join('/');
+    return `${base}/${encoded}/-/commit/${commit.sha}`;
+  }
+
+  function diffFileLabel(file: CommitDiffFile): string {
+    const state = diffFileState(file);
+    const key = `timeline.detail.commitFile${state.charAt(0).toUpperCase()}${state.slice(1)}`;
+    return t(key);
+  }
+
+  function diffFileStateClass(file: CommitDiffFile): string {
+    return `timeline-diff-state-${diffFileState(file)}`;
+  }
+
+  async function loadCommitDiff(commit: GitlabCommitRow): Promise<void> {
+    const requestId = ++commitDiffRequestId;
+    commitDiffLoading = !commitDiffCache.has(commit.sha);
+    commitDiffFiles = [];
+    commitDiffError = null;
+    expandedDiffFiles = new Set();
+    try {
+      // 配置无论如何都读一次：外跳按钮需要实例地址
+      const config = await invoke<TimelineConfig>('get_config');
+      const gitlab = config.gitlab;
+      commitGitlabUrl = gitlab?.url?.trim() ?? '';
+      const cached = commitDiffCache.get(commit.sha);
+      if (cached) {
+        commitDiffFiles = cached.files;
+        commitDiffError = cached.ok ? null : cached.message || t('timeline.detail.commitFilesFailed');
+        return;
+      }
+      if (!gitlab?.url?.trim() || !gitlab.token?.trim()) {
+        commitDiffError = t('timeline.detail.commitFilesFailed');
+        return;
+      }
+      const result = await invoke<{
+        ok: boolean;
+        files: CommitDiffFile[];
+        message: string | null;
+      }>('gitlab_commit_diff', {
+        url: gitlab.url,
+        token: gitlab.token,
+        project: commit.project,
+        sha: commit.sha,
+      });
+      commitDiffCache.set(commit.sha, {
+        ok: result.ok,
+        files: result.files,
+        message: result.message ?? undefined,
+      });
+      if (requestId !== commitDiffRequestId) return;
+      if (!result.ok) {
+        commitDiffError = result.message || t('timeline.detail.commitFilesFailed');
+        return;
+      }
+      commitDiffFiles = result.files;
+    } catch (e) {
+      if (requestId !== commitDiffRequestId) return;
+      commitDiffError = formatUserError(e, t('timeline.detail.commitFilesFailed'));
+    } finally {
+      if (requestId === commitDiffRequestId) {
+        commitDiffLoading = false;
+      }
+    }
+  }
+
+  function retryCommitDiff(): void {
+    if (selectedCommit) {
+      void loadCommitDiff(selectedCommit);
+    }
+  }
+
+  function toggleDiffFile(file: CommitDiffFile): void {
+    const key = file.new_path || file.old_path;
+    const next = new Set(expandedDiffFiles);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    expandedDiffFiles = next;
+  }
   let categoryTrigger: HTMLButtonElement | null = null;
   let categoryPopover: HTMLElement | null = null;
   let categoryPopoverStyle = '';
@@ -1365,7 +1478,7 @@
     detailTrigger = null;
   }
 
-  // 打开 GitLab 提交详情（行内已带全部字段，无需回库刷新）
+  // 打开 GitLab 提交详情（行内已带全部字段，无需回库刷新；修改文件随打开现拉）
   async function viewCommit(
     commit: GitlabCommitRow,
     trigger: HTMLButtonElement | null = null,
@@ -1376,11 +1489,15 @@
     selectedCommit = commit;
     await tick();
     commitDetailCloseButton?.focus();
+    void loadCommitDiff(commit);
   }
 
   // 关闭提交详情并把焦点交还给打开详情的时间线记录。
   async function closeCommitDetail(restoreFocus = true): Promise<void> {
     selectedCommit = null;
+    commitDiffFiles = [];
+    commitDiffError = null;
+    expandedDiffFiles = new Set();
     if (restoreFocus) {
       await tick();
       commitDetailTrigger?.focus();
@@ -2353,6 +2470,15 @@
             </div>
           </div>
           <div class="flex items-center gap-1">
+            <button
+              class="btn btn-ghost text-indigo-500 hover:text-indigo-600 dark:text-indigo-400"
+              title={t('timeline.detail.openInGitlab')}
+              on:click={() => selectedCommit && openUrl(commitWebUrl(selectedCommit))}
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </button>
             <button bind:this={commitDetailCloseButton} class="btn btn-ghost" aria-label={t('window.close')} on:click={() => closeCommitDetail()}>
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -2393,6 +2519,65 @@
             <div class="timeline-detail-meta-row">
               <span>{t('timeline.detail.commitAuthor')}</span>
               <p>{selectedCommit.author_name}</p>
+            </div>
+          {/if}
+        </section>
+
+        <!-- 修改文件：点击时现拉 + 会话缓存，文件可展开查看染色 diff -->
+        <section class="timeline-detail-commit-files">
+          <div class="timeline-detail-section-heading">
+            <span>{t('timeline.detail.commitFiles')}</span>
+            {#if commitDiffFiles.length > 0}
+              <span class="timeline-detail-files-count">{commitDiffFiles.length}</span>
+            {/if}
+          </div>
+
+          {#if commitDiffLoading}
+            <div class="timeline-detail-files-state">
+              <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-500"></div>
+            </div>
+          {:else if commitDiffError}
+            <div class="timeline-detail-files-error">
+              <p>{commitDiffError}</p>
+              <button type="button" class="page-control-btn" on:click={retryCommitDiff}>{t('timeline.retry')}</button>
+            </div>
+          {:else if commitDiffFiles.length === 0}
+            <div class="timeline-detail-files-state text-slate-400 dark:text-[#7d8590]">
+              <span>{t('timeline.detail.commitFilesEmpty')}</span>
+            </div>
+          {:else}
+            <div class="timeline-diff-list">
+              {#each commitDiffFiles as file (file.new_path + ':' + file.old_path)}
+                {@const fileKey = file.new_path || file.old_path}
+                {@const expanded = expandedDiffFiles.has(fileKey)}
+                {@const parsed = expanded ? parseDiffLines(file.diff, COMMIT_DIFF_MAX_LINES) : null}
+                <div class="timeline-diff-item">
+                  <button
+                    type="button"
+                    class="timeline-diff-file"
+                    aria-expanded={expanded}
+                    on:click={() => toggleDiffFile(file)}
+                  >
+                    <svg class:timeline-diff-chevron-open={expanded} class="timeline-diff-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span class="timeline-diff-path" title={file.new_path === file.old_path ? file.new_path : `${file.old_path} → ${file.new_path}`}>
+                      {file.new_path === file.old_path ? file.new_path : `${file.old_path} → ${file.new_path}`}
+                    </span>
+                    <span class="timeline-diff-state {diffFileStateClass(file)}">{diffFileLabel(file)}</span>
+                  </button>
+                  {#if expanded && parsed}
+                    <div class="timeline-diff-body">
+                      {#each parsed.lines as line}
+                        <span class="timeline-diff-line timeline-diff-line-{line.kind}">{line.text || ' '}</span>
+                      {/each}
+                      {#if parsed.truncated > 0}
+                        <span class="timeline-diff-truncated">{t('timeline.detail.commitDiffTruncated', { count: COMMIT_DIFF_MAX_LINES })}</span>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
             </div>
           {/if}
         </section>
@@ -3075,6 +3260,243 @@
   }
   :global(.dark) .timeline-app-icon-plane {
     color: #818cf8;
+  }
+
+  /* 提交详情「修改文件」区块：文件行 + 可展开染色 diff */
+  .timeline-detail-files-count {
+    display: inline-flex;
+    align-items: center;
+    min-width: 1.35rem;
+    justify-content: center;
+    padding: 0.05rem 0.4rem;
+    border-radius: var(--radius-full);
+    background: rgba(99, 102, 241, 0.12);
+    color: #4f46e5;
+    font-size: 0.68rem;
+    font-weight: 700;
+  }
+
+  .timeline-detail-files-state {
+    min-height: 5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.84rem;
+  }
+
+  .timeline-detail-files-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid rgba(248, 113, 113, 0.24);
+    border-radius: var(--radius-md);
+    background: rgba(254, 242, 242, 0.7);
+    color: #b91c1c;
+    font-size: 0.8rem;
+  }
+
+  .timeline-detail-files-error p {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+
+  .timeline-diff-list {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .timeline-diff-item {
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.6);
+  }
+
+  .timeline-diff-file {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 0.65rem;
+    border: 0;
+    background: transparent;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .timeline-diff-file:focus-visible {
+    outline: 2px solid rgba(79, 70, 229, 0.55);
+    outline-offset: -2px;
+  }
+
+  .timeline-diff-chevron {
+    width: 0.9rem;
+    height: 0.9rem;
+    flex: 0 0 auto;
+    color: #a8a29e;
+    transition: transform 160ms ease;
+  }
+
+  .timeline-diff-chevron-open {
+    transform: rotate(180deg);
+  }
+
+  .timeline-diff-path {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem;
+    color: #292524;
+  }
+
+  .timeline-diff-state {
+    flex: 0 0 auto;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-full);
+    font-size: 0.66rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .timeline-diff-state-added {
+    color: #15803d;
+    background: rgba(34, 197, 94, 0.14);
+  }
+
+  .timeline-diff-state-deleted {
+    color: #b91c1c;
+    background: rgba(239, 68, 68, 0.14);
+  }
+
+  .timeline-diff-state-renamed {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.16);
+  }
+
+  .timeline-diff-state-modified {
+    color: #4f46e5;
+    background: rgba(99, 102, 241, 0.14);
+  }
+
+  .timeline-diff-body {
+    display: block;
+    max-height: 17rem;
+    overflow-y: auto;
+    padding: 0.5rem 0.65rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(248, 250, 252, 0.85);
+  }
+
+  .timeline-diff-line {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .timeline-diff-line-add {
+    color: #166534;
+    background: rgba(34, 197, 94, 0.14);
+  }
+
+  .timeline-diff-line-del {
+    color: #991b1b;
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .timeline-diff-line-hunk {
+    color: #7c3aed;
+  }
+
+  .timeline-diff-line-ctx {
+    color: #57534e;
+  }
+
+  .timeline-diff-line-meta {
+    color: #a8a29e;
+  }
+
+  .timeline-diff-truncated {
+    display: block;
+    margin-top: 0.4rem;
+    color: #a8a29e;
+    font-size: 0.7rem;
+  }
+
+  :global(.dark) .timeline-detail-files-count {
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.2);
+  }
+
+  :global(.dark) .timeline-detail-files-error {
+    border-color: rgba(248, 81, 73, 0.26);
+    background: rgba(63, 20, 20, 0.28);
+    color: #ff7b72;
+  }
+
+  :global(.dark) .timeline-diff-item {
+    border-color: var(--surface-border-subtle);
+    background: rgba(22, 27, 34, 0.6);
+  }
+
+  :global(.dark) .timeline-diff-path {
+    color: #e6edf3;
+  }
+
+  :global(.dark) .timeline-diff-body {
+    border-top-color: var(--surface-border-subtle);
+    background: rgba(13, 17, 23, 0.8);
+  }
+
+  :global(.dark) .timeline-diff-line-add {
+    color: #7ee787;
+    background: rgba(46, 160, 67, 0.18);
+  }
+
+  :global(.dark) .timeline-diff-line-del {
+    color: #ffa198;
+    background: rgba(248, 81, 73, 0.16);
+  }
+
+  :global(.dark) .timeline-diff-line-hunk {
+    color: #d2a8ff;
+  }
+
+  :global(.dark) .timeline-diff-line-ctx {
+    color: #adbac7;
+  }
+
+  :global(.dark) .timeline-diff-line-meta {
+    color: #6e7681;
+  }
+
+  :global(.dark) .timeline-diff-state-added {
+    color: #7ee787;
+    background: rgba(46, 160, 67, 0.2);
+  }
+
+  :global(.dark) .timeline-diff-state-deleted {
+    color: #ffa198;
+    background: rgba(248, 81, 73, 0.2);
+  }
+
+  :global(.dark) .timeline-diff-state-renamed {
+    color: #e3b341;
+    background: rgba(187, 128, 9, 0.2);
+  }
+
+  :global(.dark) .timeline-diff-state-modified {
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.2);
   }
 
   /* Plane 工作项归因徽标：轻量文字徽标，

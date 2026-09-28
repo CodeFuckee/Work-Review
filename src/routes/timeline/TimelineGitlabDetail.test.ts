@@ -10,6 +10,18 @@ const COMMIT_DETAIL_KEYS = [
   'commitAuthor',
 ] as const;
 
+const COMMIT_FILES_KEYS = [
+  'commitFiles',
+  'commitFilesEmpty',
+  'commitFilesFailed',
+  'commitFileAdded',
+  'commitFileModified',
+  'commitFileDeleted',
+  'commitFileRenamed',
+  'commitDiffTruncated',
+  'openInGitlab',
+] as const;
+
 test('GitLab 提交行应可点击打开详情（按钮化 + viewCommit + 右侧箭头示意）', async () => {
   const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
   const start = source.indexOf("row.kind === 'commit'");
@@ -79,6 +91,64 @@ test('两类抽屉应互斥打开，关闭时焦点交还给触发行', async ()
   );
   assert.match(closeCommit, /restoreFocus/);
   assert.match(closeCommit, /commitDetailTrigger\?\.focus\(\)/);
+});
+
+test('提交详情抽屉应包含「修改文件」区块：加载 + 可展开 diff + 状态徽标 + 截断', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+  const start = source.indexOf('{#if selectedCommit}');
+  const section = source.slice(start, start + 18000);
+
+  assert.match(section, /timeline\.detail\.commitFiles/);
+  // 每文件可展开（展开状态来自 expandedDiffFiles.has；aria-expanded 反映展开态）
+  assert.match(section, /expandedDiffFiles\.has\(/);
+  assert.match(section, /aria-expanded=\{expanded\}/);
+  // diff 染色行渲染走 parseDiffLines
+  assert.match(section, /parseDiffLines\(/);
+  // 加载中、失败重试、空态三种状态（失败文案在 script 侧组装）
+  assert.match(section, /commitDiffLoading/);
+  assert.match(section, /retryCommitDiff/);
+  assert.match(source, /loadCommitDiff/);
+  assert.match(source, /timeline\.detail\.commitFilesFailed/);
+  assert.match(section, /timeline\.detail\.commitFilesEmpty/);
+  // 超长 diff 截断提示
+  assert.match(section, /timeline\.detail\.commitDiffTruncated/);
+});
+
+test('提交详情抽屉头部应有「在 GitLab 打开」外跳按钮', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+  const start = source.indexOf('{#if selectedCommit}');
+  const section = source.slice(start, start + 8000);
+
+  assert.match(section, /timeline\.detail\.openInGitlab/);
+  assert.match(section, /commitWebUrl\(selectedCommit\)/);
+});
+
+test('打开提交抽屉时应触发 diff 加载，同 sha 会话内命中缓存不重复请求', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+
+  // 会话级缓存 Map（sha → 拉取结果）
+  assert.match(source, /commitDiffCache/);
+  // viewCommit 打开后拉取 diff
+  const viewCommitStart = source.indexOf('async function viewCommit');
+  const viewCommitBody = source.slice(viewCommitStart, viewCommitStart + 700);
+  assert.match(viewCommitBody, /loadCommitDiff/);
+});
+
+test('修改文件与外跳文案应在四语言词典中齐备且非空', async () => {
+  const localeNames = ['zh-CN', 'en', 'zh-TW', 'ar'] as const;
+  for (const localeName of localeNames) {
+    const dictionary = (await import(`./../../lib/i18n/locales/${localeName}.ts`)).default;
+    const detail = dictionary.timeline?.detail;
+    assert.ok(detail, `${localeName} 应有 timeline.detail 组`);
+    for (const key of COMMIT_FILES_KEYS) {
+      const value = (detail as Record<string, unknown>)[key];
+      assert.equal(
+        typeof value === 'string' && value.length > 0,
+        true,
+        `${localeName} 的 timeline.detail.${key} 应为非空字符串`
+      );
+    }
+  }
 });
 
 test('提交详情文案应在四语言词典中齐备且非空', async () => {

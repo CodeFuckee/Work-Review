@@ -566,6 +566,32 @@ pub struct GitlabClient {
     http: reqwest::Client,
 }
 
+/// 一条提交 diff 端点返回的文件变更（GET /projects/:id/repository/commits/:sha/diff 的元素）。
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct GitlabCommitDiffFile {
+    pub old_path: String,
+    pub new_path: String,
+    /// unified diff 文本
+    pub diff: String,
+    #[serde(default)]
+    pub new_file: bool,
+    #[serde(default)]
+    pub renamed_file: bool,
+    #[serde(default)]
+    pub deleted_file: bool,
+}
+
+/// 项目路径编码：path_with_namespace 的 `/` 必须转义为 %2F（GitLab API 约定），
+/// 其余按 RFC 3986 保留集处理（连字符/点/下划线/波浪线保留）。
+pub fn encode_project_path(path: &str) -> String {
+    const SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'_')
+        .remove(b'.')
+        .remove(b'~');
+    percent_encoding::utf8_percent_encode(path, SET).to_string()
+}
+
 impl GitlabClient {
     pub fn new(base_url: &str, token: &str) -> Self {
         // 必须显式设超时：reqwest 默认无超时，GitLab 挂起时日报生成会无限阻塞。
@@ -685,6 +711,34 @@ impl GitlabClient {
                 ("per_page", &limit.to_string()),
                 ("stats", "true"),
             ])
+            .header(self.auth_header(), &self.token)
+            .send()
+            .await
+            .map_err(GitlabError::Http)?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(GitlabError::Http)?;
+        if !status.is_success() {
+            return Err(GitlabError::Api(
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ));
+        }
+        serde_json::from_slice(&bytes).map_err(GitlabError::Json)
+    }
+
+    /// GET /projects/:id/repository/commits/:sha/diff — 单条提交的文件级 diff。
+    /// 项目定位用 URL-encoded path_with_namespace（时间线行未存 project_id）。
+    pub async fn fetch_commit_diff(
+        &self,
+        project_path: &str,
+        sha: &str,
+    ) -> Result<Vec<GitlabCommitDiffFile>, GitlabError> {
+        let encoded = encode_project_path(project_path.trim());
+        let resp = self
+            .http
+            .get(self.api_url(&format!(
+                "/projects/{encoded}/repository/commits/{sha}/diff"
+            )))
             .header(self.auth_header(), &self.token)
             .send()
             .await
@@ -1933,5 +1987,53 @@ mod tests {
             "姓名忽略大小写命中"
         );
         assert!(!contributor_is_current_user(&by_username, &user));
+    }
+
+    #[test]
+    fn 项目路径编码应转义斜杠并保留连字符点下划线() {
+        assert_eq!(
+            encode_project_path("group/sub/repo.name-x_y"),
+            "group%2Fsub%2Frepo.name-x_y"
+        );
+        assert_eq!(encode_project_path("repo"), "repo");
+        // 空格等不安全字符一并编码（API 端解码后等价）
+        assert_eq!(encode_project_path("my repo"), "my%20repo");
+    }
+
+    #[test]
+    fn 提交diff响应应反序列化为文件列表() {
+        let payload = r#"[
+            {
+                "old_path": "src/a.rs",
+                "new_path": "src/a.rs",
+                "diff": "@@ -1,2 +1,3 @@\n fn main() {\n-    println!(\"a\");\n+    println!(\"b\");\n",
+                "new_file": false,
+                "renamed_file": false,
+                "deleted_file": false
+            },
+            {
+                "old_path": "",
+                "new_path": "src/new.rs",
+                "diff": "@@ -0,0 +1,1 @@\n+fn stub() {}\n",
+                "new_file": true,
+                "renamed_file": false,
+                "deleted_file": false
+            },
+            {
+                "old_path": "src/old.rs",
+                "new_path": "src/renamed.rs",
+                "diff": "@@ -1,1 +1,1 @@\n-fn x() {}\n\\ No newline at end of file\n+fn x() {}\n\\ No newline at end of file\n",
+                "new_file": false,
+                "renamed_file": true,
+                "deleted_file": false
+            }
+        ]"#;
+        let files: Vec<GitlabCommitDiffFile> = serde_json::from_str(payload).expect("应可解析");
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].old_path, "src/a.rs");
+        assert!(!files[0].new_file && !files[0].renamed_file && !files[0].deleted_file);
+        assert!(files[1].new_file && files[1].old_path.is_empty());
+        assert!(files[2].renamed_file);
+        assert!(files[2].diff.contains("No newline"), "diff 正文应原样保留");
     }
 }

@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  diffFileState,
   formatCommitStatsSuffix,
   mergeTimelineRows,
+  parseDiffLines,
   type FileEventRow,
   type GitlabCommitRow,
   type PlaneWorkItemRow,
@@ -152,4 +154,55 @@ test('不传 plane 工作项时保持原有三源合并行为', () => {
     rows.map((row) => `${row.kind}:${row.key}`),
     ['commit:200', 'activity:200', 'fileEvent:150'],
   );
+});
+
+test('parseDiffLines：增行/删行/上下文/hunk 头应各自归类', () => {
+  const diff = [
+    '@@ -1,3 +1,3 @@',
+    ' unchanged line',
+    '-removed line',
+    '+added line',
+    '+added line 2',
+    ' more context',
+  ].join('\n');
+  const { lines } = parseDiffLines(diff, 100);
+  assert.deepEqual(
+    lines.map((line) => line.kind),
+    ['hunk', 'ctx', 'del', 'add', 'add', 'ctx'],
+  );
+  assert.equal(lines[3].text, '+added line');
+});
+
+test('parseDiffLines：diff 头部 ---/+++ 行不应误判为删行/增行', () => {
+  const diff = ['--- a/file.ts', '+++ b/file.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n');
+  const { lines } = parseDiffLines(diff, 100);
+  assert.deepEqual(
+    lines.map((line) => line.kind),
+    ['meta', 'meta', 'hunk', 'del', 'add'],
+  );
+});
+
+test('parseDiffLines：无换行符提示与空 diff 的边界', () => {
+  const { lines } = parseDiffLines('\\ No newline at end of file', 100);
+  assert.deepEqual(lines.map((line) => line.kind), ['meta']);
+  assert.deepEqual(parseDiffLines('', 100).lines, []);
+  assert.deepEqual(parseDiffLines('   \n  ', 100).lines, []);
+});
+
+test('parseDiffLines：超长 diff 应截断并返回剩余行数', () => {
+  const body = Array.from({ length: 500 }, (_, i) => `+line ${i}`).join('\n');
+  const result = parseDiffLines(body, 400);
+  assert.equal(result.lines.length, 400);
+  assert.equal(result.truncated, 100);
+  // 未超长时 truncated 为 0
+  const short = parseDiffLines('+one', 400);
+  assert.equal(short.truncated, 0);
+  assert.equal(short.lines.length, 1);
+});
+
+test('diffFileState：新增/删除/重命名/修改四态判定', () => {
+  assert.equal(diffFileState({ new_file: true, deleted_file: false, renamed_file: false }), 'added');
+  assert.equal(diffFileState({ new_file: false, deleted_file: true, renamed_file: false }), 'deleted');
+  assert.equal(diffFileState({ new_file: false, deleted_file: false, renamed_file: true }), 'renamed');
+  assert.equal(diffFileState({ new_file: false, deleted_file: false, renamed_file: false }), 'modified');
 });

@@ -7848,6 +7848,7 @@ dependencies = [
  "notify",
  "notify-debouncer-full",
  "once_cell",
+ "percent-encoding",
  "regex",
  "reqwest 0.11.27",
  "rusqlite",
