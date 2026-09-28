@@ -831,6 +831,19 @@ impl ConfigLoadStatus {
     }
 }
 
+/// Plane 集成配置是否等于「从未配置」的默认空值（同步合并的防覆盖判据）。
+pub fn is_plane_config_blank(plane: &PlaneConfig) -> bool {
+    !plane.enabled
+        && plane.url.is_none()
+        && plane.api_key.is_none()
+        && plane.workspace_slug.is_none()
+}
+
+/// GitLab 集成配置是否等于「从未配置」的默认空值（同步合并的防覆盖判据）。
+pub fn is_gitlab_config_blank(gitlab: &GitlabConfig) -> bool {
+    gitlab.url.is_none() && gitlab.token.is_none() && !gitlab.report_enabled
+}
+
 /// 返回在完整配置文件名后追加 `.bak` 的备份路径。
 pub fn config_backup_path(path: &Path) -> PathBuf {
     let mut backup_name = path.as_os_str().to_os_string();
@@ -1498,6 +1511,11 @@ impl AppConfig {
         let daily_report_export_dir = self.daily_report_export_dir.clone();
         let node_gateway = self.node_gateway.clone();
         let background_image = self.background_image.clone();
+        let local_plane = self.plane.clone();
+        let local_gitlab = self.gitlab.clone();
+
+        let remote_plane_blank = is_plane_config_blank(&remote.plane);
+        let remote_gitlab_blank = is_gitlab_config_blank(&remote.gitlab);
 
         *self = remote;
 
@@ -1511,6 +1529,16 @@ impl AppConfig {
         self.daily_report_export_dir = daily_report_export_dir;
         self.node_gateway = node_gateway;
         self.background_image = background_image;
+        // 集成配置防覆盖（2026-09-28 事故回归）：远端快照为「默认空值」视为
+        // 陈旧快照未携带该块配置（如只在单机配置过 Plane，远端从未更新），
+        // 不得把本地非空配置抹成默认值；远端已有配置时仍按最后写入获胜覆盖。
+        // 用户主动清空走 save_config（本地即为空、打同步戳上传），不受影响。
+        if remote_plane_blank {
+            self.plane = local_plane;
+        }
+        if remote_gitlab_blank {
+            self.gitlab = local_gitlab;
+        }
     }
 
     /// 规范化配置，兼容旧字段并补齐助手可用的文本模型档案
@@ -2157,8 +2185,8 @@ mod tests {
         commit_pending_config, config_backup_path, default_ui_visual_style,
         normalize_app_category_rules, normalize_string_list, normalize_ui_visual_style,
         update_config_backup_with_sync, AiProvider, AppCategoryRule, AppConfig, ConfigLoadStatus,
-        PendingConfigFile, RemoteStorageProvider, ScreenshotDisplayMode, WebsiteSemanticRule,
-        DEFAULT_LOCALHOST_API_PORT,
+        GitlabConfig, PendingConfigFile, PlaneConfig, RemoteStorageProvider, ScreenshotDisplayMode,
+        WebsiteSemanticRule, DEFAULT_LOCALHOST_API_PORT,
     };
     use std::io::{self, Write};
     use std::path::PathBuf;
@@ -2425,6 +2453,69 @@ mod tests {
         assert_eq!(local.localhost_api_port, 12345);
         assert_eq!(local.locale, "en");
         assert_eq!(local.assistant_timeout_secs, 180);
+    }
+
+    // 2026-09-28 事故回归：远端快照陈旧（未配置 Plane）且 synced_at 较新时，
+    // 启动拉取整包覆盖把本机已配置的 Plane 集成抹成默认值。
+    // 修复语义：远端「集成配置为默认空值」视为"该快照没带这个字段"，
+    // 不得覆盖本地的非空配置（用户主动清空走 save_config，本地即为空，不受影响）。
+    #[test]
+    fn 远端集成配置为默认空值时不应抹掉本地已配置的plane() {
+        let mut local = AppConfig::default();
+        local.plane = PlaneConfig {
+            enabled: true,
+            url: Some("https://plane.example.com".to_string()),
+            api_key: Some("pat-123".to_string()),
+            workspace_slug: Some("my-team".to_string()),
+            project_filter: vec!["proj-a".to_string()],
+            ..PlaneConfig::default()
+        };
+        let remote = AppConfig::default();
+        local.apply_synced_remote(remote);
+
+        assert!(local.plane.enabled, "Plane 启用状态应保留本地值");
+        assert_eq!(
+            local.plane.url.as_deref(),
+            Some("https://plane.example.com")
+        );
+        assert_eq!(local.plane.api_key.as_deref(), Some("pat-123"));
+        assert_eq!(local.plane.workspace_slug.as_deref(), Some("my-team"));
+        assert_eq!(local.plane.project_filter, vec!["proj-a".to_string()]);
+    }
+
+    #[test]
+    fn 远端plane已配置时应正常覆盖本地() {
+        let mut local = AppConfig::default();
+        let mut remote = AppConfig::default();
+        remote.plane = PlaneConfig {
+            enabled: true,
+            url: Some("https://remote.example.com".to_string()),
+            api_key: Some("remote-key".to_string()),
+            workspace_slug: Some("remote-team".to_string()),
+            ..PlaneConfig::default()
+        };
+        local.apply_synced_remote(remote);
+
+        assert!(local.plane.enabled);
+        assert_eq!(
+            local.plane.url.as_deref(),
+            Some("https://remote.example.com")
+        );
+        assert_eq!(local.plane.api_key.as_deref(), Some("remote-key"));
+    }
+
+    #[test]
+    fn 远端gitlab为默认空值时不应抹掉本地已配置的gitlab() {
+        let mut local = AppConfig::default();
+        local.gitlab.url = Some("https://git.example.com".to_string());
+        local.gitlab.token = Some("glpat-x".to_string());
+        local.gitlab.report_enabled = true;
+        let remote = AppConfig::default();
+        local.apply_synced_remote(remote);
+
+        assert_eq!(local.gitlab.url.as_deref(), Some("https://git.example.com"));
+        assert_eq!(local.gitlab.token.as_deref(), Some("glpat-x"));
+        assert!(local.gitlab.report_enabled);
     }
 
     #[test]
