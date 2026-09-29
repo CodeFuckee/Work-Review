@@ -367,8 +367,10 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   // 提交详情修改文件区块每语言新增 9 键（commitFiles / commitFilesEmpty /
   // commitFilesFailed / commitFileAdded / commitFileModified /
   // commitFileDeleted / commitFileRenamed / commitDiffTruncated / openInGitlab）；
-  // 日报文件修改小节每语言新增 1 键（report.blockNames.FILE_EVENTS_TODAY）
-  assert.equal(expected.length, 1_289);
+  // 日报文件修改小节每语言新增 1 键（report.blockNames.FILE_EVENTS_TODAY）；
+  // 时间线今日项目归因卡每语言新增 5 键（timeline.projects 组：title/addLabel/
+  // editLabel/removeLabel/empty）
+  assert.equal(expected.length, 1_294);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

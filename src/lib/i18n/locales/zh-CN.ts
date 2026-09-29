@@ -229,6 +229,13 @@ export default {
       loadingMore: '加载中...',
       noMore: '没有更多记录了',
       planeItemBadge: 'Plane 工作项',
+      projects: {
+        title: '今日项目',
+        addLabel: '添加项目',
+        editLabel: '修改',
+        removeLabel: '删除',
+        empty: '当日暂无归因项目，可手动添加',
+      },
       detail: {
         appCategory: '应用默认分类',
         appCategoryHelp: '修改后会同步更新该应用的历史记录',

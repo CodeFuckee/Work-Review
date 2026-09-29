@@ -18,7 +18,25 @@ const CARD_TEXT_AVAILABLE = '当前优先使用你配置的模型';
 const PROVIDER_LABEL = '提供商';
 const MODE_LEGEND = '日报模式';
 
+// 预置本地登录凭证绕过启动认证门（App.svelte 无凭证强制跳 /auth；该门非 IPC，
+// mock 拦不住——缺种子时用例依赖 onMount 前完成断言的时序竞态，冷启动必挂）
+async function seedAuth(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'yue-review-auth',
+      JSON.stringify({
+        token: 'e2e-fake-token',
+        userId: 1,
+        userName: 'e2e',
+        name: 'E2E',
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    );
+  });
+}
+
 async function openAiTab(page: Page): Promise<void> {
+  await seedAuth(page);
   await page.goto('/#/settings');
   await expect(page.getByRole('button', { name: 'AI 模型' })).toBeVisible();
   await page.getByRole('button', { name: 'AI 模型' }).click();
@@ -94,6 +112,7 @@ test.describe('设置页内置模型指示卡', () => {
   test('E2E-004 纯 web 降级（无任何 Tauri IPC）：配置加载失败且卡片不可见', async ({ page }) => {
     // 不注入 mock：web 模式下 get_config 失败，设置页进入「加载失败」错误态（设计内降级），
     // 分区不渲染，指示卡自然不存在
+    await seedAuth(page);
     await page.goto('/#/settings');
     await expect(page.getByText('加载配置失败')).toBeVisible({ timeout: 10_000 });
 

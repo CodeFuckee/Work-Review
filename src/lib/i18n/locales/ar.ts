@@ -230,6 +230,13 @@ export default {
       loadingMore: 'جاري التحميل...',
       noMore: 'لا يوجد المزيد من السجلات',
       planeItemBadge: 'عنصر عمل Plane',
+      projects: {
+        title: 'مشاريع اليوم',
+        addLabel: 'إضافة مشروع',
+        editLabel: 'تعديل',
+        removeLabel: 'حذف',
+        empty: 'لا توجد مشاريع مسندة اليوم — أضف واحدًا يدويًا',
+      },
       detail: {
         appCategory: 'التصنيف الافتراضي للتطبيق',
         appCategoryHelp: 'ستتم مزامنة التغييرات لهذا التطبيق عبر السجلات التاريخية',

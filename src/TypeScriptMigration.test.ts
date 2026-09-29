@@ -278,8 +278,8 @@ test('全部第一方 Svelte 组件脚本应启用 TypeScript', async () => {
     }
   }
 
-  // 38 = 37 + SettingsPlane（Plane 集成设置组件）
-  assert.equal(svelteFiles.length, 38);
+  // 39 = 38 + TimelineProjectsCard（时间线今日项目归因卡）
+  assert.equal(svelteFiles.length, 39);
   assert.deepEqual(untypedComponents, []);
 });
 

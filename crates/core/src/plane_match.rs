@@ -166,6 +166,19 @@ pub fn attribute_sessions(
     attributions
 }
 
+/// 候选聚合出去重后的项目名列表（按名称排序稳定输出）——「今日项目」卡的
+/// 下拉数据源与归因聚合共用。
+pub fn distinct_project_names(candidates: &[PlaneCandidate]) -> Vec<String> {
+    let mut names: Vec<String> = candidates
+        .iter()
+        .map(|c| c.project_name.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 /// 展示 key 兜底：无 identifier 的候选（只能靠 URL UUID 归因）回退 UUID 前 8 位。
 fn attribution_display_key(candidate: &PlaneCandidate) -> String {
     let key = candidate.display_key();
@@ -685,6 +698,33 @@ mod tests {
             cand.display_key(),
             "",
             "identifier 缺失时 key 为空、不参与匹配"
+        );
+    }
+
+    #[test]
+    fn 候选聚合应为下拉列表去重出项目名并稳定排序() {
+        let candidates = vec![
+            candidate("ABC", 1, "a"),
+            candidate("ABC", 2, "b"),
+            candidate("DEF", 3, "c"),
+        ];
+        let projects = distinct_project_names(&candidates);
+        // candidate() 的项目名固定为「示例项目」，ABC 两个候选项只应出现一次
+        assert_eq!(projects, vec!["示例项目".to_string()]);
+
+        // 多项目去重 + 按名称码点稳定排序（乙 U+4E59 < 甲 U+7532 < 示 U+793A）
+        let mut other = candidate("XYZ", 9, "x");
+        other.project_name = "乙项目".to_string();
+        let mut another = candidate("UVW", 8, "u");
+        another.project_name = "甲项目".to_string();
+        let names = distinct_project_names(&[other, another, candidates[0].clone()]);
+        assert_eq!(
+            names,
+            vec![
+                "乙项目".to_string(),
+                "甲项目".to_string(),
+                "示例项目".to_string()
+            ]
         );
     }
 

@@ -60,6 +60,7 @@
   import { timelineGateway } from './timelineGateway.ts';
   import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
   import HourlySummaryDrawer from './HourlySummaryDrawer.svelte';
+  import TimelineProjectsCard from './TimelineProjectsCard.svelte';
   import { confirm } from '../../lib/stores/confirm.ts';
 
   type PrivacyLevel = 'full' | 'anonymized' | 'ignored';
@@ -1864,6 +1865,8 @@
     </div>
   </div>
 
+  <TimelineProjectsCard date={selectedDate} attributions={planeAttributions} />
+
   {#if loading}
     <div class="flex items-center justify-center h-64">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
@@ -1884,7 +1887,7 @@
       <p class="empty-state-copy">{t('timeline.empty')}</p>
     </div>
   {:else}
-    <div class="page-card timeline-editorial-board overflow-hidden p-0">
+      <div class="page-card timeline-editorial-board overflow-hidden p-0">
       <div class="timeline-summary-strip">
         <div class="timeline-summary-copy">
           <span>{t('timeline.recordSummary', { dateLabel: isToday ? t('timeline.todayLabel') : selectedDate, count: activities.length })}</span>

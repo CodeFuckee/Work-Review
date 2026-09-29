@@ -982,6 +982,74 @@ pub async fn plane_attributions_for_date(
     })
 }
 
+/// 时间线「今日项目」卡：取某日的人工调整项（removed=当日屏蔽 / 未删=手动添加）
+#[tauri::command]
+pub async fn get_daily_project_adjustments(
+    date: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<work_review_core::database::DailyProjectAdjustment>, String> {
+    let state_guard = state.lock().map_err(|e| e.to_string())?;
+    state_guard
+        .database
+        .get_daily_project_adjustments(&date)
+        .map_err(|e| e.to_string())
+}
+
+/// 时间线「今日项目」卡：upsert 一条人工调整（添加 removed=false / 删除屏蔽
+/// removed=true；同 (date, project) 覆盖，增删状态可反复翻转）
+#[tauri::command]
+pub async fn set_daily_project_adjustment(
+    date: String,
+    project_name: String,
+    removed: bool,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let name = project_name.trim().to_string();
+    if name.is_empty() {
+        return Err("项目名不能为空".to_string());
+    }
+    let state_guard = state.lock().map_err(|e| e.to_string())?;
+    state_guard
+        .database
+        .upsert_daily_project_adjustment(&date, &name, removed)
+        .map_err(|e| e.to_string())
+}
+
+/// 时间线「今日项目」卡：Plane 项目下拉数据源（候选取过去重排序）。
+/// 未配置 Plane / 拉取失败返回结构化空成功（卡隐藏，不报错打扰）。
+#[tauri::command]
+pub async fn list_plane_projects(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<String>, String> {
+    let (client, project_filter) = {
+        let state_guard = state.lock().map_err(|e| e.to_string())?;
+        let plane = &state_guard.config.plane;
+        if !plane_configured(plane) {
+            return Ok(Vec::new());
+        }
+        validate_endpoint_url(
+            plane.url.as_deref().unwrap_or(""),
+            plane.allow_insecure_http,
+        )?;
+        let client = PlaneClient::new(
+            plane.url.as_deref().unwrap_or(""),
+            plane.workspace_slug.as_deref().unwrap_or(""),
+            plane.api_key.as_deref().unwrap_or(""),
+        );
+        (client, plane.project_filter.clone())
+    };
+    let candidates = match fetch_candidates_cached(&client, &project_filter).await {
+        Ok(items) => items,
+        Err(message) => {
+            log::warn!("Plane 项目列表拉取失败（今日项目卡隐藏）: {message}");
+            return Ok(Vec::new());
+        }
+    };
+    Ok(work_review_core::plane_match::distinct_project_names(
+        &candidates,
+    ))
+}
+
 /// 日报「工作项归因」小节标题（四语言，同 gitlab_section_title 机制）
 fn plane_section_title(locale: AppLocale) -> &'static str {
     match locale {

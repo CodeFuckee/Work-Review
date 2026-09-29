@@ -219,6 +219,14 @@ pub struct FileEventRow {
     pub date: String,
 }
 
+/// 时间线「今日项目」卡的人工调整项：removed=true 表示当日屏蔽（归因聚合出的
+/// 项目被删除后不再复活，次日自然重置）；false 表示手动添加。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DailyProjectAdjustment {
+    pub project_name: String,
+    pub removed: bool,
+}
+
 /// 应用使用统计
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppUsage {
@@ -1131,6 +1139,22 @@ impl Database {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_file_events_date_time
              ON file_events (date, occurred_at)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS daily_project_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                removed INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                UNIQUE(date, project_name)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_daily_project_adjustments_date
+             ON daily_project_adjustments (date)",
             [],
         )?;
 
@@ -3042,6 +3066,51 @@ impl Database {
     }
 
     /// 批量写入文件监控事件（防抖后的一批，按时间升序）
+    /// 当日项目清单的人工调整 upsert：同 (date, project_name) 覆盖（增删状态翻转）
+    pub fn upsert_daily_project_adjustment(
+        &self,
+        date: &str,
+        project_name: &str,
+        removed: bool,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        conn.execute(
+            "INSERT INTO daily_project_adjustments (date, project_name, removed, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(date, project_name)
+             DO UPDATE SET removed = excluded.removed",
+            params![
+                date,
+                project_name,
+                removed as i64,
+                chrono::Utc::now().timestamp()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 取某日的人工调整项（只含该日；按项目名排序保证展示稳定）
+    pub fn get_daily_project_adjustments(&self, date: &str) -> Result<Vec<DailyProjectAdjustment>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT project_name, removed FROM daily_project_adjustments
+             WHERE date = ?1 ORDER BY project_name",
+        )?;
+        let rows = stmt
+            .query_map(params![date], |row| {
+                Ok(DailyProjectAdjustment {
+                    project_name: row.get(0)?,
+                    removed: row.get::<_, i64>(1)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn insert_file_events(&self, events: &[FileEventRow]) -> Result<usize> {
         if events.is_empty() {
             return Ok(0);
@@ -5444,6 +5513,76 @@ impl Database {
         items.truncate(limit);
 
         Ok(items)
+    }
+}
+
+#[cfg(test)]
+mod daily_project_adjustment_tests {
+    use super::Database;
+
+    fn temp_db(name: &str) -> (Database, std::path::PathBuf) {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("work-review-{name}-{unique}.db"));
+        (Database::new(&path).expect("open db"), path)
+    }
+
+    fn cleanup(path: &std::path::PathBuf) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn 当日项目调整应支持增删状态翻转且同日同项目唯一() {
+        let (db, path) = temp_db("proj-adj-flip");
+        // 添加（removed=false）→ 删除（removed=true）→ 再添加：同 (date, project) 覆盖不报错
+        db.upsert_daily_project_adjustment("2026-09-29", "Plane演示项目", false)
+            .expect("add");
+        db.upsert_daily_project_adjustment("2026-09-29", "Plane演示项目", true)
+            .expect("remove");
+        let rows = db.get_daily_project_adjustments("2026-09-29").expect("get");
+        assert_eq!(rows.len(), 1, "同日同项目只有一条（覆盖）");
+        assert!(rows[0].removed, "最后一次写入生效（删除）");
+
+        db.upsert_daily_project_adjustment("2026-09-29", "Plane演示项目", false)
+            .expect("re-add");
+        let rows = db.get_daily_project_adjustments("2026-09-29").expect("get");
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].removed, "复活为添加态");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn 当日项目调整应按日隔离且空表返回空() {
+        let (db, path) = temp_db("proj-adj-isolate");
+        assert!(db
+            .get_daily_project_adjustments("2026-09-29")
+            .expect("get")
+            .is_empty());
+
+        db.upsert_daily_project_adjustment("2026-09-28", "项目A", false)
+            .expect("add A");
+        db.upsert_daily_project_adjustment("2026-09-28", "项目B", true)
+            .expect("remove B");
+        db.upsert_daily_project_adjustment("2026-09-27", "项目A", false)
+            .expect("add A prev day");
+
+        let today = db.get_daily_project_adjustments("2026-09-29").expect("get");
+        assert!(today.is_empty(), "查询互不串日");
+
+        let day28 = db.get_daily_project_adjustments("2026-09-28").expect("get");
+        assert_eq!(day28.len(), 2);
+        assert!(day28
+            .iter()
+            .any(|r| r.project_name == "项目A" && !r.removed));
+        assert!(day28.iter().any(|r| r.project_name == "项目B" && r.removed));
+
+        let day27 = db.get_daily_project_adjustments("2026-09-27").expect("get");
+        assert_eq!(day27.len(), 1);
+        cleanup(&path);
     }
 }
 

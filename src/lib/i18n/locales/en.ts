@@ -231,6 +231,13 @@ export default {
       loadingMore: 'Loading...',
       noMore: 'No more records',
       planeItemBadge: 'Plane work item',
+      projects: {
+        title: "Today's Projects",
+        addLabel: 'Add project',
+        editLabel: 'Edit',
+        removeLabel: 'Remove',
+        empty: 'No attributed projects today — add one manually',
+      },
       detail: {
         appCategory: 'Default App Category',
         appCategoryHelp: 'Changes will be synced to this app across historical records',
