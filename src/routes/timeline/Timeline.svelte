@@ -56,6 +56,7 @@
   } from './timelineData.ts';
   import { type HourlySummaryRecord } from './summaryPresentation.ts';
   import { attachAttribution } from './timelineAttribution.ts';
+  import { shiftIsoDate } from '../report/reportDateNavigation.ts';
   import { timelineGateway } from './timelineGateway.ts';
   import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
   import HourlySummaryDrawer from './HourlySummaryDrawer.svelte';
@@ -138,6 +139,11 @@
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  }
+
+  // 工具栏「昨天」快捷按钮的目标日期（复用日报的 ISO 平移纯函数）
+  function getTimelineYesterdayDateString(): string {
+    return shiftIsoDate(getLocalDateString(), -1);
   }
 
   let activities: TimelineActivity[] = [];
@@ -1801,6 +1807,25 @@
       </div>
     </div>
     <div class="page-toolbar">
+      <button
+        type="button"
+        class="page-control-btn"
+        on:click={() => (selectedDate = shiftIsoDate(selectedDate, -1))}
+      >
+        {t('report.previousDay')}
+      </button>
+      <button
+        class="page-control-btn {selectedDate === getLocalDateString() ? 'page-control-btn-active' : ''}"
+        on:click={() => (selectedDate = getLocalDateString())}
+      >
+        {t('report.today')}
+      </button>
+      <button
+        class="page-control-btn {selectedDate === getTimelineYesterdayDateString() ? 'page-control-btn-active' : ''}"
+        on:click={() => (selectedDate = getTimelineYesterdayDateString())}
+      >
+        {t('report.yesterday')}
+      </button>
       {#key `timeline-date-${currentLocale}`}
         <LocalizedDatePicker
           bind:value={selectedDate}
