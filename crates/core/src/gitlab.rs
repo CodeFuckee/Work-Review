@@ -93,6 +93,11 @@ pub struct GitlabReportSupplement {
     pub local_section: String,
     /// 原始提交条目（时间线交错渲染与入库用）；无提交/失败时为空
     pub entries: Vec<GitlabCommitEntry>,
+    /// 「文件修改」小节（与 GitLab 小节平级）：本结构是日报补充内容的载体，
+    /// 文件监控聚合小节由 report.rs 构造后搭车传入分析器（独立块
+    /// FILE_EVENTS_TODAY 渲染 + ai_context 进 prompt），避免扩 Analyzer
+    /// trait 签名。当日无事件时为空（块整体隐藏）。
+    pub file_events: crate::file_events_report::FileEventsSection,
 }
 
 /// 判定 committed_date（UTC ISO8601）是否落在本地 offset 时区的指定日期。
@@ -495,6 +500,7 @@ impl GitlabFetchResult {
                 locale,
             ),
             entries: self.entries.clone(),
+            file_events: Default::default(),
         }
     }
 }

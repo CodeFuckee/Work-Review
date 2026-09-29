@@ -134,3 +134,15 @@ test('四个语言的段落名都应包含 GITLAB_TODAY 标签', () => {
     );
   }
 });
+
+test('四个语言的段落名都应包含 FILE_EVENTS_TODAY 标签（文件修改小节）', () => {
+  const localesDir = fileURLToPath(new URL('../../lib/i18n/locales', import.meta.url));
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ar']) {
+    const file = readFileSync(`${localesDir}/${locale}.ts`, 'utf8');
+    assert.match(
+      file,
+      /FILE_EVENTS_TODAY: '/,
+      `locale ${locale} missing report.blockNames.FILE_EVENTS_TODAY`,
+    );
+  }
+});

@@ -985,6 +985,7 @@ export default {
         LOCAL_APP_USAGE: 'App Usage',
         LOCAL_DOMAIN_USAGE: 'Website Visits',
         GITLAB_TODAY: 'GitLab Commits Today',
+        FILE_EVENTS_TODAY: 'File Changes',
       },
       modeNames: {
         local: 'Template',

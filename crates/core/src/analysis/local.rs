@@ -1,6 +1,6 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_local_order, format_section_heading,
-    place_gitlab_before_hourly,
+    place_file_events_after_gitlab, place_gitlab_before_hourly,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -388,8 +388,11 @@ impl Analyzer for LocalAnalyzer {
         let mut fallback_reason = None;
 
         let (stats_sections, mut section_count) = assemble_with_section_count(
-            &place_gitlab_before_hourly(
-                apply_preferences(default_local_order(), &self.pinned_blocks),
+            &place_file_events_after_gitlab(
+                place_gitlab_before_hourly(
+                    apply_preferences(default_local_order(), &self.pinned_blocks),
+                    &self.pinned_blocks,
+                ),
                 &self.pinned_blocks,
             ),
             stats,
@@ -397,6 +400,7 @@ impl Analyzer for LocalAnalyzer {
             &category_name_overrides,
             &semantic_name_overrides,
             &gitlab.local_section,
+            &gitlab.file_events.local_section,
         );
         report.push_str(&stats_sections);
 

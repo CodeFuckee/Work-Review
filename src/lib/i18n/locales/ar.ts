@@ -977,6 +977,7 @@ export default {
         LOCAL_APP_USAGE: 'استخدام التطبيقات',
         LOCAL_DOMAIN_USAGE: 'زيارات المواقع',
         GITLAB_TODAY: 'تسليمات GitLab اليوم',
+        FILE_EVENTS_TODAY: 'تغييرات الملفات',
       },
       modeNames: {
         local: 'قالب',

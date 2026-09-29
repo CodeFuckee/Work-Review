@@ -4,6 +4,7 @@ pub mod categorize;
 pub mod config;
 pub mod database;
 pub mod error;
+pub mod file_events_report;
 pub mod file_monitor;
 pub mod generation_params;
 pub mod gitlab;

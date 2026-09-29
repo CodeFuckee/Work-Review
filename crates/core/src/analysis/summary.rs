@@ -1,6 +1,7 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_summary_order, format_section_heading,
-    merge_ai_order, place_gitlab_before_hourly, wrap_block, BLOCK_AI_ANALYSIS,
+    merge_ai_order, place_file_events_after_gitlab, place_gitlab_before_hourly, wrap_block,
+    BLOCK_AI_ANALYSIS,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -1123,8 +1124,11 @@ impl Analyzer for SummaryAnalyzer {
             Some(order) => merge_ai_order(order, &default_order),
             None => default_order,
         };
-        let blocks = place_gitlab_before_hourly(
-            apply_preferences(ordered, &self.pinned_blocks),
+        let blocks = place_file_events_after_gitlab(
+            place_gitlab_before_hourly(
+                apply_preferences(ordered, &self.pinned_blocks),
+                &self.pinned_blocks,
+            ),
             &self.pinned_blocks,
         );
         let (stats_sections, section_count) = assemble_with_section_count(
@@ -1134,6 +1138,7 @@ impl Analyzer for SummaryAnalyzer {
             &category_name_overrides,
             &semantic_name_overrides,
             &gitlab.local_section,
+            &gitlab.file_events.local_section,
         );
         report.push_str(&stats_sections);
 
@@ -1159,11 +1164,27 @@ impl Analyzer for SummaryAnalyzer {
                 .collect(),
         );
 
+        // AI 上下文 = GitLab 提交 + 文件修改聚合（两段补充内容共用一个可选串，
+        // build_ai_prompt 只认整体有无；均为空时不携带）
+        let combined_ai_context = {
+            let gitlab_ctx = gitlab.ai_context.as_deref().unwrap_or("");
+            let file_ctx = gitlab.file_events.ai_context.as_str();
+            match (gitlab_ctx.is_empty(), file_ctx.is_empty()) {
+                (true, true) => None,
+                (true, false) => Some(file_ctx.to_string()),
+                (false, true) => Some(gitlab_ctx.to_string()),
+                (false, false) => Some(format!(
+                    "{gitlab_ctx}
+
+{file_ctx}"
+                )),
+            }
+        };
         let ai_prompt = self.build_ai_prompt(
             date,
             stats,
             activities,
-            gitlab.ai_context.as_deref(),
+            combined_ai_context.as_deref(),
             &semantic_name_overrides,
         );
         let ai_content = match tokio::time::timeout_at(

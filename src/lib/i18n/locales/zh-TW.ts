@@ -971,6 +971,7 @@ export default {
         LOCAL_APP_USAGE: '應用使用情況',
         LOCAL_DOMAIN_USAGE: '網站造訪',
         GITLAB_TODAY: 'GitLab 今日提交',
+        FILE_EVENTS_TODAY: '文件修改',
       },
       modeNames: {
         local: '基礎模板',

@@ -52,6 +52,7 @@ async fn fetch_gitlab_supplement(
             ai_context: None,
             local_section: gitlab_unavailable_section(locale),
             entries: Vec::new(),
+            file_events: Default::default(),
         },
     }
 }
@@ -226,6 +227,39 @@ pub(crate) async fn generate_report_inner(
     // 已配置即生成「GitLab 今日提交」独立小节（失败/无提交为占位说明），
     // 未配置为空补充；失败不阻塞日报生成。
     let mut gitlab_supplement = fetch_gitlab_supplement(&config, &date, report_locale).await;
+
+    // 「文件修改」小节：读当日已入库的文件监控事件聚合（统计 + 目录 Top，
+    // 与 GitLab 小节平级的独立块 FILE_EVENTS_TODAY；未启用/无事件为空串、
+    // 块整体隐藏）。上限拉取 2000 条，超出在统计里注明仅计最近条数；
+    // 读库失败仅记日志不阻塞日报。
+    {
+        const FILE_EVENTS_FETCH_LIMIT: i64 = 2000;
+        let file_events_result = state
+            .lock()
+            .map_err(|e| AppError::Unknown(e.to_string()))
+            .and_then(|guard| {
+                let events =
+                    guard
+                        .database
+                        .get_recent_file_events(&date, &date, FILE_EVENTS_FETCH_LIMIT)?;
+                let total = guard.database.count_file_events(&date, &date)?;
+                Ok((events, total))
+            });
+        match file_events_result {
+            Ok((events, total)) => {
+                gitlab_supplement.file_events =
+                    work_review_core::file_events_report::build_file_events_section(
+                        &events,
+                        total > events.len() as i64,
+                        total.max(0) as usize,
+                        report_locale,
+                    );
+            }
+            Err(error) => {
+                log::warn!("文件事件读取失败（不影响日报生成）: {error}");
+            }
+        }
+    }
 
     // 「工作项归因」小节：Plane 工作项与当天活动/GitLab 提交的混合归因
     // （确定性优先 + AI 兜底），按日随用随算、不建表不入库。追加进 GitLab
