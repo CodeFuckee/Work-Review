@@ -15,6 +15,10 @@
   // 手动归因状态（由父组件驱动；error=true 时展示轻量失败提示，几秒后自动消失）
   export let recomputing = false;
   export let recomputeError = false;
+  // Plane 已配置（来自 get_config.plane.url）：配置了就显示卡——空态卡 +
+  // 手动归因按钮仍可达（手动触发归因最常用的时刻恰是归因还没算出来时；
+  // 若再要求项目列表非空，拉取闪断会把按钮一起藏掉且无重试）
+  export let planeConfigured = false;
 
   const dispatch = createEventDispatcher<{ changed: void; recompute: void }>();
 
@@ -41,8 +45,8 @@
   // 最终清单：auto 未屏蔽 ∪ 手动添加（稳定排序）
   $: todayProjects = Array.from(new Set([...autoProjects.filter((p) => !removedNames.has(p)), ...addedNames])).sort();
 
-  // 未配置 Plane：下拉源空且无任何归因/手动项 → 整卡隐藏
-  $: cardVisible = planeProjects.length > 0 || todayProjects.length > 0;
+  // 可见性以「已配置」为准；未配置（无 url）时才整卡隐藏
+  $: cardVisible = planeConfigured || planeProjects.length > 0 || todayProjects.length > 0;
 
   // 下拉可选项：Plane 项目 − 已在清单中的
   $: selectableProjects = planeProjects.filter((name) => !todayProjects.includes(name));

@@ -84,3 +84,19 @@ test('手动归因应由 Timeline 监听 recompute 事件重算当日归因', as
   assert.match(source, /<TimelineProjectsCard[\s\S]*?recomputing=\{recomputeAttributionsLoading\}/);
   assert.match(source, /recomputeError=\{recomputeAttributionsError\}/);
 });
+
+test('今日项目卡可见性应以 Plane 已配置为准（归因未出/列表拉空时按钮仍可达）', async () => {
+  const source = await readFile(new URL('./TimelineProjectsCard.svelte', import.meta.url), 'utf8');
+
+  // 已配置（planeConfigured）即显示卡：空态卡 + 手动归因按钮可达——
+  // 手动触发归因最常用的时刻恰是归因还没算出来的时候
+  assert.match(source, /planeConfigured/);
+  assert.match(source, /planeConfigured \|\| planeProjects\.length > 0 \|\| todayProjects\.length > 0/);
+});
+
+test('Timeline 应从 get_config 读取 Plane 配置态传给卡', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /planeConfigured=\{planeConfigured\}/);
+  assert.match(source, /async function refreshPlaneConfigured/);
+});

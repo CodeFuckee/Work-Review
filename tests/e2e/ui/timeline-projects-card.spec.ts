@@ -36,6 +36,7 @@ const ATTRIBUTIONS = [
 interface CardMockOptions {
   withAttributions: boolean;
   planeProjects: string[];
+  planeConfigured?: boolean;
 }
 
 async function openTimelineWithCard(
@@ -44,6 +45,9 @@ async function openTimelineWithCard(
 ): Promise<void> {
   const spec: MockSpec = {
     ...baseSpec(),
+    ...(options.planeConfigured
+      ? { get_config: { plane: { url: 'http://plane.example' } } }
+      : {}),
     get_timeline: [],
     get_hourly_summaries: [],
     get_gitlab_commits_for_date: [],
@@ -175,4 +179,18 @@ test.describe('时间线今日项目卡', () => {
     await expect(card(page)).toHaveCount(0);
     await reviewHold(page);
   });
+});
+
+test('E2E-005 已配置 Plane 但列表拉空且无归因：卡显示空态且手动归因按钮可达', async ({ page }) => {
+  await openTimelineWithCard(page, {
+    withAttributions: false,
+    planeProjects: [],
+    planeConfigured: true,
+  });
+
+  // 可见性以「已配置」为准：空态卡 + 重新归因按钮都渲染
+  const card = page.locator('.timeline-projects-card');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('当日暂无归因项目');
+  await expect(page.getByRole('button', { name: '重新归因' })).toBeVisible();
 });

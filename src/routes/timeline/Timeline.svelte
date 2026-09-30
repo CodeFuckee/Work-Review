@@ -108,6 +108,9 @@
       work_authors?: string[] | null;
       report_enabled?: boolean;
     };
+    plane?: {
+      url?: string | null;
+    };
   }
 
   interface CleanupResult {
@@ -152,6 +155,18 @@
   let fileEvents: FileEventRow[] = [];
   let planeWorkItems: PlaneWorkItemRow[] = [];
   let planeAttributions: PlaneAttributionItem[] = [];
+
+  // Plane 已配置（url 非空）：今日项目卡可见性的兜底信号（列表拉空时卡仍显示，
+  // 保证手动归因按钮可达）
+  let planeConfigured = false;
+  async function refreshPlaneConfigured(): Promise<void> {
+    try {
+      const config = await invoke<TimelineConfig>('get_config');
+      planeConfigured = Boolean(config.plane?.url?.trim());
+    } catch {
+      planeConfigured = false;
+    }
+  }
   let gitlabSyncStartedDates = new Set<string>();
   let planeSyncStartedDates = new Set<string>();
 
@@ -1127,6 +1142,7 @@
     // 后台归因：把该日活动归因到 Plane 工作项供行内徽标标注（随用随算不入库；
     // 未配置时后端返回空成功，失败静默）
     void loadPlaneAttributions(requestDate);
+    void refreshPlaneConfigured();
   }
 
   // 拉取指定日期的 GitLab 提交入库（口径与日报一致），成功后刷新展示。
@@ -1884,6 +1900,7 @@
   </div>
 
   <TimelineProjectsCard
+      planeConfigured={planeConfigured}
       date={selectedDate}
       attributions={planeAttributions}
       recomputing={recomputeAttributionsLoading}
