@@ -103,3 +103,49 @@ test('select 列表应渲染所有已获取模型并提供手动输入选项', a
   assert.match(source, /__manual__/);
   assert.doesNotMatch(source, /MANUAL_MODEL_VALUE/);
 });
+
+test('内置模型指示应在编译期注入后常驻显示并按使用状态切换文案', async () => {
+  const source = await readFile(
+    new URL('./components/SettingsAI.svelte', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(source, /invoke<boolean>\('has_builtin_model'\)/);
+  // 指示卡常驻：只要编译期内置了模型就显示，不再要求「正在使用出厂默认配置」
+  assert.match(source, /\{#if hasBuiltinModel\}/);
+  // 指示卡位于模型分区顶部（提供商网格之前），确保用户一进 AI 设置就能看到
+  const hintIndex = source.indexOf("t('settingsAI.builtinModelHint')");
+  assert.notEqual(hintIndex, -1, '应使用 builtinModelHint 文案');
+  assert.ok(
+    hintIndex < source.indexOf("t('settingsAI.provider')"),
+    '内置模型指示卡应位于提供商网格之前'
+  );
+  // 双状态文案：正在使用内置（出厂默认）/ 已配置自定义模型
+  assert.match(source, /settingsAI\.builtinModelHint/);
+  assert.match(source, /settingsAI\.builtinAvailableHint/);
+});
+
+test('选择内置模型供应商时应固定出厂形状并默认 AI 增强', async () => {
+  const source = await readFile(
+    new URL('./components/SettingsAI.svelte', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(source, /function selectBuiltinProvider\(\)/);
+  assert.match(source, /config\.text_model\.provider = 'builtin'/);
+  assert.match(source, /config\.ai_mode = 'summary';/);
+  // 内置选中时隐藏连接字段（出厂默认形状对用户不可见），只留说明与测试入口
+  assert.match(source, /\{#if usingBuiltinModel\}/);
+  assert.match(source, /\{:else\}/);
+  // 网格高亮：builtin 卡片在出厂默认时选中，ollama 卡片此时不选中
+  assert.match(source, /provider\.id === 'builtin'\s*\?\s*usingBuiltinModel/);
+});
+
+test('内置模型指示文案应覆盖全部四种语言', async () => {
+  for (const localeName of ['zh-CN', 'zh-TW', 'en', 'ar']) {
+    const localeModule = await import(`../../lib/i18n/locales/${localeName}.ts`);
+    const messages = localeModule.default;
+    assert.ok(messages.settingsAI.builtinModelHint, `${localeName} 缺少 settingsAI.builtinModelHint`);
+    assert.ok(messages.settingsAI.builtinAvailableHint, `${localeName} 缺少 settingsAI.builtinAvailableHint`);
+  }
+});

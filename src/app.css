@@ -215,6 +215,11 @@
   padding-top: 0.6rem;
 }
 
+/* 登录页：隐藏侧栏后独占整行 */
+.app-shell-stage--auth {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .app-shell-sidebar-frame,
 .app-shell-main-frame {
   min-width: 0;
@@ -4198,27 +4203,6 @@
   gap: 0.65rem;
 }
 
-.about-support-link {
-  display: inline-flex;
-  min-height: 2.5rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  padding: 0.5rem 1rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: #64748b;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
-}
-
-.about-support-link:hover {
-  border-color: var(--surface-border-subtle);
-  background: var(--editorial-surface-subtle);
-  color: #334155;
-}
-
 .about-update-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4337,16 +4321,6 @@
 .dark .about-brand-description,
 .dark .about-tech-item {
   color: #8b949e;
-}
-
-.dark .about-support-link {
-  color: #adbac7;
-}
-
-.dark .about-support-link:hover {
-  border-color: var(--surface-border-default);
-  background: #21262d;
-  color: #e6edf3;
 }
 
 .dark .about-principles-card {
@@ -4555,11 +4529,6 @@
   color: #94a3b8;
 }
 
-
-.dark .about-support-link {
-  color: #fdba74;
-}
-
 .dark .about-tech-stack {
   border-color: var(--surface-border-default);
   box-shadow: none;
@@ -4694,6 +4663,10 @@
 
 .app-shell.ui-style-c .app-shell-stage--macos {
   padding-top: 0.45rem;
+}
+
+.app-shell.ui-style-c .app-shell-stage--auth {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .app-shell.ui-style-c .app-shell-sidebar-frame,

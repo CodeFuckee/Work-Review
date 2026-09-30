@@ -28,7 +28,7 @@ fn main() {
     let db_path = std::env::var("WORK_REVIEW_DB_PATH").unwrap_or_else(|_| {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("work-review");
+            .join("yue-review");
         data_dir
             .join("work_review.db")
             .to_string_lossy()
@@ -40,7 +40,7 @@ fn main() {
         .unwrap_or_else(|_| {
             let data_dir = dirs::data_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("work-review");
+                .join("yue-review");
             data_dir.join("config.json")
         });
 
@@ -203,7 +203,7 @@ fn handle_request(request: &Value, state: &Arc<Mutex<AppState>>) -> Value {
                     },
                     "serverInfo": {
                         "name": "work-review-mcp-server",
-                        "version": "0.1.0"
+                        "version": env!("CARGO_PKG_VERSION")
                     }
                 }
             })
@@ -665,7 +665,7 @@ fn handle_tool_call(name: &str, args: &Value, state: &Arc<Mutex<AppState>>) -> V
     match name {
         "query_timeline" => with_policy_check(state, name, Permission::ReadActivities, |s| {
             let date = args["date"].as_str().unwrap_or("");
-            let limit = args["limit"].as_u64().map(|l| l as u32);
+            let limit = args["limit"].as_u64().map(|l| l.clamp(1, 200) as u32);
             let offset = args["offset"].as_u64().map(|o| o as u32);
             match s.db.get_timeline(date, limit, offset) {
                 Ok(activities) => {
@@ -690,7 +690,9 @@ fn handle_tool_call(name: &str, args: &Value, state: &Arc<Mutex<AppState>>) -> V
             let query = args["query"].as_str().unwrap_or("");
             let date_from = args["date_from"].as_str();
             let date_to = args["date_to"].as_str();
-            let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+            // MCP 客户端传参不可信：limit 钳 [1, 200]，防止极大值全量载入
+            // （FTS 回退路径内部还会放大 12 倍行数）
+            let limit = args["limit"].as_u64().unwrap_or(50).clamp(1, 200) as usize;
             match s.db.search_memory(query, date_from, date_to, limit) {
                 Ok(results) => {
                     let results = filter_memory_results_by_privacy(results, &s.config);
@@ -897,12 +899,14 @@ fn handle_tool_call(name: &str, args: &Value, state: &Arc<Mutex<AppState>>) -> V
                 .and_then(|p| serde_json::from_value(p.clone()).ok())
                 .unwrap_or_default();
 
+            // 文本模型兜底：用户未配置时使用编译期内置模型（若已注入）
+            let text_model = work_review_core::config::effective_text_model(&s.config.text_model);
             let ctx = ExecutionContext {
                 params: params_map,
                 db_path: String::new(),
-                ai_endpoint: Some(s.config.text_model.endpoint.clone()),
-                ai_api_key: s.config.text_model.api_key.clone(),
-                ai_model: Some(s.config.text_model.model.clone()),
+                ai_endpoint: Some(text_model.endpoint.clone()),
+                ai_api_key: text_model.api_key.clone(),
+                ai_model: Some(text_model.model.clone()),
                 // MCP 客户端属外部调用方，默认拒绝含 Script 步骤的技能
                 allow_script_skills: false,
             };

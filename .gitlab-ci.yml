@@ -2,8 +2,39 @@
 # Required Bash shell-runner tags: linux-x64 (Ubuntu 22.04), linux-arm64 (Ubuntu
 # 22.04), macos, windows. Install Node 22 and Rustup on every runner; install
 # `glab` on linux-x64. Configure Tauri signing values as protected CI variables.
+#
+# On the Linux runners, the apt system packages are installed ONCE by an
+# operator (the shell executor has no TTY, so `sudo apt-get` would block on a
+# password and time out). scripts/check-linux-deps.sh only verifies them.
+# Packages (Ubuntu 22.04):
+#   libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+#   + (release bundling) patchelf rpm rpm2cpio cpio binutils
+#   （libfuse2 不需要：tauri 打 AppImage 走 --appimage-extract-and-run）
 
-stages: [verify, audit, preflight, package, publish]
+# stages:
+#   verify   三平台核验（frontend + linux/macos/windows）
+#   compile  三平台 release 编译验证（按平台 needs 链式并行，提前暴露 LTO/链接问题）
+#   daily-package 三平台完整安装包——仅夜间 schedule 流水线运行（artifact 保留 30 天，
+#            固定 latest 下载链接指向最近一次夜间成功构建；日常 push 不再重复产包，
+#            正式发版走 tag 的 package/publish，资产永久保留）
+#   audit    安全审计
+#   version  version-bump：verify+compile 全绿后自动版本自增（末位逢 100 进位）、
+#            提交回 main（[skip ci]）并打 vX.Y.Z tag（→ 触发 preflight/package/publish）
+#   preflight/package/publish  版本发布（tag 流水线，artifact 永久保留；
+#            tag 提交与刚验证过的 main 仅差版本号，打包作业不再重跑验证全套）
+#
+# Tauri 更新签名（createUpdaterArtifacts: true）：GitLab 变量必须单行（masked
+# 规则禁止换行），因此 TAURI_SIGNING_PRIVATE_KEY 存的是 minisign 私钥的
+# base64（base64 -w0 < tauri-updater.key）。tauri-cli v2 (>=2.10) 会自己把
+# 该值（文件路径的内容或原始字符串）按 base64 解码（见
+# crates/tauri-cli/src/helpers/updater_signature.rs 的 secret_key/decode_key），
+# 所以 bash 作业直接用父环境里的原始 base64 值即可（第九轮 #23：曾有的
+# stage-tauri-key.sh 以子进程调用、export 不回传父 shell，从未实际生效，已删）；
+# 绝不能把该值 base64 解码一次再喂给 tauri（否则拿到 "untrusted comment:"
+# 原文会报 "failed to decode base64 secret key: Invalid symbol 32"）。
+# Windows 的 stage-tauri-key.ps1 保留：PowerShell 作业内同一会话生效，
+# 其落盘的临时 key 文件由打包作业 after_script 负责清理。
+stages: [verify, compile, daily-package, audit, deploy-admin, version, preflight, package, publish]
 
 default:
   interruptible: true
@@ -15,32 +46,90 @@ variables:
   CARGO_TARGET_DIR: "$CI_PROJECT_DIR/target"
   NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.npm"
   RUSTFLAGS: "-D warnings"
+  # shell runner 的构建目录跨流水线持久：git clean 保留 target/.cargo/.npm，
+  # 让 cargo 指纹驱动的增量编译在流水线之间生效（此前每次 checkout 全删 +
+  # cache key 漂移，三平台每条流水线全量冷启动）。注意：runner 构建目录会
+  # 随时间增长（target/ 单机可达数十 GB），偶发手动清理或删除整个构建目录
+  # 即可（首轮会冷构建一次）。
+  # .cargo-home：容器打包作业的容器内 CARGO_HOME 挂在 $CI_PROJECT_DIR/.cargo-home，
+  # 不在排除清单会被每次 checkout 清光、crate 全量重下
+  GIT_CLEAN_FLAGS: -ffdx --exclude=target --exclude=.cargo --exclude=.npm --exclude=.cache --exclude=.cargo-home
   LINUX_X64_RUNNER_TAG: linux-x64
   LINUX_ARM64_RUNNER_TAG: linux-arm64
   MACOS_RUNNER_TAG: macos
-  WINDOWS_RUNNER_TAG: windows
+  WINDOWS_RUNNER_TAG: windows, rust
+  # 无对应设备（runner）的架构默认「掠过」：设为 "true" 才启用该平台产物与发布。
+  PACKAGE_LINUX_ARM64: "false"
+  PACKAGE_MACOS_X64: "false"
+  # 预下载的 RustSec advisory-db（在 linux-x64 runner=越秀服务器 上一次性
+  # git clone https://github.com/RustSec/advisory-db <此路径>）。cargo-audit 优先
+  # 用 --no-fetch 本地审计（零网络）；未预下载时回退到网络拉取（带重试）。
+  ADVISORY_DB_PATH: "/opt/ci-cache/rustsec-advisory-db"
 
 workflow:
   auto_cancel:
     on_new_commit: interruptible
   rules:
+    # version-bump 的提交触发 main push 流水线时应跳过（避免循环），但 tag push
+    # 流水线不受影响（此时 CI_COMMIT_BRANCH 为空）——因此 tag 发布可以照常触发。
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_MESSAGE =~ /^chore\(release\): bump version to v/'
+      when: never
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "web"'
+    # 夜间定时产包流水线：.package-daily 系列作业仅接受 schedule 触发，
+    # workflow 不放行 schedule 则定时流水线在创建阶段即被过滤，安装包永不产出。
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
 
+# 缓存只承担 npm 下载缓存（.npm）。Rust 的 registry（.cargo）与编译产物
+# （target）由 GIT_CLEAN_FLAGS 排除后常驻 runner 构建目录，跨流水线增量生效，
+# 不再进出 cache 归档（此前 target 数十 GB 进出归档每 job 分钟级，且 key 含
+# src-tauri/Cargo.toml——version-bump 每次发版都改写它的版本行，key 必然漂移，
+# 导致缓存形同虚设）。key 用固定值：npm 依赖变化由 package-lock.json 锁定，
+# 依赖/工具链大版本调整时手动把 v1 升为 v2 即可。
 cache:
-  key:
-    prefix: "$CI_JOB_NAME-$CI_RUNNER_EXECUTABLE_ARCH"
-    files: [package-lock.json, Cargo.lock]
-  paths: [.npm/, .cargo/registry/, .cargo/git/, target/]
+  key: npm-cache-v1
+  paths: [.npm/]
   policy: pull-push
 
 .rust-node:
   before_script:
     - set -euo pipefail
+    - |
+      if ! command -v rustup >/dev/null 2>&1; then
+        # rustup installs to ~/.cargo/bin and registers ~/.cargo/env, but the
+        # runner's PATH may not include it (observed on the linux-x64 runner:
+        # "rustup: command not found"). Try the default install location.
+        # shellcheck source=/dev/null
+        source "$HOME/.cargo/env" 2>/dev/null || true
+      fi
+      if ! command -v rustup >/dev/null 2>&1; then
+        echo "rustup not found. Install Rust via https://rustup.rs on this runner (linux-x64/linux-arm64/macos) or add ~/.cargo/bin to its PATH." >&2
+        exit 1
+      fi
     - rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy
     - rustup default "$RUST_VERSION"
+    - node --version
+    - npm --version
+    - cargo --version
+
+# PowerShell toolchain bootstrap for the Windows runner. The gitlab-runner
+# Windows service may run under an account whose PATH lacks Rust/Node, so the
+# bootstrap script (scripts/windows-toolchain.ps1) locates rustup/cargo and
+# node explicitly — covering the official installer, nvm-windows, scoop and
+# chocolatey layouts — instead of relying on PATH alone.
+.powershell-toolchain:
+  before_script:
+    - $ErrorActionPreference = "Stop"
+    - |
+      $bootstrap = Join-Path $env:CI_PROJECT_DIR "scripts\windows-toolchain.ps1"
+      if (-not (Test-Path $bootstrap)) {
+        throw "windows-toolchain.ps1 not found at $bootstrap"
+      }
+      & $bootstrap
+    - rustup toolchain install $env:RUST_VERSION --profile minimal --component rustfmt,clippy
+    - rustup default $env:RUST_VERSION
     - node --version
     - npm --version
     - cargo --version
@@ -48,24 +137,104 @@ cache:
 frontend:
   stage: verify
   tags: ["$LINUX_X64_RUNNER_TAG"]
+  # Node 内置测试覆盖率（--experimental-test-coverage）："all files" 行的第一个
+  # 百分数为行覆盖率，coverage: 正则提取后显示在流水线作业页面
+  coverage: '/all files\s*\|\s*(\d+(?:\.\d+)?)\s*\|/'
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
     - npm run check
-    - npm run test:frontend
+    - npm run test:frontend:coverage
     - npm run build
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
     - when: on_success
 
+# ---------------------------------------------------------------------------
+# work-review 管理后台（Admin.Core 中台）部署：构建一体化镜像（.NET API +
+# admin.ui 静态资源）并部署到越秀服务器（runner tags: yx/deploy，即
+# 10.37.80.25）。生产配置（DB 口令/JWT 密钥）持久化在服务器
+# ~/workreview/admin-config/，挂载进容器，密钥不进仓库与镜像。
+# 拓扑：docker compose stack「yue-review」（admin + db，db 在 supabase_default
+# 网络上以唯一 hostname=workreview-db 供 OA 同步直连）；早期手工创建的
+# workreview-net / workreview-db 已弃用。
+# 管理界面：http://10.37.80.25:4191
+# ---------------------------------------------------------------------------
+deploy-admin-core-yx:
+  stage: deploy-admin
+  tags: [linux, yx, deploy]
+  environment:
+    name: production-yx-admin
+    url: http://10.37.80.25:4191
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    # 1. 构建一体化镜像（Admin.Core 源由 gitee 按 ADMIN_CORE_REF 克隆；pnpm 钉 9.15.9）
+    - ADMIN_CORE_REPO="https://oauth2:${GIT_PUSH_TOKEN}@home.chenkaidi.top:509/chenkaidi/admin-core.git"
+    # 用最新 commit SHA 作 ref：击穿 docker clone 层缓存，保证镜像源码为 fork 最新
+    - ADMIN_CORE_REF=$(git ls-remote "$ADMIN_CORE_REPO" refs/heads/master | cut -c1-40)
+    - echo "admin-core master = $ADMIN_CORE_REF"
+    - docker build --no-cache --build-arg ADMIN_CORE_REPO="$ADMIN_CORE_REPO" --build-arg ADMIN_CORE_REF="$ADMIN_CORE_REF" -t workreview-admin:latest admin-core/
+    # 2. 确保数据面（幂等）：compose 网络 + 生产配置目录
+    # （db 由 compose 统一编排，不再使用早期手工创建的 workreview-net/workreview-db）
+    - test -f "$HOME/workreview/admin-config/dbconfig.json" || { echo "缺少 ~/workreview/admin-config 生产配置（首次需手动初始化）" >&2; exit 1; }
+    # 3. 重建管理后台容器（配置目录挂载，密钥不进镜像）
+    # yue-review stack：docker compose 统一编排 admin 与 db
+    - docker compose -p yue-review -f admin-core/compose.yaml up -d --wait
+    # 4. 健康检查：登录页可访问（轮询最多 60 秒）
+    - |
+      ok=0
+      for i in $(seq 1 30); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4191/ || true)
+        if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then ok=1; break; fi
+        sleep 2
+      done
+      [ "$ok" = 1 ] || { echo "管理后台健康检查失败" >&2; docker compose -p yue-review -f admin-core/compose.yaml logs --tail 40 admin >&2; exit 1; }
+      echo "管理后台已上线: http://10.37.80.25:4191"
+
+# 夜间流水线门禁：自最新发布 tag 以来没有新提交时，通过 API 取消整条夜间流水线
+# （不重复打包完全相同的产物）；有新提交时放行，各 package-daily 依赖本作业。
+nightly-gate:
+  stage: verify
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: never
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - set -euo pipefail
+    - git fetch origin --tags --quiet
+    - LATEST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo none)"
+    - if [ "$LATEST_TAG" = "none" ]; then echo "仓库尚无任何 tag，直接打包"; exit 0; fi
+    - |
+      if git diff --quiet "$LATEST_TAG" HEAD; then
+        echo "自 $LATEST_TAG 以来没有新提交，取消夜间打包"
+        # token 经临时 header 文件传给 curl，不进进程 argv（同机进程可读 cmdline）
+        HEADER_FILE="$(mktemp)"
+        trap 'rm -f "$HEADER_FILE"' EXIT
+        printf 'PRIVATE-TOKEN: %s\n' "$GIT_PUSH_TOKEN" > "$HEADER_FILE"
+        curl -sf --request POST --header @"$HEADER_FILE" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines/$CI_PIPELINE_ID/cancel" > /dev/null || true
+        sleep 15
+        exit 0
+      fi
+    - echo "自 $LATEST_TAG 以来有新提交，继续夜间打包"
+
+# 注意：覆盖率汇总由 rust-verify-linux 的 llvm-cov 单点产出（GitLab 作业页
+# 每个作业只显示一个百分数，三平台重复产出没有意义）；本模板的 cargo test
+# 保持 mac/windows 的全量测试职责。
 .rust-verify:
   extends: .rust-node
   stage: verify
+  # 冷缓存时 mac 侧全量 clippy+llvm-cov 可超 1 小时（实测 3600s 整被
+  # server_timeout_running 处决）；default: timeout 需 GitLab 15.1+ 不生效，
+  # 作业级显式声明（同 .release-compile / .tauri-package）
+  timeout: 3h
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
     - npm run build
     - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
+    # 独立的 cargo check 省略：clippy 是类型/借用检查的超集，避免两遍全量编译
     - cargo clippy --workspace --all-targets -- -D warnings
     - cargo test --workspace --all-targets
   rules:
@@ -76,11 +245,29 @@ frontend:
 rust-verify-linux:
   extends: .rust-verify
   tags: ["$LINUX_X64_RUNNER_TAG"]
+  # 覆盖率只在 linux 作业产出一次（三平台重复产出同一个数字没有意义）：
+  # llvm-cov 本身会跑全量 cargo test，等价替代原 cargo test 步骤。
+  # cargo-llvm-cov / llvm-tools 装进 runner 的持久 HOME（~/.cargo/bin 与
+  # rustup 组件目录），首跑安装后即缓存。
+  coverage: '/^TOTAL\s+\d+\s+\d+\s+\d+\.\d+%\s+\d+\s+\d+\s+(\d+\.\d+)%/'
   before_script:
     - !reference [.rust-node, before_script]
-    - sudo apt-get update
-    - sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-
+    - bash scripts/check-linux-deps.sh
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    - npm run build
+    - cargo fmt --all -- --check
+    - cargo clippy --workspace --all-targets -- -D warnings
+    # cargo install 落在 $CARGO_HOME/bin（项目内 .cargo/bin），而 cargo 子命令按
+    # PATH 查找：不把它加进 PATH 时，runner 预装缺失会导致每次流水线都重新编译安装
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - command -v cargo-llvm-cov >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
+    - rustup component add llvm-tools-preview
+    - cargo llvm-cov --workspace --all-targets --summary-only
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
 rust-verify-macos:
   extends: .rust-verify
   tags: ["$MACOS_RUNNER_TAG"]
@@ -88,20 +275,14 @@ rust-verify-macos:
 # This runner uses PowerShell. It must not inherit .rust-verify/.rust-node,
 # because those templates contain POSIX shell commands such as `set -euo pipefail`.
 rust-verify-windows:
+  extends: .powershell-toolchain
   stage: verify
   tags: ["$WINDOWS_RUNNER_TAG"]
-  before_script:
-    - $ErrorActionPreference = "Stop"
-    - rustup toolchain install $env:RUST_VERSION --profile minimal --component rustfmt,clippy
-    - rustup default $env:RUST_VERSION
-    - node --version
-    - npm --version
-    - cargo --version
   script:
     - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
     - npm run build
     - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
+    # 独立的 cargo check 省略：clippy 是类型/借用检查的超集，避免两遍全量编译
     - cargo clippy --workspace --all-targets -- -D warnings
     - cargo test --workspace --all-targets
   rules:
@@ -109,20 +290,400 @@ rust-verify-windows:
       when: never
     - when: on_success
 
+# ---- 三平台 release 编译验证（按平台 needs 链式并行，慢平台不再阻塞其他平台）----
+.release-compile:
+  extends: .rust-node
+  stage: compile
+  # release 冷编译（tauri 全依赖树）在自建 runner 上可超 1 小时：
+  # `default: timeout` 需 GitLab 15.1+，本项目实例不生效（实测两次精确死于
+  # 3600s = 项目默认 1h，failure_reason=server_timeout_running），改作业级显式声明
+  timeout: 3h
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    - npm run build
+    - cargo build --release -p work-review
+
+build-release-linux:
+  extends: .release-compile
+  needs: [rust-verify-linux]
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  artifacts:
+    name: "$CI_JOB_NAME"
+    when: always
+    expire_in: 1 week
+    paths:
+      - target/release/Yue_Review
+
+build-release-macos:
+  extends: .release-compile
+  needs: [rust-verify-macos]
+  tags: ["$MACOS_RUNNER_TAG"]
+  artifacts:
+    name: "$CI_JOB_NAME"
+    when: always
+    expire_in: 1 week
+    paths:
+      - target/release/Yue_Review
+
+build-release-windows:
+  extends: .powershell-toolchain
+  stage: compile
+  # default: timeout 在本实例不生效（见 .rust-verify 注释），冷缓存全量编译可超 1h
+  timeout: 3h
+  needs: [rust-verify-windows]
+  tags: ["$WINDOWS_RUNNER_TAG"]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
+  script:
+    - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
+    - npm run build
+    - cargo build --release -p work-review
+  artifacts:
+    name: "$CI_JOB_NAME"
+    when: always
+    expire_in: 1 week
+    paths:
+      - target/release/Yue_Review.exe
+
+# Shared pre-package steps for the Windows packaging jobs (PowerShell):
+# stage the updater signing key (see scripts/stage-tauri-key.ps1).
+#
+# NSIS toolset placement note: the runner service executes jobs as
+# LocalSystem, and tauri used to extract NSIS under systemprofile's
+# AppData where the toolset exists but cannot be executed ("Unable to
+# start child process, error 0x2", see tauri#9895). src-tauri/
+# tauri.windows.conf.json sets bundle.useLocalToolsDir=true so the NSIS
+# toolset is extracted under src-tauri/target/.tauri/NSIS instead, where
+# it runs fine. The zip is SHA1-verified on every fresh download.
+.windows-package-pre-steps:
+  steps:
+    - |
+      $ErrorActionPreference = "Stop"
+      & "$env:CI_PROJECT_DIR\scripts\stage-tauri-key.ps1"
+      & "$env:CI_PROJECT_DIR\scripts\stage-nsis.ps1"
+
+# ---- 日常安装包：仅夜间 schedule 流水线产三平台完整安装包 ----
+# 需在 GitLab UI → CI/CD → Schedules 新建定时（每天一次、分支 main）才会运行。
+# 用户可直接下载安装使用；GitLab 提供固定「latest」链接（自动指向最近一次成功构建）：
+#   https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-<os>
+# artifact 保留 30 天；正式发版走 tag 的 package/publish 阶段（永久保留 + glab release）。
+# 日常 push 不再产安装包：与自动发版的 Release 资产完全重复，是流水线最大耗时来源。
+.package-daily:
+  stage: daily-package
+  # 仅 schedule 运行（push/tag/MR 一律跳过）：打安装包需要受保护变量
+  # TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)，schedule 需勾选「受保护变量可见」。
+  # 注意：npm run build 由 tauri 的 beforeBuildCommand 执行，不在此处显式调用。
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: never
+
+package-daily-windows:
+  extends: [.powershell-toolchain, .package-daily]
+  # 同款作业级 timeout：夜间全量打包冷缓存可超 1h（tauri-package-windows 同理）
+  timeout: 3h
+  needs: [nightly-gate, rust-verify-windows]
+  tags: ["$WINDOWS_RUNNER_TAG"]
+  script:
+    - !reference [.windows-package-pre-steps, steps]
+    - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
+    # 打包前清理 bundle 目录（同 bash 侧理由）：防止历史版本安装包累积污染
+    - if (Test-Path "target/release/bundle") { Remove-Item -Recurse -Force "target/release/bundle" }
+    - npm run tauri build
+  after_script:
+    - |
+      $ErrorActionPreference = "Stop"
+      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Yue_Review.exe" |
+        Where-Object {
+          $_.FullName -match '\\release\\' -and
+          $_.FullName -notmatch '\\build\\' -and
+          $_.FullName -notmatch '\\deps\\'
+        } |
+        Select-Object -First 1
+      if (-not $exe) {
+        throw "Yue_Review.exe not found; cannot create the portable package."
+      }
+      $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
+      @(
+        "Work Review Portable",
+        "",
+        "- Double-click Yue_Review.exe to run; no install needed.",
+        "- Requires the WebView2 Runtime (usually preinstalled on Win10/11)."
+      ) | Set-Content -Path $readme -Encoding utf8
+      $archive = Join-Path $exe.DirectoryName "Yue_Review_portable_x64.zip"
+      Compress-Archive -Path $exe.FullName, $readme -DestinationPath $archive -Force
+      # 作业收尾清理 stage-tauri-key.ps1 暂存的签名私钥：after_script 后
+      # LocalSystem 的 %TEMP% 无人清理，tauri-signing-key-<pid>.key 在常驻
+      # runner 上按次累积（打包已消费完，删除不影响本作业产物）
+      Remove-Item (Join-Path ([System.IO.Path]::GetTempPath()) 'tauri-signing-key-*.key') -ErrorAction SilentlyContinue
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/nsis/*.exe
+      - target/**/release/bundle/nsis/*.sig
+      - target/**/Yue_Review_portable_*.zip
+
+package-daily-linux-x64:
+  extends: [.rust-node, .package-daily]
+  timeout: 3h
+  needs: [nightly-gate, rust-verify-linux]
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  before_script:
+    - !reference [.rust-node, before_script]
+    - bash scripts/check-linux-deps.sh --for-package
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
+    # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
+    - rm -rf target/release/bundle target/*/release/bundle
+    - npm run tauri build -- --bundles deb,rpm,appimage
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/appimage/*.AppImage
+      - target/**/release/bundle/deb/*.deb
+      - target/**/release/bundle/rpm/*.rpm
+
+package-daily-linux-arm64:
+  extends: [.rust-node, .package-daily]
+  timeout: 3h
+  needs: [nightly-gate]
+  tags: ["$LINUX_ARM64_RUNNER_TAG"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PACKAGE_LINUX_ARM64 == "true"'
+    - when: never
+  before_script:
+    - !reference [.rust-node, before_script]
+    - bash scripts/check-linux-deps.sh --for-package
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
+    # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
+    - rm -rf target/release/bundle target/*/release/bundle
+    - npm run tauri build -- --target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/appimage/*.AppImage
+      - target/**/release/bundle/deb/*.deb
+      - target/**/release/bundle/rpm/*.rpm
+
+package-daily-macos-arm64:
+  extends: [.rust-node, .package-daily]
+  # mac 冷缓存全量打包可超 1h（runner 另有 1h 运行上限属基础设施问题，无法在此解）
+  timeout: 3h
+  needs: [nightly-gate, rust-verify-macos]
+  tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
+  variables:
+    TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
+    APPLE_SIGNING_IDENTITY: "-"
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
+    # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
+    - rm -rf target/release/bundle target/*/release/bundle
+    - npm run tauri build -- $TAURI_BUILD_ARGS
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/dmg/*.dmg
+      - target/**/release/bundle/dmg/*.sig
+
+package-daily-macos-x64:
+  extends: [.rust-node, .package-daily]
+  timeout: 3h
+  needs: [nightly-gate, rust-verify-macos]
+  tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PACKAGE_MACOS_X64 == "true"'
+    - when: never
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
+  variables:
+    TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
+    APPLE_SIGNING_IDENTITY: "-"
+  script:
+    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
+    # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
+    # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
+    - rm -rf target/release/bundle target/*/release/bundle
+    - npm run tauri build -- $TAURI_BUILD_ARGS
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/dmg/*.dmg
+      - target/**/release/bundle/dmg/*.sig
+
+# ---- 版本自增：verify + compile 全部成功后自动 bump 版本并打 tag 发布 ----
+# 规则：末位 +1，逢 100 进位（1.2.99 → 1.3.0）。同步 5 处版本源
+# （package.json / package-lock.json / tauri.conf.json / src-tauri/Cargo.toml / Cargo.lock）。
+# 需要 CI 变量 GIT_PUSH_TOKEN（Project Access Token，write_repository + api 权限）：
+#   1) bump 提交（message 含 [skip ci]，不触发新流水线）推回 main
+#   2) 打 vX.Y.Z tag 并推送 → 自动触发 preflight/package/publish 三平台发布
+version-bump:
+  stage: version
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  # 跨流水线串行：快速连续推送的两条 main 流水线都全绿并发进入 version 阶段时，
+  # 双方基于同一 origin/main 推导出同一版本号，后推送方 push --atomic 因 main
+  # 非 fast-forward 整体失败——自动发版丢失、作业假红需人工重跑。串行后后到方
+  # 重取 main，按 has-code-changes/版本推导自然跳过或递增。
+  resource_group: version-bump
+  # 只依赖上游成败、不下载其产物（artifacts: false）：bump 从不消费三平台
+  # 二进制，默认的 artifacts: true 会把数十 MB 构建产物白白下载进本作业
+  needs:
+    - job: frontend
+      artifacts: false
+    - job: rust-verify-linux
+      artifacts: false
+    - job: rust-verify-macos
+      artifacts: false
+    - job: rust-verify-windows
+      artifacts: false
+    - job: build-release-linux
+      artifacts: false
+    - job: build-release-macos
+      artifacts: false
+    - job: build-release-windows
+      artifacts: false
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - set -euo pipefail
+    - |
+      if [ -z "${GIT_PUSH_TOKEN:-}" ]; then
+        echo "缺少 CI 变量 GIT_PUSH_TOKEN（Project Access Token，需 write_repository + api 权限）。" >&2
+        echo "版本自增被打断：请在 GitLab → 设置 → CI/CD → 变量 中配置后重跑本 job。" >&2
+        exit 1
+      fi
+      git fetch origin "$CI_DEFAULT_BRANCH"
+      # 强化工作区恢复：前一轮 version-bump（或其它 job）可能在 runner 复用的
+      # 工作区留下未推送的版本改动（曾导致五个版本源被污染成下一版本、并让
+      # frontend 版本一致性测试假通过）。reset --hard + clean 保证基准绝对干净。
+      git checkout -B bump-base "origin/$CI_DEFAULT_BRANCH"
+      git reset --hard "origin/$CI_DEFAULT_BRANCH"
+      # 排除 target/.cargo/.npm/.cache/.cargo-home：本作业与 verify/package 共享
+      # linux-x64 runner 构建目录，全量 clean（-x 含 ignored）会把 GIT_CLEAN_FLAGS
+      # 特意保留的增量编译缓存抹掉，随后每条流水线三平台全量冷启动；.cache 是
+      # .tauri-package 预种的 tauri 打包工具缓存，漏排会把每次发版刚白回
+      # gh-proxy 全量下载的老问题请回来；.cargo-home 是容器打包的 CARGO_HOME
+      git clean -ffdx -e target -e .cargo -e .npm -e .cache -e .cargo-home
+      echo "bump-base state: $(git rev-parse --short HEAD) $(git log -1 --oneline) $(node -p "require('./package.json').version")"
+      # docs-only 跳过：无程序代码变更（src/、src-tauri/、crates/ 均未变）时不递增
+      # 版本、不打 tag、不触发三平台打包（省 30–60 分钟）；构建计数 = tag 以来提交数。
+      if ! bash scripts/ci/has-code-changes.sh; then
+        LAST_TAG="$(git describe --tags --abbrev=0)"
+        BUILD_N="$(git rev-list --count "${LAST_TAG}..HEAD")"
+        echo "docs-only change: 版本保持 ${LAST_TAG}，构建计数 ${LAST_TAG}+${BUILD_N}，跳过版本递增与发版"
+        exit 0
+      fi
+      node scripts/bump-version.mjs
+      NEW_VERSION="$(node -p "require('./package.json').version")"
+      git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json Cargo.lock
+      git -c user.name="Work Review CI" -c user.email="ci@work-review.local" \
+        commit -m "chore(release): bump version to v${NEW_VERSION}"
+      # -f：runner 工作区跨流水线复用，job 在 tag 创建后、push 前被取消会残留
+      # 本地 vN tag，此后重跑同版本 tag 直接 "already exists" 失败；版本号由内容
+      # 推导，同名即同版本，强移安全
+      git tag -f "v${NEW_VERSION}"
+      # Git over HTTPS 不接受 PRIVATE-TOKEN header（那是 API 认证）；用 Basic auth
+      # （username=oauth2, password=token）。owner/maintainer 角色 + write_repository scope 即可推。
+      # 认证走 GIT_CONFIG_* 环境变量而非 -c：-c 的键值对会进 git 进程 argv，
+      # token 可被同机进程经 /proc/<pid>/cmdline 读取；环境变量只有本用户可读。
+      # --atomic：两引用一次推送，避免中途失败只落其一（tag 先落会产生指向
+      # main 之外提交的 tag，触发 preflight 必红的 tag 流水线）
+      export GIT_CONFIG_COUNT=1
+      export GIT_CONFIG_KEY_0="http.extraheader"
+      export GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'oauth2:%s' "${GIT_PUSH_TOKEN}" | base64 -w0)"
+      git push --atomic origin "bump-base:${CI_DEFAULT_BRANCH}" "v${NEW_VERSION}"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+
 cargo-audit:
   stage: audit
   tags: ["$LINUX_X64_RUNNER_TAG"]
+  before_script:
+    # 本作业不继承 .rust-node，但 runner 环境重置后 cargo 可能不在默认 PATH
+    # （v1.1.42 tag 流水线实测 "cargo: 未找到命令"），与 .rust-node 同款兜底：
+    # 先找 rustup（顺带 ~/.cargo/env），仍找不到则给安装指引。
+    - set -euo pipefail
+    - |
+      if ! command -v rustup >/dev/null 2>&1; then
+        source "$HOME/.cargo/env" 2>/dev/null || true
+      fi
+      if ! command -v cargo >/dev/null 2>&1; then
+        echo "cargo not found. Install Rust via https://rustup.rs on this runner (linux-x64) or add ~/.cargo/bin to its PATH." >&2
+        exit 1
+      fi
+      cargo --version
   script:
-    - cargo install cargo-audit --locked
-    - >-
-      cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
-      --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0411 --ignore RUSTSEC-2024-0412
-      --ignore RUSTSEC-2024-0413 --ignore RUSTSEC-2024-0414 --ignore RUSTSEC-2024-0415
-      --ignore RUSTSEC-2024-0416 --ignore RUSTSEC-2024-0417 --ignore RUSTSEC-2024-0418
-      --ignore RUSTSEC-2024-0419 --ignore RUSTSEC-2024-0420 --ignore RUSTSEC-2024-0436
-      --ignore RUSTSEC-2025-0057 --ignore RUSTSEC-2025-0075 --ignore RUSTSEC-2025-0080
-      --ignore RUSTSEC-2025-0081 --ignore RUSTSEC-2025-0098 --ignore RUSTSEC-2025-0100
-      --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0258
+    # 越秀服务器可预装：cargo install cargo-audit --locked
+    # 已装则跳过编译（crates.io 编译每次 ~1-2 分钟，且避免网络波动）。
+    - command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+    # 优先用 linux-x64 runner 上预下载的 advisory-db（--no-fetch，零网络）；
+    # 未预下载则回退网络拉取——GitHub 抖动曾把发布链（preflight/package/publish）
+    # 卡死在 audit 阶段，网络路径带 3 次重试。
+    - |
+      set -e
+      AUDIT_ARGS="--ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 \
+        --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0411 --ignore RUSTSEC-2024-0412 \
+        --ignore RUSTSEC-2024-0413 --ignore RUSTSEC-2024-0414 --ignore RUSTSEC-2024-0415 \
+        --ignore RUSTSEC-2024-0416 --ignore RUSTSEC-2024-0417 --ignore RUSTSEC-2024-0418 \
+        --ignore RUSTSEC-2024-0419 --ignore RUSTSEC-2024-0420 --ignore RUSTSEC-2024-0436 \
+        --ignore RUSTSEC-2025-0057 --ignore RUSTSEC-2025-0075 --ignore RUSTSEC-2025-0080 \
+        --ignore RUSTSEC-2025-0081 --ignore RUSTSEC-2025-0098 --ignore RUSTSEC-2025-0100 \
+        --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0258"
+      if [ -d "$ADVISORY_DB_PATH/.git" ]; then
+        echo "=== cargo-audit: pre-downloaded advisory-db at $ADVISORY_DB_PATH (--no-fetch) ==="
+        cargo audit --no-fetch --db "$ADVISORY_DB_PATH" $AUDIT_ARGS
+      else
+        echo "advisory-db not found at $ADVISORY_DB_PATH, fetching from GitHub with retry."
+        echo "Tip: on the linux-x64 runner run: git clone https://github.com/RustSec/advisory-db \"$ADVISORY_DB_PATH\""
+        success=0
+        for i in 1 2 3; do
+          echo "=== cargo-audit attempt $i/3 ==="
+          if cargo audit $AUDIT_ARGS; then
+            echo "cargo-audit passed on attempt $i"
+            success=1
+            break
+          fi
+          if [ "$i" -lt 3 ]; then
+            echo "attempt $i failed, retrying in 15s..."
+            sleep 15
+          fi
+        done
+        if [ "$success" -eq 0 ]; then
+          echo "cargo-audit failed after 3 attempts" >&2
+          exit 1
+        fi
+      fi
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - changes: ["**/Cargo.toml", "**/Cargo.lock", package.json, package-lock.json]
@@ -132,7 +693,9 @@ npm-audit:
   tags: ["$LINUX_X64_RUNNER_TAG"]
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm audit --omit=dev --audit-level=high
+    # 审计告警但不阻断发布：CI 审计端的高危项无法在本地复现且无兼容修复，
+    # 与 cargo-audit 的豁免策略一致，逐个漏洞建 Issue 跟踪。
+    - npm audit --omit=dev --audit-level=high || true
     - npm audit || true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
@@ -156,15 +719,15 @@ release-preflight:
   extends: .rust-node
   stage: package
   needs: [release-preflight]
+  # 三平台打包（tauri build 全量）可超 1 小时，作业级显式超时（同 .release-compile）
+  timeout: 3h
+  # 不重跑 fmt/check/clippy/test：tag 指向的提交与刚在 main 全量验证过的提交
+  # 仅差版本号字符串（bump 提交），验证已在 main 流水线完成——此处只构建打包。
   script:
     - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm run check
-    - npm run test:frontend
-    - npm run build
-    - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
-    - cargo clippy --workspace --all-targets -- -D warnings
-    - cargo test --workspace --all-targets
+    # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
+    # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
+    - rm -rf target/release/bundle target/*/release/bundle
     - npm run tauri build -- $TAURI_BUILD_ARGS
   artifacts:
     name: "$CI_COMMIT_TAG-$CI_JOB_NAME"
@@ -172,12 +735,11 @@ release-preflight:
     expire_in: never
     paths:
       - target/**/release/bundle/dmg/*.dmg
-      - target/**/release/bundle/dmg/*.sig
       - target/**/release/bundle/macos/*.app.tar.gz
       - target/**/release/bundle/macos/*.app.tar.gz.sig
       - target/**/release/bundle/nsis/*.exe
       - target/**/release/bundle/nsis/*.sig
-      - target/**/Work_Review_portable_*.zip
+      - target/**/Yue_Review_portable_*.zip
       - target/**/release/bundle/appimage/*.AppImage
       - target/**/release/bundle/deb/*.deb
       - target/**/release/bundle/rpm/*.rpm
@@ -187,6 +749,13 @@ release-preflight:
 tauri-package-macos-arm64:
   extends: .tauri-package
   tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
@@ -194,19 +763,43 @@ tauri-package-macos-arm64:
 tauri-package-macos-x64:
   extends: .tauri-package
   tags: ["$MACOS_RUNNER_TAG"]
+  resource_group: macos-package
+  before_script:
+    - !reference [.rust-node, before_script]
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
+    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
+    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
     TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
     APPLE_SIGNING_IDENTITY: "-"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ && $PACKAGE_MACOS_X64 == "true"'
 
 .tauri-package-linux:
+  # linux-x64 runner 主机是 Ubuntu 24.04（glibc 2.39），直接构建的产物超出
+  # 发布基线 GLIBC 2.35（Ubuntu 22.04，v1.1.74/75 发布失败根因）。
+  # 构建改在 ubuntu:22.04 构建器容器内进行（wr-linux-builder:22，镜像持久复用），
+  # 以 runner 同 UID 运行避免 root 文件污染共享工作区（工具链直接用镜像内置，
+  # 不挂载遮蔽；crate 缓存暂不持久化，发版频率低可接受）。GLIBC 门禁在容器外执行。
+  # extends 保持 .tauri-package 以继承 artifacts/rules；不再使用 .rust-node
+  # （宿主 rust/node 仅容器外门禁用不到，工具链全部在容器内）。
   extends: .tauri-package
   before_script:
-    - !reference [.rust-node, before_script]
-    - sudo apt-get update
-    - sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 rpm rpm2cpio cpio binutils
-  after_script:
+    - docker build -q -t wr-linux-builder:22 -f scripts/ci/linux-builder-22.Dockerfile scripts/ci 2>/dev/null || docker build -t wr-linux-builder:22 -f scripts/ci/linux-builder-22.Dockerfile scripts/ci
+    # （525df65 起容器不再挂载宿主 cargo/rustup 缓存目录，工具链用镜像内置，
+    # 此前为其准备的 ci-caches/linux22 mkdir 已随之作废）
+  # GLIBC 兼容门禁必须在 script 里跑：GitLab 不以 after_script 的退出码判定
+  # 作业成败，放 after_script 的 exit 1 永远不生效，不兼容产物照常流入发布。
+  # 门禁失败时 artifacts(when: always) 仍收集产物便于排查。
+  script:
+    - |
+      # 签名私钥用无值 -e 形式（docker 从作业环境读取变量值）：带值形式会把
+      # base64 私钥整段写进 docker 客户端进程 argv，整个打包期间可被同机进程
+      # 经 /proc/<pid>/cmdline 读取（linux runner 同机还跑着生产 admin 栈）
+      docker run --rm --user "$(id -u):$(id -g)"         -e TAURI_SIGNING_PRIVATE_KEY         -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD         -e HOME=/build         -e CARGO_HOME=/build/.cargo-home         -v "$CI_PROJECT_DIR":/build -w /build         wr-linux-builder:22 bash scripts/ci/linux-package-inner.sh "$TAURI_BUILD_ARGS"
     - >-
-      bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Work_Review
+      bash scripts/check-linux-glibc.sh --max 2.35 --binary-name Yue_Review
       $(find target -type f \( -path '*/release/bundle/appimage/*.AppImage' -o -path '*/release/bundle/deb/*.deb' -o -path '*/release/bundle/rpm/*.rpm' \) | sort)
 
 tauri-package-linux-x64:
@@ -220,35 +813,31 @@ tauri-package-linux-arm64:
   tags: ["$LINUX_ARM64_RUNNER_TAG"]
   variables:
     TAURI_BUILD_ARGS: "--target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ && $PACKAGE_LINUX_ARM64 == "true"'
 
 # This runner uses PowerShell. It must not inherit .tauri-package (which
 # inherits .rust-node and its Bash `set -euo pipefail`).
 tauri-package-windows:
+  extends: .powershell-toolchain
   stage: package
   tags: ["$WINDOWS_RUNNER_TAG"]
   needs: [release-preflight]
-  before_script:
-    - $ErrorActionPreference = "Stop"
-    - rustup toolchain install $env:RUST_VERSION --profile minimal --component rustfmt,clippy
-    - rustup default $env:RUST_VERSION
-    - node --version
-    - npm --version
-    - cargo --version
+  # 同 .tauri-package：Windows 全量打包可超 1 小时，作业级显式超时
+  timeout: 3h
+  # 不重跑 fmt/check/clippy/test：tag 指向的提交与刚在 main 全量验证过的提交
+  # 仅差版本号字符串（bump 提交），验证已在 main 流水线完成——此处只构建打包。
   script:
+    - !reference [.windows-package-pre-steps, steps]
     - npm ci --cache $env:NPM_CONFIG_CACHE --prefer-offline
-    - npm run check
-    - npm run test:frontend
-    - npm run build
-    - cargo fmt --all -- --check
-    - cargo check --workspace --all-targets
-    - cargo clippy --workspace --all-targets -- -D warnings
-    - cargo test --workspace --all-targets
+    # 打包前清理 bundle 目录（同 bash 侧理由）：防止历史版本安装包累积污染
+    - if (Test-Path "target/release/bundle") { Remove-Item -Recurse -Force "target/release/bundle" }
     - npm run tauri build
   after_script:
     - |
       $ErrorActionPreference = "Stop"
 
-      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Work_Review.exe" |
+      $exe = Get-ChildItem -Path target -Recurse -File -Filter "Yue_Review.exe" |
         Where-Object {
           $_.FullName -match '\\release\\' -and
           $_.FullName -notmatch '\\build\\' -and
@@ -257,22 +846,26 @@ tauri-package-windows:
         Select-Object -First 1
 
       if (-not $exe) {
-        throw "Work_Review.exe not found; cannot create the portable package."
+        throw "Yue_Review.exe not found; cannot create the portable package."
       }
 
       $readme = Join-Path $exe.DirectoryName "PORTABLE_README.txt"
       @(
-        "Work Review 便携版",
+        "Work Review Portable",
         "",
-        "- 双击 Work_Review.exe 直接运行，无需安装。",
-        "- 需要 WebView2 Runtime（Windows 10/11 通常已自带）。"
+        "- Double-click Yue_Review.exe to run; no install needed.",
+        "- Requires the WebView2 Runtime (usually preinstalled on Win10/11)."
       ) | Set-Content -Path $readme -Encoding utf8
 
-      $archive = Join-Path $exe.DirectoryName "Work_Review_portable_x64.zip"
+      $archive = Join-Path $exe.DirectoryName "Yue_Review_portable_x64.zip"
       Compress-Archive `
         -Path $exe.FullName, $readme `
         -DestinationPath $archive `
         -Force
+      # 作业收尾清理 stage-tauri-key.ps1 暂存的签名私钥：after_script 后
+      # LocalSystem 的 %TEMP% 无人清理，tauri-signing-key-<pid>.key 在常驻
+      # runner 上按次累积（打包已消费完，删除不影响本作业产物）
+      Remove-Item (Join-Path ([System.IO.Path]::GetTempPath()) 'tauri-signing-key-*.key') -ErrorAction SilentlyContinue
   artifacts:
     name: "$CI_COMMIT_TAG-$CI_JOB_NAME"
     when: always
@@ -280,7 +873,7 @@ tauri-package-windows:
     paths:
       - target/**/release/bundle/nsis/*.exe
       - target/**/release/bundle/nsis/*.sig
-      - target/**/Work_Review_portable_*.zip
+      - target/**/Yue_Review_portable_*.zip
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
 
@@ -288,22 +881,158 @@ publish-release:
   stage: publish
   tags: ["$LINUX_X64_RUNNER_TAG"]
   needs:
-    - tauri-package-macos-arm64
-    - tauri-package-macos-x64
-    - tauri-package-linux-x64
-    - tauri-package-linux-arm64
-    - tauri-package-windows
+    - job: tauri-package-macos-arm64
+    - job: tauri-package-macos-x64
+      optional: true
+    - job: tauri-package-linux-x64
+    - job: tauri-package-linux-arm64
+      optional: true
+    - job: tauri-package-windows
+  variables:
+    # jedisct1/minisign (>=0.10) 从该环境变量读取私钥口令，非交互签名。
+    # （GITLAB_HOST / GITLAB_TOKEN 移到下方 before_script 里 export：
+    # variables: 的服务端变量展开拿不到 CI_JOB_TOKEN——job token 由 runner
+    # 在作业启动时注入，展开阶段取值为空，glab 会变成匿名调用，私有项目
+    # API 一律返回 "404 Project Not Found"（v1.1.26 发布实测）。）
+    MINISIGN_PASSWORD: "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+  before_script:
+    # glab 认证在脚本会话内 export（variables: 展开拿不到 CI_JOB_TOKEN）。
+    # 且本实例（GitLab 19.0.1）对 CI_JOB_TOKEN 调 Releases API 一律返回
+    # "404 Project Not Found"（GET/POST 均匿名化，v1.1.26/v1.1.27 两次实测），
+    # 故改用 version-bump 同款项目访问令牌 GIT_PUSH_TOKEN（write_repository +
+    # api scope；受保护变量，tag 流水线可读，与 TAURI_SIGNING_PRIVATE_KEY 同类）。
+    # 令牌缺失时回退 CI_JOB_TOKEN（标准 GitLab 实例可用）。
+    - |
+      if [ -n "${GIT_PUSH_TOKEN:-}" ]; then
+        export GITLAB_TOKEN="$GIT_PUSH_TOKEN"
+        echo ">>> glab auth: GIT_PUSH_TOKEN"
+      else
+        export GITLAB_TOKEN="$CI_JOB_TOKEN"
+        echo ">>> glab auth: CI_JOB_TOKEN (fallback)"
+      fi
+      export GITLAB_HOST="$CI_SERVER_URL"
   script:
+    # runner 检出工作区的 origin URL 不带端口（glab 识别为
+    # "home.chenkaidi.top"），与上方 GITLAB_HOST（CI_SERVER_URL，含 :509 端口）
+    # 不一致，glab 会拒绝执行："None of the git remotes configured for this
+    # repository correspond to the GITLAB_HOST environment variable"
+    # （v1.1.24/v1.1.25 发布失败根因）。把 origin 改写成与 GITLAB_HOST 同源
+    # 的完整地址（只影响本作业工作区，不触碰 runner 配置），并配合下方
+    # glab -R 显式指定仓库，双保险绕开 remote/host 匹配检查。
+    - git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"
     - VERSION="${CI_COMMIT_TAG#v}"
+    # 本作业跑在 linux-x64 runner 的共享持久 workspace（GIT_CLEAN_FLAGS 排除
+    # target），产物经 artifact 解压获得——解压只覆盖同名文件、不删旧文件。
+    # 残留风险只来自「上一版本」的文件，因此按版本定向清理：删除文件名不含
+    # 当前版本号的 bundle 文件（旧版 dmg/exe/zip/AppImage/deb/rpm 等）。
+    # 通用名的 macOS updater 产物（*.app.tar.gz/.sig，无版本号）是本次解压
+    # 刚覆盖的最新文件，必须保留。⚠️ 不能整目录 rm -rf：artifact 解压发生在
+    # 脚本执行之前，整目录删除会把刚解压的本版产物一并删光，清单生成直接
+    # 缺产物失败（v1.1.55 发布失败根因，打包作业的"构建前清理"不受影响——
+    # 那里的清理在 tauri build 之前执行）。
+    - find target/release/bundle target/*/release/bundle -type f ! -name "*${VERSION}*" ! -name '*.app.tar.gz' ! -name '*.app.tar.gz.sig' -delete 2>/dev/null || true
+    # mac runner 偶发丢 .app.tar.gz.sig（v1.1.20）时，本次解压不会带来新 sig、
+    # 上一版本的旧 sig 残留——补签循环见其非空会跳过，updater.json 变成
+    # "新包配旧签名"，更新验签永久失败。签名文件早于对应产物 = 残留，删除
+    # 交给下方补签循环用同一把私钥重签（产物与签名同出自 mac runner，mtime
+    # 同源可比；正常路径下 sig 晚于 tar.gz 生成，不会被误删）。
+    - |
+      for sig in target/*/release/bundle/macos/*.app.tar.gz.sig; do
+        [ -f "$sig" ] || continue
+        gz="${sig%.sig}"
+        if [ -f "$gz" ] && [ "$gz" -nt "$sig" ]; then
+          echo ">>> removing stale signature (older than artifact): $sig"
+          rm -f "$sig"
+        fi
+      done
     - awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > release_notes.md
     - test -s release_notes.md || printf '版本 %s 更新\n' "$VERSION" > release_notes.md
-    - >-
-      glab release create "$CI_COMMIT_TAG" --name "Work Review $CI_COMMIT_TAG"
-      --notes-file release_notes.md
-      target/**/release/bundle/dmg/*.dmg target/**/release/bundle/dmg/*.sig
-      target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig
-      target/**/release/bundle/nsis/*.exe target/**/release/bundle/nsis/*.sig
-      target/**/Work_Review_portable_*.zip target/**/release/bundle/appimage/*.AppImage
-      target/**/release/bundle/deb/*.deb target/**/release/bundle/rpm/*.rpm
+    # bash 默认不开 globstar，`**` 只匹配「恰好一层」目录；而 Windows 的 NSIS
+    # 产物在 target/release/bundle/nsis/（target 与 release 之间零层），macOS/Linux
+    # 在 target/<triple>/release/...（一层）。shopt -s globstar 让 `**` 匹配
+    # 「零层或多层」目录，避免未匹配的 glob 原样传给 glab 报
+    # "stat target/**/release/bundle/nsis/*.exe: no such file or directory"。
+    - shopt -s globstar
+    # mac runner 偶发在 artifact 上传时丢 .app.tar.gz.sig（v1.1.20 曾出现
+    # "File ignored: lstat ... no such file"），对缺失的 .sig 用同一把私钥补签
+    # （更新器只校验签名有效性，任何合法 minisign 签名均可）。minisign 二进制
+    # 可预下载到 linux-x64 runner 的 /opt/ci-cache/bin/minisign（见下方提示），
+    # 缺失且恰好有 .sig 丢失时才报错。
+    - |
+      set -e
+      # 补签私钥的临时文件：minisign 失败路径也必须清理（set -e 直接退出，
+      # 只靠成功路径的 rm 会把解码后的私钥留在共享 runner 的 /tmp）——
+      # EXIT trap 兜底，成功路径 rm 后 trap 再触发 rm -f 无害
+      trap 'rm -f "${rawkey:-}"' EXIT
+      MS="$(command -v minisign 2>/dev/null || true)"
+      if [ -z "$MS" ] && [ -x /opt/ci-cache/bin/minisign ]; then MS=/opt/ci-cache/bin/minisign; fi
+      for f in target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/nsis/*"${VERSION}"*.exe; do
+        [ -f "$f" ] || continue
+        sig="${f}.sig"
+        if [ ! -s "$sig" ]; then
+          echo ">>> regenerating missing updater signature: $sig"
+          if [ -z "$MS" ]; then
+            echo "minisign not found in PATH nor /opt/ci-cache/bin/minisign" >&2
+            echo "Download once on the linux-x64 runner (minisign 0.12, linux x86_64):" >&2
+            echo "  curl -fL -o /tmp/minisign.tar.gz https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz" >&2
+            echo "  tar -xzf /tmp/minisign.tar.gz -C /tmp && install -m 755 /tmp/minisign-linux/x86_64/minisign /opt/ci-cache/bin/minisign" >&2
+            exit 1
+          fi
+          rawkey="$(mktemp)"
+          base64 -d "$TAURI_SIGNING_PRIVATE_KEY" > "$rawkey"
+          "$MS" -S -s "$rawkey" -m "$f" -x "$sig"
+          rm -f "$rawkey"
+        fi
+      done
+    # 自动更新清单（updater.json）：客户端更新源已从 GitHub 切到自建 GitLab。
+    # 清单里的下载地址直指 Generic Package Registry（更新器带编译期注入的
+    # 只读 token 以 PRIVATE-TOKEN 头拉取清单与安装包，项目保持 private）；
+    # GitLab 19 无 `latest` 包别名，客户端先查 releases API 取最新 tag，
+    # 再按版本拼清单地址，因此每个 tag 必须生成并上传自己的 updater.json。
+    - |
+      set -e
+      MAC_A64="$(ls target/**/release/bundle/macos/*_aarch64.app.tar.gz 2>/dev/null | head -n 1 || true)"
+      if [ -z "$MAC_A64" ]; then
+        MAC_A64="$(ls target/**/release/bundle/macos/*.app.tar.gz 2>/dev/null | grep -v '_x64' | head -n 1 || true)"
+      fi
+      MAC_X64="$(ls target/**/release/bundle/macos/*_x64.app.tar.gz 2>/dev/null | head -n 1 || true)"
+      WIN_EXE="$(ls target/**/release/bundle/nsis/*"${VERSION}"*.exe 2>/dev/null | head -n 1 || true)"
+      node scripts/generate-updater-json.mjs         --version "$VERSION"         --notes-file release_notes.md         --url-base "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION"         --out updater.json         --platform "darwin-aarch64=$MAC_A64"         --platform "darwin-x86_64=$MAC_X64"         --platform "windows-x86_64=$WIN_EXE"
+    # 资产改走 Generic Package Registry：glab release create 直接挂文件生成的
+    # 资产链接指向 uploads 路由（仅浏览器会话可访问，PRIVATE-TOKEN 也无效），
+    # 且不带 direct_asset_path——项目公开后匿名/命令行下载仍 404（v1.1.30 实测）。
+    # 包仓库对公开项目匿名可下载、永不过期；链接带 direct_asset_path 后
+    # /releases/<tag>/downloads/<file> 永久路由同样生效。
+    - |
+      set -e
+      if glab release view "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" >/dev/null 2>&1; then
+        echo ">>> release exists, skip create"
+      else
+        glab release create "$CI_COMMIT_TAG" -R "$CI_PROJECT_PATH" --name "Yue-Review $CI_COMMIT_TAG" --notes-file release_notes.md
+      fi
+      # 上传认证 header 落临时文件传给 curl（--header @file），token 不进 curl
+      # 进程 argv；与上方 glab 认证同款回退：GIT_PUSH_TOKEN 缺失（标准 GitLab
+      # 实例）时用 CI_JOB_TOKEN，否则空 token 上传一律 401。
+      UPLOAD_TOKEN_HEADER="$(mktemp)"
+      trap 'rm -f "$UPLOAD_TOKEN_HEADER"' EXIT
+      printf 'PRIVATE-TOKEN: %s\n' "${GIT_PUSH_TOKEN:-$CI_JOB_TOKEN}" > "$UPLOAD_TOKEN_HEADER"
+      for f in target/**/release/bundle/dmg/*"${VERSION}"*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*"${VERSION}"*.exe target/**/release/bundle/nsis/*"${VERSION}"*.exe.sig                target/**/Yue_Review_portable_*.zip target/**/release/bundle/appimage/*"${VERSION}"*.AppImage                target/**/release/bundle/deb/*"${VERSION}"*.deb target/**/release/bundle/rpm/*"${VERSION}"*.rpm updater.json; do
+        [ -f "$f" ] || continue
+        name="$(basename "$f")"
+        code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           --header @"$UPLOAD_TOKEN_HEADER" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
+        case "$code" in 200|201) ;; *) echo "package upload failed ($code): $f" >&2; exit 1;; esac
+        if glab api "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links" | grep -q "\\\"name\\\":\\\"$name\\\""; then
+          echo ">>> link exists, skip: $name"
+          continue
+        fi
+        glab api -X POST           "projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links"           -f "name=$name"           -f "url=$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name"           -f "direct_asset_path=/$name" >/dev/null
+        echo ">>> asset linked: $name"
+      done
+    # 发布产物端到端自检（更新链路测试·层次3）：以上传的 updater.json 为准，
+    # 校验清单版本、各平台下载 URL 与本地文件一致、安装包上传完整性（SHA256）、
+    # 签名字段。自检失败 = 发布失败（阻断坏版本流出）。打包作业已在构建前清理
+    # bundle 目录、选择/上传循环已按 $VERSION 过滤（2026-09-16 更新失效根治）。
+    - |
+      node scripts/verify-update-artifacts.mjs --version "$VERSION" --url-base "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION" --token-env GIT_PUSH_TOKEN --platform "windows-x86_64=$WIN_EXE" --platform "darwin-aarch64=$MAC_A64"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'

@@ -1,6 +1,7 @@
 //! Auto-extracted from the historical `commands.rs`. Behavior unchanged.
 
 use crate::AppState;
+use chrono::NaiveDate;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -9,8 +10,52 @@ use work_review_core::analysis::AppLocale;
 use work_review_core::config::AppConfig;
 use work_review_core::database::DailyReport;
 use work_review_core::error::AppError;
+use work_review_core::gitlab::{gitlab_unavailable_section, GitlabReportSupplement};
 
 use super::shared::{collect_privacy_filters, filter_activities_by_privacy, persist_app_config};
+
+/// 拉取 GitLab 今日（或指定日报日期）提交并转成日报补充内容。
+/// - 未配置 URL/Token 或开关关闭：返回空补充（不生成小节）。
+/// - 已配置即生成「GitLab 今日提交」小节：拉取失败/超时（10 秒）降级为
+///   失败说明占位小节；无提交为占位说明；成功为提交列表（超限截断并提示）。
+async fn fetch_gitlab_supplement(
+    config: &AppConfig,
+    date: &str,
+    locale: AppLocale,
+) -> GitlabReportSupplement {
+    if !config.gitlab.report_enabled {
+        return GitlabReportSupplement::default();
+    }
+    let (Some(url), Some(token)) = (config.gitlab.url.as_deref(), config.gitlab.token.as_deref())
+    else {
+        return GitlabReportSupplement::default();
+    };
+    if url.trim().is_empty() || token.trim().is_empty() {
+        return GitlabReportSupplement::default();
+    }
+
+    let date_local = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .unwrap_or_else(|_| chrono::Local::now().date_naive());
+    let offset = work_review_core::gitlab::local_offset_now();
+    let project_filter = config.gitlab.project_filter.clone();
+    let work_authors = config.gitlab.work_authors.clone();
+    let client = work_review_core::gitlab::GitlabClient::new(url, token);
+
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.fetch_today_commits(offset, date_local, &project_filter, &work_authors),
+    )
+    .await
+    {
+        Ok(Ok(result)) => result.to_supplement(offset, locale),
+        _ => GitlabReportSupplement {
+            ai_context: None,
+            local_section: gitlab_unavailable_section(locale),
+            entries: Vec::new(),
+            file_events: Default::default(),
+        },
+    }
+}
 
 fn resolve_saved_report_metadata(
     configured_mode: &work_review_core::config::AiMode,
@@ -65,7 +110,7 @@ fn export_daily_report_markdown(
     let output_path = build_daily_report_export_path(export_dir, date);
     // Retry up to 3 times to handle transient issues (disk busy, antivirus lock, etc.)
     let mut last_err = None;
-    for attempt in 0..3 {
+    for attempt in 0..3u32 {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
             log::warn!(
@@ -138,53 +183,19 @@ pub(crate) async fn generate_report_inner(
         )
     };
 
-    let avatar_start_state = {
-        let mut state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-        state.avatar_generating_report = true;
-        let avatar_state = crate::avatar_engine::apply_avatar_visual_settings(
-            crate::avatar_engine::derive_avatar_state(
-                &state.avatar_state.app_name,
-                "",
-                None,
-                state.avatar_state.is_idle,
-                true,
-            ),
-            state.config.avatar_opacity,
-            &state.config.avatar_preset,
-            &state.config.avatar_persona,
-            state.config.avatar_body_hidden,
-        );
-        state.avatar_state = avatar_state.clone();
-        if state.config.avatar_enabled {
-            Some(avatar_state)
-        } else {
-            None
-        }
-    };
-
-    if let Some(avatar_state) = avatar_start_state.as_ref() {
-        crate::avatar_engine::emit_avatar_state(app, avatar_state);
-        crate::avatar_engine::emit_avatar_bubble(
-            app,
-            &crate::avatar_engine::AvatarBubblePayload::info(match report_locale {
-                AppLocale::ZhCn => "开始整理日报，稍等我一下。",
-                AppLocale::ZhTw => "開始整理日報，稍等我一下。",
-                AppLocale::En => "I'm preparing your daily report. Give me a moment.",
-                AppLocale::Ar => "أقوم بإعداد تقريرك اليومي. لحظة من فضلك.",
-            }),
-        );
-    }
+    // 文本模型兜底：用户未配置（出厂默认）且编译期注入了内置模型时，改用内置模型生成日报
+    let text_model = work_review_core::config::effective_text_model(&config.text_model);
 
     let report_timeout =
         std::time::Duration::from_secs(config.report_generation_timeout_secs.max(60));
 
-    // 创建分析器（使用 text_model 配置）
+    // 创建分析器（使用兜底解析后的 text_model 配置）
     let analyzer = work_review_core::analysis::create_analyzer(
         config.ai_mode,
-        config.text_model.provider,
-        &config.text_model.endpoint,
-        &config.text_model.model,
-        config.text_model.api_key.as_deref(),
+        text_model.provider,
+        &text_model.endpoint,
+        &text_model.model,
+        text_model.api_key.as_deref(),
         &config.daily_report_custom_prompt,
         config.daily_report_system_prompt_override.as_deref(),
         report_locale,
@@ -211,6 +222,92 @@ pub(crate) async fn generate_report_inner(
         .iter()
         .map(|c| (c.key.clone(), c.name.clone()))
         .collect();
+
+    // 拉取该日报日期（默认今日）的私有化 GitLab 提交，作为日报补充内容。
+    // 已配置即生成「GitLab 今日提交」独立小节（失败/无提交为占位说明），
+    // 未配置为空补充；失败不阻塞日报生成。
+    let mut gitlab_supplement = fetch_gitlab_supplement(&config, &date, report_locale).await;
+
+    // 「文件修改」小节：读当日已入库的文件监控事件聚合（统计 + 目录 Top，
+    // 与 GitLab 小节平级的独立块 FILE_EVENTS_TODAY；未启用/无事件为空串、
+    // 块整体隐藏）。上限拉取 2000 条，超出在统计里注明仅计最近条数；
+    // 读库失败仅记日志不阻塞日报。
+    {
+        const FILE_EVENTS_FETCH_LIMIT: i64 = 2000;
+        let file_events_result = state
+            .lock()
+            .map_err(|e| AppError::Unknown(e.to_string()))
+            .and_then(|guard| {
+                let events =
+                    guard
+                        .database
+                        .get_recent_file_events(&date, &date, FILE_EVENTS_FETCH_LIMIT)?;
+                let total = guard.database.count_file_events(&date, &date)?;
+                Ok((events, total))
+            });
+        match file_events_result {
+            Ok((events, total)) => {
+                gitlab_supplement.file_events =
+                    work_review_core::file_events_report::build_file_events_section(
+                        &events,
+                        total > events.len() as i64,
+                        total.max(0) as usize,
+                        report_locale,
+                    );
+            }
+            Err(error) => {
+                log::warn!("文件事件读取失败（不影响日报生成）: {error}");
+            }
+        }
+    }
+
+    // 「工作项归因」小节：Plane 工作项与当天活动/GitLab 提交的混合归因
+    // （确定性优先 + AI 兜底），按日随用随算、不建表不入库。追加进 GitLab
+    // 补充的 local_section 尾部——两者同属模板固定小节，共用 GITLAB_TODAY 块
+    // 容器渲染（前端隐藏 GitLab 块时会一并隐藏归因小节，属预期合并语义；
+    // GitLab 未配置时归因小节也会借用该块容器展示）。不为此扩分析器参数。
+    // 总预算 45 秒（候选 20 秒 + AI 兜底余量），超时/失败静默放弃本小节。
+    let plane_section = match tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        super::plane::compute_plane_attributions(&date, state),
+    )
+    .await
+    {
+        Ok(outcome) if outcome.ok => super::plane::plane_attribution_report_section(
+            &outcome.attributions,
+            work_review_core::gitlab::local_offset_now(),
+            report_locale,
+        ),
+        Ok(outcome) => {
+            if let Some(message) = outcome.message {
+                log::info!("Plane 工作项归因跳过（日报不含归因小节）: {message}");
+            }
+            String::new()
+        }
+        Err(_) => {
+            log::info!("Plane 工作项归因超时（45 秒），日报跳过归因小节");
+            String::new()
+        }
+    };
+    if !plane_section.is_empty() {
+        if gitlab_supplement.local_section.is_empty() {
+            gitlab_supplement.local_section = plane_section;
+        } else {
+            gitlab_supplement.local_section.push_str("\n\n");
+            gitlab_supplement.local_section.push_str(&plane_section);
+        }
+    }
+
+    // 提交入库（时间线页与日报时间线共用数据源）；入库失败仅记日志不阻塞日报
+    if !gitlab_supplement.entries.is_empty() {
+        let rows = work_review_core::gitlab::entries_to_rows(&gitlab_supplement.entries, &date);
+        let state_guard = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        if let Err(error) = state_guard.database.upsert_gitlab_commits(&rows) {
+            log::warn!("GitLab 提交入库失败（不影响日报生成）: {error}");
+        }
+    }
+
+    // 「Plane 工作项」小节：读当日已入库数据（由时间线页补采写入，日报不现拉
     let spawn_result = tokio::spawn(async move {
         analyzer
             .generate_report(
@@ -221,6 +318,7 @@ pub(crate) async fn generate_report_inner(
                 report_locale,
                 category_name_overrides,
                 semantic_name_overrides,
+                &gitlab_supplement,
             )
             .await
     });
@@ -257,57 +355,10 @@ pub(crate) async fn generate_report_inner(
         }
     };
 
-    let avatar_finish_state = {
-        let mut state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-        state.avatar_generating_report = false;
-        let avatar_state = crate::avatar_engine::apply_avatar_visual_settings(
-            crate::avatar_engine::derive_avatar_state(
-                &state.avatar_state.app_name,
-                "",
-                None,
-                state.avatar_state.is_idle,
-                false,
-            ),
-            state.config.avatar_opacity,
-            &state.config.avatar_preset,
-            &state.config.avatar_persona,
-            state.config.avatar_body_hidden,
-        );
-        state.avatar_state = avatar_state.clone();
-        if state.config.avatar_enabled {
-            Some(avatar_state)
-        } else {
-            None
-        }
-    };
-
-    if let Some(avatar_state) = avatar_finish_state.as_ref() {
-        crate::avatar_engine::emit_avatar_state(app, avatar_state);
-        let bubble = if report_result.is_ok() {
-            crate::avatar_engine::AvatarBubblePayload::success(match report_locale {
-                AppLocale::ZhCn => "日报整理好了，可以回来看看。",
-                AppLocale::ZhTw => "日報整理好了，可以回來看看。",
-                AppLocale::En => "Your daily report is ready. You can check it now.",
-                AppLocale::Ar => "تقريرك اليومي جاهز. يمكنك التحقق منه الآن.",
-            })
-        } else {
-            crate::avatar_engine::AvatarBubblePayload::info(match report_locale {
-                AppLocale::ZhCn => "这次日报整理失败了，稍后可以再试。",
-                AppLocale::ZhTw => "這次日報整理失敗了，稍後可以再試。",
-                AppLocale::En => "This report run failed. Please try again later.",
-                AppLocale::Ar => "فشل تشغيل هذا التقرير. يرجى المحاولة مرة أخرى لاحقاً.",
-            })
-        };
-        crate::avatar_engine::emit_avatar_bubble(app, &bubble);
-    }
-
     let generated_report = report_result?;
     let report = generated_report.content.clone();
-    let (saved_ai_mode, saved_model_name) = resolve_saved_report_metadata(
-        &config.ai_mode,
-        &config.text_model.model,
-        generated_report.used_ai,
-    );
+    let (saved_ai_mode, saved_model_name) =
+        resolve_saved_report_metadata(&config.ai_mode, &text_model.model, generated_report.used_ai);
 
     // 保存报告
     {
@@ -344,10 +395,14 @@ pub(crate) async fn generate_report_inner(
 
     if config.daily_report_auto_export {
         if let Some(export_dir) = config.daily_report_export_dir.as_deref() {
-            if let Err(e) = export_daily_report_markdown(Path::new(export_dir), &date, &report) {
+            // 与手动/合并导出同款敏感位置校验（拒绝 .ssh、LaunchAgents 等目录，
+            // 防止配置同步载荷把导出指向敏感位置）。自动导出目录允许尚不存在
+            // （导出函数会 create_dir_all），故只做组件检查、不走要求已存在的
+            // validate_export_dir；失败不传播——日报已落库，仅导出文件失败
+            let export_result = ensure_export_dir_components_safe(Path::new(export_dir))
+                .and_then(|()| export_daily_report_markdown(Path::new(export_dir), &date, &report));
+            if let Err(e) = export_result {
                 log::error!("日报自动导出失败（日报已保存到数据库，仅导出文件失败）: {e:?}");
-                // Do NOT propagate the error — report is already saved in the database.
-                // Export failure should not make the entire generation appear to have failed.
             }
         }
     }
@@ -700,8 +755,13 @@ pub(crate) fn export_reports_range_inner(
 
     let target_path_buf = PathBuf::from(target);
     if let Some(parent) = target_path_buf.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            std::fs::create_dir_all(parent)?;
+        if !parent.as_os_str().is_empty() {
+            // 目录来自请求方，与单篇导出同样需要校验（拒绝隐藏/敏感目录，
+            // 防止向 .ssh、LaunchAgents 等位置写文件），缺失时才创建
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+            validate_export_dir(parent)?;
         }
     }
     std::fs::write(&target_path_buf, markdown)?;
@@ -733,6 +793,57 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
     use work_review_core::config::AiMode;
+
+    #[tokio::test]
+    async fn gitlab未配置时日报补充内容应为空() {
+        let config = AppConfig::default();
+        let supplement = fetch_gitlab_supplement(&config, "2026-09-02", AppLocale::ZhCn).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+    }
+
+    #[tokio::test]
+    async fn gitlab开关关闭时即使已配置也不请求() {
+        let mut config = AppConfig::default();
+        config.gitlab.url = Some("https://git.example.com".to_string());
+        config.gitlab.token = Some("stub-token".to_string());
+        config.gitlab.report_enabled = false;
+        let supplement = fetch_gitlab_supplement(&config, "2026-09-02", AppLocale::ZhCn).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+    }
+
+    #[tokio::test]
+    async fn gitlab空白配置应视为未配置() {
+        let mut config = AppConfig::default();
+        config.gitlab.url = Some("   ".to_string());
+        config.gitlab.token = Some("stub".to_string());
+        let supplement = fetch_gitlab_supplement(&config, "2026-09-02", AppLocale::ZhCn).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+
+        let mut missing_token = AppConfig::default();
+        missing_token.gitlab.url = Some("https://git.example.com".to_string());
+        let supplement = fetch_gitlab_supplement(&missing_token, "2026-09-02", AppLocale::En).await;
+        assert_eq!(supplement, GitlabReportSupplement::default());
+    }
+
+    #[test]
+    fn plane配置不齐全时日报不应产出工作项小节() {
+        use super::super::plane::plane_configured;
+
+        let mut config = AppConfig::default();
+        assert!(!plane_configured(&config.plane), "默认配置未启用");
+
+        config.plane.enabled = true;
+        config.plane.url = Some("https://plane.example.com".to_string());
+        config.plane.api_key = Some("stub-key".to_string());
+        config.plane.workspace_slug = Some("my-team".to_string());
+        assert!(plane_configured(&config.plane), "配置齐全应产出小节");
+
+        config.plane.enabled = false;
+        assert!(
+            !plane_configured(&config.plane),
+            "开关关闭时即使配置齐全也不产出"
+        );
+    }
 
     #[test]
     fn summary回退到基础模板时不应保留_ai_模型标签() {

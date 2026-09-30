@@ -3,7 +3,6 @@ use crate::screenshot::ScreenshotResult;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::TcpListener as StdTcpListener;
 use std::path::{Path, PathBuf};
@@ -27,6 +26,16 @@ pub fn effective_api_host(config_host: Option<&str>) -> String {
         .filter(|h| !h.is_empty())
         .unwrap_or(LOCALHOST_API_HOST)
         .to_string()
+}
+
+/// 构造对外展示的 base URL。host 为 IPv6 字面量（含冒号）时按 RFC 3986
+/// 包上方括号，否则产出 `http://::1:47831` 这类不可用的畸形串。
+fn http_base_url(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("http://[{host}]:{port}")
+    } else {
+        format!("http://{host}:{port}")
+    }
 }
 const LOCALHOST_API_TOKEN_FILE: &str = "localhost_api_token.txt";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -177,6 +186,7 @@ fn reason_phrase(status: u16) -> &'static str {
         201 => "Created",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
@@ -193,29 +203,45 @@ fn generate_localhost_api_token() -> String {
     format!("wr-local-{}", Uuid::new_v4().simple())
 }
 
+// 写入 token 内容；Unix 上保持 0600（明文凭据不允许组/其他用户可读）
 #[cfg(unix)]
-fn open_secret_file(path: &Path) -> std::io::Result<std::fs::File> {
+fn write_token_file_at(path: &Path, token: &str) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true).mode(0o600);
-    options.open(path)
+    let mut file = options.open(path)?;
+    file.write_all(token.as_bytes())
 }
 
 #[cfg(not(unix))]
-fn open_secret_file(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    options.open(path)
+fn write_token_file_at(path: &Path, token: &str) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(token.as_bytes())
 }
 
 fn write_localhost_api_token(path: &Path, token: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut file = open_secret_file(path)?;
-    file.write_all(token.as_bytes())?;
-    file.flush()?;
+    // 原子写（同 node_gateway 身份文件模式）：truncate+write 中途崩溃会留下
+    // 半截 token 文件，而 ensure 只对"缺失或空"自愈，残文会让所有客户端持续 401；
+    // 临时名带 pid+纳秒避免并发写同一临时文件/Windows rename 目标已存在失败
+    let unique = format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let temp_path = path.with_extension(unique);
+    write_token_file_at(&temp_path, token)?;
+    if let Err(e) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(e.into());
+    }
     // 主动刷新缓存，保证生成/轮换后新 token 立即生效
     if let Ok(mut cache) = LOCALHOST_API_TOKEN_CACHE.lock() {
         *cache = Some((path.to_path_buf(), token.to_string(), Instant::now()));
@@ -275,10 +301,24 @@ fn mask_localhost_api_token(token: &str) -> String {
         return "已生成".to_string();
     }
 
-    format!("{}…{}", &token[..8], &token[token.len() - 4..])
+    // token 文件可被手改成多字节内容，字节切片在非字符边界会 panic，按字符取：
+    // head 不足 8 字符时取全部，tail 取末 4 个字符（len > 12 字节时至少 4 个字符）
+    let chars: Vec<char> = token.chars().collect();
+    let head: String = chars.iter().take(8).collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{head}…{tail}")
 }
 
+/// 串行化 token 的"读-判-写"（ensure）与轮换（rotate）：文件缺失时两个并发
+/// ensure 各自生成不同 token 先后落盘，后写覆盖先写，先返回方据其配置的客户端
+/// 将恒 401（第六轮 node_gateway 同族问题的本文件对应面）
+static LOCALHOST_API_TOKEN_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn ensure_localhost_api_token(state: &Arc<Mutex<AppState>>) -> Result<String> {
+    let _write_guard = LOCALHOST_API_TOKEN_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     let token_path = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         localhost_api_token_path(&state.data_dir)
@@ -294,6 +334,10 @@ pub fn ensure_localhost_api_token(state: &Arc<Mutex<AppState>>) -> Result<String
 }
 
 pub fn rotate_localhost_api_token(state: &Arc<Mutex<AppState>>) -> Result<String> {
+    let _write_guard = LOCALHOST_API_TOKEN_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     let token_path = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         localhost_api_token_path(&state.data_dir)
@@ -348,7 +392,7 @@ pub fn get_localhost_api_status(state: &Arc<Mutex<AppState>>) -> Result<Localhos
         running: runtime_running,
         host: host.clone(),
         port,
-        base_url: format!("http://{host}:{port}"),
+        base_url: http_base_url(&host, port),
         token_configured: token.is_some(),
         token_preview: token.as_deref().map(mask_localhost_api_token),
         last_error,
@@ -380,12 +424,16 @@ fn stop_runtime_locked(runtime: &mut LocalhostApiRuntime) -> Option<oneshot::Sen
 }
 
 fn record_runtime_error(state: &Arc<Mutex<AppState>>, message: impl Into<String>) {
+    let message = message.into();
+    // 运行时异常退出必须留日志：last_error 只存在内存里，锁中毒时连它都写不进，
+    // 无日志则该错误彻底无踪迹
+    log::error!("本地 API 运行时异常退出: {message}");
     if let Ok(mut state) = state.lock() {
         state.localhost_api_runtime.running = false;
         state.localhost_api_runtime.bound_host = None;
         state.localhost_api_runtime.bound_port = None;
         state.localhost_api_runtime.shutdown_tx = None;
-        state.localhost_api_runtime.last_error = Some(message.into());
+        state.localhost_api_runtime.last_error = Some(message);
     }
 }
 
@@ -483,7 +531,8 @@ pub fn sync_localhost_api_runtime(app: &AppHandle, state: &Arc<Mutex<AppState>>)
     });
 
     log::info!(
-        "本地 API 已监听在 http://{host}:{port}，token={}",
+        "本地 API 已监听在 {}，token={}",
+        http_base_url(&host, port),
         mask_localhost_api_token(&token)
     );
     Ok(())
@@ -495,20 +544,41 @@ async fn run_localhost_api(
     app: AppHandle,
     state: Arc<Mutex<AppState>>,
 ) -> Result<()> {
+    // Windows 上客户端在 accept 前重置连接（WSAECONNRESET）会让 accept 返回瞬态
+    // 错误：直接退出会把整个本地 API 打成永久停机（端口探测/健康检查即可触发）。
+    // 记日志并短暂退避后重试；连续大量失败（如 fd 耗尽）仍按异常退出上报
+    const ACCEPT_ERROR_GIVE_UP: u32 = 200;
+    let mut consecutive_accept_errors: u32 = 0;
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => {
                 return Ok(());
             }
             accept_result = listener.accept() => {
-                let (stream, _) = accept_result.map_err(|e| AppError::Unknown(format!("接受本地 API 连接失败: {e}")))?;
-                let app = app.clone();
-                let state = state.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = handle_connection(stream, app, state).await {
-                        log::warn!("处理本地 API 请求失败: {e}");
+                match accept_result {
+                    Ok((stream, _)) => {
+                        consecutive_accept_errors = 0;
+                        let app = app.clone();
+                        let state = state.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = handle_connection(stream, app, state).await {
+                                log::warn!("处理本地 API 请求失败: {e}");
+                            }
+                        });
                     }
-                });
+                    Err(e) => {
+                        consecutive_accept_errors += 1;
+                        if consecutive_accept_errors >= ACCEPT_ERROR_GIVE_UP {
+                            return Err(AppError::Unknown(format!(
+                                "本地 API 连续接受连接失败: {e}"
+                            )));
+                        }
+                        log::warn!(
+                            "接受本地 API 连接失败（连续第 {consecutive_accept_errors} 次）: {e}"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                }
             }
         }
     }
@@ -535,6 +605,10 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<ParsedRequest>> {
     let mut buffer = [0u8; 4096];
     let header_end;
 
+    // 已扫描过的前缀不会再出现新的 "\r\n\r\n"（分隔符窗口长 4），增量续扫即可，
+    // 避免慢速滴流客户端把每 chunk 的整段重扫放大成 O(n²)
+    let mut scanned_up_to = 0usize;
+
     loop {
         let read = stream.read(&mut buffer).await?;
         if read == 0 {
@@ -549,10 +623,15 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<ParsedRequest>> {
             return Err(AppError::Config("本地 API 请求体过大".to_string()));
         }
 
-        if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            header_end = position + 4;
+        if let Some(position) = bytes[scanned_up_to..]
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+        {
+            header_end = scanned_up_to + position + 4;
             break;
         }
+        // 保留末尾 3 字节不标记已扫：分隔符可能横跨本次与下次读取的边界
+        scanned_up_to = bytes.len().saturating_sub(3);
     }
 
     let header_text = String::from_utf8(bytes[..header_end].to_vec())
@@ -647,7 +726,7 @@ fn handle_device_info(state: &Arc<Mutex<AppState>>) -> Result<HttpResponse> {
             "protocolVersion": node_status.protocol_version,
             "recording": is_recording,
             "paused": is_paused,
-            "apiEndpoint": format!("http://{host}:{port}"),
+            "apiEndpoint": http_base_url(&host, port),
         }),
     ))
 }
@@ -992,11 +1071,12 @@ async fn route_request(
             if date.is_empty() {
                 Err(AppError::Config("日期不能为空".to_string()))
             } else {
+                // 上限钳制（同 /v1/reports 的 .min(100) 先例）：查询参数不直通
                 let limit: usize = request
                     .query
                     .get("limit")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(10000);
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .map_or(10_000, |v| v.min(10_000));
                 match state.lock() {
                     Ok(s) => s
                         .database
@@ -1203,7 +1283,7 @@ fn authorize_request(request: &ParsedRequest, state: &Arc<Mutex<AppState>>) -> R
 mod tests {
     use super::{
         acquire_api_capture_permit, build_capture_payload, effective_api_host,
-        ensure_api_capture_enabled, extract_bearer_token, mask_localhost_api_token,
+        ensure_api_capture_enabled, extract_bearer_token, http_base_url, mask_localhost_api_token,
         parse_generate_report_params, request_auth_mode, ParsedRequest, RequestAuthMode,
     };
     use crate::screenshot::ScreenshotResult;
@@ -1352,6 +1432,15 @@ mod tests {
     }
 
     #[test]
+    fn base_url对ipv6字面量应包方括号() {
+        assert_eq!(http_base_url("127.0.0.1", 47831), "http://127.0.0.1:47831");
+        assert_eq!(http_base_url("localhost", 8080), "http://localhost:8080");
+        // 不包方括号时是 `http://::47831` 畸形串，状态面板与 apiEndpoint 均不可用
+        assert_eq!(http_base_url("::", 47831), "http://[::]:47831");
+        assert_eq!(http_base_url("::1", 8080), "http://[::1]:8080");
+    }
+
+    #[test]
     fn bearer_token解析应忽略前后空白() {
         assert_eq!(extract_bearer_token("Bearer abc123 "), Some("abc123"));
         assert_eq!(extract_bearer_token("bearer xyz"), Some("xyz"));
@@ -1364,6 +1453,17 @@ mod tests {
         assert!(masked.starts_with("wr-local"));
         assert!(masked.contains('…'));
         assert!(!masked.contains("1234567890abcdef"));
+    }
+
+    #[test]
+    fn token预览对多字节内容不应panic() {
+        // 手改成多字节内容时字节切片会落在非字符边界，按字符取应正常掩码：
+        // 8 个 head 字符 + … + 4 个 tail 字符
+        let input = "令牌内容".repeat(4);
+        let masked = mask_localhost_api_token(&input);
+        assert_eq!(masked.chars().count(), 8 + 1 + 4);
+        assert!(masked.contains('…'));
+        assert_ne!(masked, input);
     }
 
     #[test]

@@ -26,7 +26,8 @@
     | 'xai'
     | 'mistral'
     | 'lmstudio'
-    | 'custom';
+    | 'custom'
+    | 'builtin';
 
   interface TextModelConfig {
     provider: ProviderId;
@@ -227,6 +228,11 @@
   }
 
   const providerLabels: Record<ProviderId, Partial<Record<Locale, ProviderLabel>>> = {
+    builtin: {
+      'zh-CN': { name: '内置模型', description: '软件内置的兜底大模型，无需任何配置' },
+      en: { name: 'Built-in Model', description: 'Built-in fallback model, zero configuration' },
+      'zh-TW': { name: '內建模型', description: '軟體內建的兜底大模型，無需任何設定' },
+    },
     ollama: {
       'zh-CN': { name: 'Ollama (本地)', description: '本机运行开源模型，数据不出本机' },
       en: { name: 'Ollama (Local)', description: 'Runs open models on your device, data stays local' },
@@ -361,6 +367,20 @@
   $: isTextModelConfigured = textConnectionVerified;
   $: hasTextModelConfig = !!(config?.text_model?.endpoint && config?.text_model?.model);
 
+  // 内置兜底模型：仅在「出厂默认配置」时生效，判定与后端 is_factory_default_text 保持一致
+  // （含旧版迁移产生的幽灵默认：模型名恰为 Ollama 默认模型 qwen3）
+  let hasBuiltinModel = false;
+  $: ollamaProvider = providers.find(p => p.id === 'ollama');
+  $: ollamaDefaultEndpoint = ollamaProvider?.default_endpoint || 'http://localhost:11434';
+  $: ollamaDefaultModel = ollamaProvider?.default_model || 'qwen3';
+  $: usingBuiltinModel = hasBuiltinModel
+    && (config?.text_model?.provider === 'builtin'
+      || (config?.text_model?.provider === 'ollama'
+        && (config?.text_model?.endpoint || '').trim() === ollamaDefaultEndpoint
+        && !(config?.text_model?.api_key || '').trim()
+        && (!(config?.text_model?.model || '').trim()
+          || (config?.text_model?.model || '').trim() === ollamaDefaultModel)));
+
   // 本地 API（LM Studio / Ollama / 任意 localhost 端点）的自动测试会触发模型加载，
   // 耗时且无必要 —— 这类端点跳过进入页面时的自动测试，由用户手动点"测试"。
   function isLocalEndpoint() {
@@ -428,6 +448,7 @@
     mistral: '#fa520f',
     lmstudio: '#4338ca',
     custom: '#64748b',
+    builtin: '#4f46e5',
   };
 
   /** 品牌图标加载失败 → 回退到字母块（图标需运行 scripts/fetch-provider-icons.ts 落盘） */
@@ -487,8 +508,36 @@
 
   /** 卡片点击入口：复用 handleProviderChange 的缓存/默认值/状态重置逻辑。 */
   function selectProvider(providerId: ProviderId) {
+    if (providerId === 'builtin') {
+      if (usingBuiltinModel) return;
+      selectBuiltinProvider();
+      return;
+    }
     if ((config.text_model?.provider || 'ollama') === providerId) return;
     handleProviderChange(providerId);
+  }
+
+  /** 切换到内置模型：配置固定为出厂默认形状（面向用户隐藏一切细节），
+   *  并默认进入「AI 增强」日报模式——内置模型让 AI 功能开箱即用。 */
+  function selectBuiltinProvider() {
+    config.text_model.provider = 'builtin';
+    config.text_model.endpoint = '';
+    config.text_model.model = '';
+    config.text_model.api_key = null;
+    config.text_model.enable_thinking = null;
+    config.text_model.thinking_budget = null;
+    config.text_model.max_output_tokens = null;
+    if (hasBuiltinModel) {
+      config.ai_mode = 'summary';
+    }
+    textTestStatus = null;
+    textTestMessage = '';
+    textConnectionVerified = false;
+    modelsError = '';
+    fetchedModels = [];
+    modelsLoaded = 0;
+    aiStore.reset();
+    dispatch('change', config);
   }
 
   function handleProviderChange(providerId: ProviderId) {
@@ -664,6 +713,11 @@
 
   onMount(async () => {
     refreshSemanticStats();
+    try {
+      hasBuiltinModel = await invoke<boolean>('has_builtin_model');
+    } catch {
+      hasBuiltinModel = false;
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
 
     const currentHash = getConfigHash();
@@ -688,6 +742,21 @@
     unsubscribe();
   });
 </script>
+
+<!-- 内置模型指示：编译期注入后常驻显示，让用户知道无需配置也能使用 AI 功能。
+     置于日报模式切换之上，两个分支（AI 增强/基础模板）都可见。 -->
+{#if hasBuiltinModel}
+  <div class="mb-4 flex items-start gap-2 rounded-xl border border-sky-300 bg-sky-50 px-3.5 py-3 dark:border-[#2a6496] dark:bg-[#112240]">
+    <span class="mt-px text-[13px] leading-5 text-sky-600 dark:text-[#79b8ff]">✦</span>
+    <div class="min-w-0 text-[12px] leading-5 text-sky-800 dark:text-[#a8d4ff]">
+      {#if usingBuiltinModel}
+        <p class="font-medium">{t('settingsAI.builtinModelHint')}</p>
+      {:else}
+        <p>{t('settingsAI.builtinAvailableHint')}</p>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <!-- 日报模式切换 -->
 <fieldset class="mb-5" data-locale={currentLocale}>
@@ -748,7 +817,9 @@
       <span class="settings-label mb-1.5 block">{t('settingsAI.provider')}</span>
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {#each localizedProviders as provider (provider.id)}
-          {@const active = (config.text_model?.provider || 'ollama') === provider.id}
+          {@const active = provider.id === 'builtin'
+            ? usingBuiltinModel
+            : !usingBuiltinModel && (config.text_model?.provider || 'ollama') === provider.id}
           <button
             type="button"
             class="flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-start transition
@@ -772,12 +843,15 @@
                 {providerInitial(provider.id)}
               </span>
             {/if}
-            <span class="min-w-0 flex-1">
-              <span class="block truncate text-[13px] font-medium text-slate-800 dark:text-[#e6edf3]">{provider.name}</span>
-              {#if active}
-                <span class="block text-[10px] leading-tight text-indigo-500 dark:text-indigo-400">{t('settingsAI.providerActive')}</span>
-              {/if}
-            </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[13px] font-medium text-slate-800 dark:text-[#e6edf3]">{provider.name}</span>
+                  {#if provider.id === 'builtin'}
+                    <span class="block text-[10px] leading-tight text-sky-600 dark:text-[#79b8ff]">{t('settingsAI.builtinNoConfig')}</span>
+                  {/if}
+                  {#if active}
+                    <span class="block text-[10px] leading-tight text-indigo-500 dark:text-indigo-400">{t('settingsAI.providerActive')}</span>
+                  {/if}
+                </span>
           </button>
         {/each}
       </div>
@@ -803,13 +877,18 @@
         </div>
         <button
           on:click={testTextModel}
-          disabled={textTestStatus === 'testing' || !hasTextModelConfig}
+          disabled={textTestStatus === 'testing' || (!hasTextModelConfig && !usingBuiltinModel)}
           class="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition settings-action-secondary disabled:cursor-not-allowed disabled:opacity-40"
         >
           {t('settingsAI.testConnection')}
         </button>
       </div>
       <div class="settings-block p-3.5">
+        {#if usingBuiltinModel}
+          <div class="rounded-lg border border-sky-200 bg-sky-50/70 px-3.5 py-3 text-[12px] leading-5 text-sky-800 dark:border-[#1f4468] dark:bg-[#112240]/70 dark:text-[#a8d4ff]">
+            {t('settingsAI.builtinConfigNote')}
+          </div>
+        {:else}
 
     <!-- API 地址 -->
     <div>
@@ -1024,6 +1103,8 @@
         {/if}
       </div>
     {/if}
+
+        {/if}
 
     <!-- 测试结果详情 -->
     {#if textTestMessage}

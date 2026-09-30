@@ -95,7 +95,6 @@ export interface AssistantStore extends Readable<AssistantState> {
   setConversationId: (conversationId: number | null | undefined) => void;
   beginSending: (requestId: string) => void;
   finishSending: (requestId: string) => void;
-  updateLastStreaming: (updater: AssistantMessageUpdater) => void;
   updateMessageById: (messageId: string, updater: AssistantMessageUpdater) => void;
   reset: () => void;
 }
@@ -246,7 +245,11 @@ function loadState(): AssistantState {
     const persisted = isRecord(parsed) ? parsed : {};
     return {
       messages: Array.isArray(persisted.messages)
-        ? persisted.messages.map((message) => normalizeMessage(message))
+        ? persisted.messages
+            .map((message) => normalizeMessage(message))
+            // 应用可能在流式中途退出/崩溃：恢复出来的消息必然已不在生成，
+            // 保留 streaming:true 会渲染出永远“生成中”的幽灵气泡
+            .map((message) => (message.streaming ? { ...message, streaming: false } : message))
         : [],
       selectedModelId:
         typeof persisted.selectedModelId === 'string' && persisted.selectedModelId.trim()
@@ -269,8 +272,15 @@ function persistState(state: AssistantState): void {
     return;
   }
 
+  // 持久化只存最近 40 条兜底 localStorage 容量；内存态不截断——
+  // 会话模式（SQLite 为完整数据源）下 appendMessage 截断会让长会话
+  // 一发消息就“眼前消失”旧消息
+  const persisted =
+    state.messages.length > 40
+      ? { ...state, messages: state.messages.slice(-40) }
+      : state;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.warn('保存助手会话缓存失败:', error);
   }
@@ -293,7 +303,10 @@ function createAssistantStore(): AssistantStore {
     appendMessage: (message) =>
       update((state) => ({
         ...state,
-        messages: [...state.messages, normalizeMessage(message)].slice(-40),
+        // 不在内存里截断：切到长会话（setConversation 全量装入）后再发消息，
+        // slice(-40) 会把用户眼前的旧消息静默裁掉；localStorage 容量兜底
+        // 统一在 persistState 做
+        messages: [...state.messages, normalizeMessage(message)],
       })),
     clearMessages: () =>
       update((state) => ({
@@ -313,8 +326,10 @@ function createAssistantStore(): AssistantStore {
     setMessages: (messages) =>
       update((state) => ({
         ...state,
+        // 不做 slice 截断：截断会让装入超长历史时静默丢消息
+        // （persistState 已统一做 localStorage 兜底）
         messages: Array.isArray(messages)
-          ? messages.slice(-40).map((message) => normalizeMessage(message))
+          ? messages.map((message) => normalizeMessage(message))
           : [],
       })),
     // P3：绑定/切换 SQLite 会话（同时替换内存消息）
@@ -345,15 +360,6 @@ function createAssistantStore(): AssistantStore {
           sending: false,
           sendingRequestId: null,
         };
-      }),
-    // 增量更新当前 streaming 的 assistant message（流式事件驱动）。
-    updateLastStreaming: (updater) =>
-      update((state) => {
-        const index = state.messages.findIndex((message) => message.streaming);
-        if (index === -1) return state;
-        const newMessages = state.messages.slice();
-        newMessages[index] = normalizeMessage(updater({ ...newMessages[index] }));
-        return { ...state, messages: newMessages };
       }),
     // 按请求对应的消息 ID 定点更新，避免并发流式消息互相覆盖。
     updateMessageById: (messageId, updater) =>

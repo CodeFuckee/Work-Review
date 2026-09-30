@@ -64,6 +64,7 @@ const requestQueue: IconRequestQueueItem[] = [];
 const failedAt: Partial<Record<string, number>> = {};
 let activeRequestCount = 0;
 let storeFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let persistFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -164,6 +165,18 @@ function persistIconCache(): void {
     return;
   }
 
+  // 每个图标完成都会触发落盘，整包序列化+同步写较重（单项可达上百 KB base64）；
+  // 与 updateIconStore 同款节流，批量加载期只在 100ms 边界落盘一次
+  if (persistFlushTimer) {
+    return;
+  }
+  persistFlushTimer = setTimeout(() => {
+    persistFlushTimer = null;
+    persistIconCacheNow();
+  }, 100);
+}
+
+function persistIconCacheNow(): void {
   try {
     const items: PersistedIconCacheItem[] = [];
     let persistedChars = JSON.stringify({ items: [] }).length;

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  getOcrDisplayText,
   parseTimelineActivities,
   prepareTimelineActivities,
   upsertTimelineActivity,
@@ -226,4 +227,22 @@ test('时间线排序和实时更新不应修改输入数组', () => {
   assert.deepEqual(current, [first]);
   assert.notStrictEqual(sorted, unsorted);
   assert.notStrictEqual(updated, current);
+});
+
+test('OCR 展示文本：null、空串与纯空白应归一为 null（显示占位）', () => {
+  assert.equal(getOcrDisplayText(null), null);
+  assert.equal(getOcrDisplayText(''), null);
+  assert.equal(getOcrDisplayText('   '), null);
+  assert.equal(getOcrDisplayText(' \n\t\r '), null);
+});
+
+test('OCR 展示文本：应去掉首尾空白但保留内部换行结构', () => {
+  assert.equal(getOcrDisplayText('  hello world  '), 'hello world');
+  const multiline = getOcrDisplayText('\n第一行\n第二行\n');
+  assert.equal(multiline, '第一行\n第二行');
+});
+
+test('OCR 展示文本：超长内容不应在助手里截断（滚动交给样式）', () => {
+  const long = '屏幕内容'.repeat(5000);
+  assert.equal(getOcrDisplayText(long), long);
 });

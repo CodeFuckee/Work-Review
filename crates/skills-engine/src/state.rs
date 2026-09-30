@@ -125,3 +125,55 @@ impl SkillState {
         self.updated_at = Self::now_secs();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 新建状态应带技能id与初始零统计() {
+        let state = SkillState::new("daily_review".into());
+        assert_eq!(state.skill_id, "daily_review");
+        assert!(state.learned_params.is_empty());
+        assert!(state.learning_history.is_empty());
+        assert_eq!(state.stats.total_executions, 0);
+        assert!(!state.learning_paused);
+        assert!(state.created_at > 0);
+        assert_eq!(state.updated_at, state.created_at);
+    }
+
+    #[test]
+    fn 执行统计应累计成功失败并增量平均耗时() {
+        let mut state = SkillState::new("s".into());
+        state.record_execution(true, 100);
+        state.record_execution(true, 200);
+        state.record_execution(false, 300);
+        assert_eq!(state.stats.total_executions, 3);
+        assert_eq!(state.stats.success_count, 2);
+        assert_eq!(state.stats.failure_count, 1);
+        // 增量平均：(100 + 200) / 2 = 150 → (150*2 + 300) / 3 = 200
+        assert!((state.stats.avg_duration_ms - 200.0).abs() < 1e-9);
+        assert!(state.stats.last_executed_at.is_some());
+    }
+
+    #[test]
+    fn 学习记录应按上限淘汰最旧条目() {
+        let mut state = SkillState::new("s".into());
+        for i in 0..5 {
+            state.record_learning(
+                SignalSource::AcceptSuggestion,
+                format!("field_{i}"),
+                serde_json::json!(null),
+                serde_json::json!(i),
+                0.5,
+                3,
+            );
+        }
+        assert_eq!(state.learning_history.len(), 3, "应只保留最近 3 条");
+        assert_eq!(
+            state.learning_history[0].field_path, "field_2",
+            "最旧的 field_0/1 被淘汰"
+        );
+        assert!(state.last_learning_at.is_some());
+    }
+}

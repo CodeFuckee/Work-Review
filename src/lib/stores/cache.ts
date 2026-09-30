@@ -26,7 +26,6 @@ export interface CacheState {
   overview: OverviewCacheEntry;
   timeline: Record<string, TimelineCacheEntry>;
   reports: Record<string, CacheEntry>;
-  hourlySummaries: Record<string, unknown>;
   reportGenerating: boolean;
   config: unknown | null;
 }
@@ -82,7 +81,6 @@ function createInitialState(): CacheState {
     },
     timeline: {},
     reports: {},
-    hourlySummaries: {},
     reportGenerating: false,
     config: null,
   };

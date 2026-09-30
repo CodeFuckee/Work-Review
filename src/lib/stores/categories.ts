@@ -40,12 +40,25 @@ export interface SemanticCategoryStore extends Readable<SemanticCategoryInfo[]> 
   getAllSemanticCategories: () => SemanticCategoryInfo[];
 }
 
+/** 同步读取 store 当前快照（订阅即退出的惯用法），两个分类 store 共用 */
+function snapshotStore<T>(subscribe: Readable<T>['subscribe']): T {
+  let value = undefined as T;
+  const unsub = subscribe(v => { value = v; });
+  unsub();
+  return value;
+}
+
 function createCategoryStore(): CategoryStore {
   const { subscribe, set, update } = writable<CategoryInfo[]>([]);
+  // 请求序号守卫：编辑后的 refresh 与其他组件 onMount 的 refresh 并发时，
+  // 旧数据的慢响应后到不能再覆盖新响应（Ask/Timeline 同款 requestId 守卫）
+  let refreshSeq = 0;
 
   async function refresh(): Promise<void> {
+    const mySeq = ++refreshSeq;
     try {
       const categories = await invoke<CategoryInfo[]>('get_categories');
+      if (mySeq !== refreshSeq) return;
       set(categories);
     } catch (e) {
       console.error('获取分类列表失败:', e);
@@ -54,9 +67,7 @@ function createCategoryStore(): CategoryStore {
 
   function getCategoryMeta(key: string): CategoryMeta {
     let result: CategoryMeta = { color: 'gray', icon: '📁', name: key, isSystem: false };
-    let cats: CategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
+    const cats = snapshotStore(subscribe);
 
     const found = cats.find(c => c.key === key);
     if (found) {
@@ -75,10 +86,7 @@ function createCategoryStore(): CategoryStore {
   }
 
   function getAllCategories(): CategoryInfo[] {
-    let cats: CategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
-    return cats;
+    return snapshotStore(subscribe);
   }
 
   return { subscribe, set, update, refresh, getCategoryMeta, getAllCategories };
@@ -88,10 +96,14 @@ export const categoryStore: CategoryStore = createCategoryStore();
 
 function createSemanticCategoryStore(): SemanticCategoryStore {
   const { subscribe, set } = writable<SemanticCategoryInfo[]>([]);
+  // 同 createCategoryStore：丢弃过期响应
+  let refreshSeq = 0;
 
   async function refresh(): Promise<void> {
+    const mySeq = ++refreshSeq;
     try {
       const categories = await invoke<SemanticCategoryInfo[]>('get_semantic_categories');
+      if (mySeq !== refreshSeq) return;
       set(categories);
     } catch (e) {
       console.error('获取语义分类列表失败:', e);
@@ -99,9 +111,7 @@ function createSemanticCategoryStore(): SemanticCategoryStore {
   }
 
   function getSemanticCategoryDisplayName(key: string): string {
-    let cats: SemanticCategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
+    const cats = snapshotStore(subscribe);
 
     const found = cats.find(c => c.key === key);
     if (found) {
@@ -113,10 +123,7 @@ function createSemanticCategoryStore(): SemanticCategoryStore {
   }
 
   function getAllSemanticCategories(): SemanticCategoryInfo[] {
-    let cats: SemanticCategoryInfo[] = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
-    return cats;
+    return snapshotStore(subscribe);
   }
 
   return { subscribe, set, refresh, getSemanticCategoryDisplayName, getAllSemanticCategories };
@@ -129,5 +136,7 @@ export function hexToRGBA(hex: string | null | undefined, alpha: number): string
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
+  // 非法十六进制字符（如 #zzzzzz）解析为 NaN，回退默认灰色避免产出无效样式
+  if ([r, g, b].some(v => Number.isNaN(v))) return `rgba(100, 116, 139, ${alpha})`;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

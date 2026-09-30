@@ -9,7 +9,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::Client;
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 fn build_chat_url(endpoint: &str) -> String {
@@ -39,6 +39,25 @@ fn report_system_prompt(locale: AppLocale) -> &'static str {
     }
 }
 
+/// 校验 DB 内的截图相对路径并安全拼接：路径被污染成绝对路径/带盘符根/
+/// 含 `..` 时 join 会逃逸出 screenshots_dir（与 src-tauri 侧 validated_join
+/// 同一威胁面——读取后内容会 base64 外发 AI 端点），读取前在此拒绝
+fn safe_screenshot_path(screenshots_dir: &Path, raw: &str) -> Option<PathBuf> {
+    let p = Path::new(raw);
+    if p.is_absolute()
+        || p.has_root()
+        || p.components()
+            .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+    {
+        return None;
+    }
+    let joined = screenshots_dir.join(p);
+    if !joined.starts_with(screenshots_dir) {
+        return None;
+    }
+    Some(joined)
+}
+
 /// 云端视觉分析器
 pub struct CloudAnalyzer {
     api_key: String,
@@ -57,11 +76,12 @@ impl CloudAnalyzer {
         custom_prompt: &str,
         locale: AppLocale,
     ) -> Self {
+        // 构建失败不得回退为无超时 Client（会把快速失败变成永久挂起）
         let client = Client::builder()
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .expect("reqwest Client 初始化失败（TLS 后端不可用）");
 
         Self {
             api_key: api_key.to_string(),
@@ -108,7 +128,14 @@ impl CloudAnalyzer {
             .await?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            // 错误页可能很大（网关 HTML），截断后再进错误串/日志（同 agent/model.rs 口径）
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect::<String>();
             return Err(AppError::Analysis(format!(
                 "OpenAI Vision API 错误: {error_text}"
             )));
@@ -128,6 +155,7 @@ impl CloudAnalyzer {
         activities: &[Activity],
         insights: &[String],
         category_overrides: &HashMap<String, String>,
+        gitlab_ai_context: Option<&str>,
     ) -> Result<String> {
         let stats_summary =
             generate_stats_summary_for_locale(stats, self.locale, category_overrides);
@@ -153,7 +181,11 @@ impl CloudAnalyzer {
                 "فيما يلي بيانات عمل المستخدم لهذا اليوم:\n\n{stats_summary}\n\n{timeline}\n\n### محتوى العمل المستخرج من لقطات الشاشة\n{insights_text}\n\nاكتب تقرير عمل يومي ذو قيمة بتنسيق Markdown باللغة العربية بناءً على هذه المعلومات.",
             ),
         };
-        let prompt = append_custom_prompt_for_locale(base_prompt, &self.custom_prompt, self.locale);
+        let mut prompt =
+            append_custom_prompt_for_locale(base_prompt, &self.custom_prompt, self.locale);
+        if let Some(gitlab_ctx) = gitlab_ai_context {
+            prompt.push_str(&format!("\n\n{gitlab_ctx}"));
+        }
 
         let response = self
             .client
@@ -179,7 +211,14 @@ impl CloudAnalyzer {
             .await?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            // 错误页可能很大（网关 HTML），截断后再进错误串/日志（同 agent/model.rs 口径）
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect::<String>();
             return Err(AppError::Analysis(format!("OpenAI API 错误: {error_text}")));
         }
 
@@ -209,6 +248,7 @@ impl Analyzer for CloudAnalyzer {
         _locale: AppLocale,
         _category_name_overrides: HashMap<String, String>,
         _semantic_name_overrides: HashMap<String, String>,
+        gitlab: &crate::gitlab::GitlabReportSupplement,
     ) -> Result<GeneratedReport> {
         if self.api_key.is_empty() {
             return Err(AppError::Analysis("OpenAI API Key 未配置".to_string()));
@@ -230,7 +270,12 @@ impl Analyzer for CloudAnalyzer {
                 continue;
             }
 
-            let screenshot_path = screenshots_dir.join(&activity.screenshot_path);
+            let Some(screenshot_path) =
+                safe_screenshot_path(screenshots_dir, &activity.screenshot_path)
+            else {
+                log::warn!("跳过非法截图路径: {}", activity.screenshot_path);
+                continue;
+            };
             if screenshot_path.exists() {
                 match self.analyze_screenshot(&screenshot_path).await {
                     Ok(insight) => insights.push(format!("[{}] {}", activity.app_name, insight)),
@@ -246,6 +291,7 @@ impl Analyzer for CloudAnalyzer {
                 activities,
                 &insights,
                 &_category_name_overrides,
+                gitlab.ai_context.as_deref(),
             )
             .await
         {
@@ -270,7 +316,10 @@ impl Analyzer for CloudAnalyzer {
                     self.locale,
                     &_category_name_overrides,
                 );
-                base.push_str(&format!("\n\n---\n*{reason}"));
+                if !gitlab.local_section.is_empty() {
+                    base.push_str(&format!("\n\n{}", gitlab.local_section));
+                }
+                base.push_str(&format!("\n\n---\n*{reason}*"));
                 (base, false, Some(reason))
             }
         };
@@ -281,5 +330,42 @@ impl Analyzer for CloudAnalyzer {
             fallback_reason,
             ai_order: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_screenshot_path;
+
+    #[test]
+    fn 正常相对截图路径应拼接成功() {
+        let dir = std::path::Path::new("/data/screenshots");
+        assert_eq!(
+            safe_screenshot_path(dir, "shot-1.png"),
+            Some(dir.join("shot-1.png"))
+        );
+        assert_eq!(
+            safe_screenshot_path(dir, "sub/shot-1.png"),
+            Some(dir.join("sub/shot-1.png"))
+        );
+    }
+
+    #[test]
+    fn 绝对路径与越界路径应被拒绝() {
+        let dir = std::path::Path::new("/data/screenshots");
+        // 绝对路径：join 会整体替换 base
+        assert!(safe_screenshot_path(dir, "/etc/passwd").is_none());
+        // .. 越界
+        assert!(safe_screenshot_path(dir, "../../etc/passwd").is_none());
+        assert!(safe_screenshot_path(dir, "sub/../../escape.png").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows盘符与unc根应被拒绝() {
+        let dir = std::path::Path::new("C:\\data\\screenshots");
+        assert!(safe_screenshot_path(dir, "C:/Windows/win.ini").is_none());
+        assert!(safe_screenshot_path(dir, r"\\server\share\k.png").is_none());
+        assert!(safe_screenshot_path(dir, "\\Windows\\win.ini").is_none());
     }
 }

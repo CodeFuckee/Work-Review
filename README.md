@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="100" alt="Work Review">
+  <img src="src-tauri/icons/icon.png" width="100" alt="Yue-Review">
 </p>
 
-<h1 align="center">Work Review</h1>
+<h1 align="center">Yue-Review</h1>
 
 <p align="center">
   <strong>A local-first personal work review tool that records context, helps you review your day, and generates daily reports.</strong>
@@ -37,7 +37,7 @@
 
 ## What It Solves
 
-Work Review is designed for personal work review and helps answer questions like these:
+Yue-Review is designed for personal work review and helps answer questions like these:
 
 - What did I actually do today?
 - What have I been focusing on over the past few days?
@@ -53,10 +53,12 @@ The focus is not "monitoring". It is helping you **recall, organize, and review*
 
 - **Automatic work context recording** — Records foreground apps, browser pages, window titles, usage time, optional screenshots, and OCR text, reducing manual note-taking
 - **Unified timeline and statistics** — Overview, timeline, work assistant, and daily report share the same local records, so you can inspect trends and drill into context
-- **Questions over local records** — Use the basic template or your configured model to answer "What did I do today?", "How long did this task take?", and "What have I been focused on?"
+- **Questions over local records** — Use the basic template, your configured model, or the built-in fallback model (works out of the box when nothing is configured) to answer "What did I do today?", "How long did this task take?", and "What have I been focused on?"
 - **Daily report generation and export** — Generate structured daily reports with Markdown export, auto-export, paragraph editing, pin/hide controls, and cached AI section ordering
-- **Privacy-first and locally controllable** — Data is stored in local SQLite by default; AI is optional, and model calls use your own API key without third-party relay
-- **Desktop Avatar Beta** — Shows work status through a desktop avatar and is gradually expanding toward proactive reminders and context assistance
+- **Self-hosted GitLab integration** — Optional GitLab settings (server URL + personal access token + project allow list) enrich daily reports with your commits for that date in a standalone "GitLab Commits Today" section (anchored between Website Visits and Hourly Activity, pin/hide supported; the AI analysis can reference commits without restating them; a placeholder appears when there are no commits; commits also appear on the timeline page and the report timeline, interleaved with app activity (persisted locally so past days stay reviewable)); work authors can be picked from repository contributors (emails only, sorted by commits, current account badge included)
+- **Automated versioning and release pipeline** — On every green push to `main`, CI bumps the patch version (carrying over at 100, e.g. 1.2.99 → 1.3.0) across all five version sources, creates a `vX.Y.Z` tag, and runs the full three-platform packaging and release flow; every push also builds three-platform release binaries as artifacts
+- **Downloadable installers from every push** — Each green push to `main` also builds the full installers (dmg / deb / rpm / AppImage / nsis exe + portable zip) and uploads them as CI artifacts (kept 30 days). Latest-build links: `https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-windows` (also `package-daily-macos-arm64`, `package-daily-macos-x64`, `package-daily-linux-x64`, `package-daily-linux-arm64`). Tagged releases keep permanent installers via the normal Release flow.
+- **Privacy-first and locally controllable** — Data is stored in local SQLite by default; AI is optional, and model calls use your own API key without third-party relay. When no model is configured, the built-in fallback model is used and your question/report content is sent to the third-party AI service behind it.
 - **Multilingual UI** — Available in Simplified Chinese, English, Traditional Chinese, and Arabic (with RTL layout)
 
 ---
@@ -124,11 +126,6 @@ The screenshots below are captured from the running desktop app with localized U
   <img src="docs/Introduction_en/设置-AI模型.png" alt="AI Model Settings" width="720" />
 </p>
 
-<p align="center"><strong>Desktop Avatar</strong></p>
-<p align="center">
-  <img src="docs/Introduction_en/设置-桌面化身.png" alt="Desktop Avatar Settings" width="720" />
-</p>
-
 <p align="center"><strong>Privacy</strong></p>
 <p align="center">
   <img src="docs/Introduction_en/设置-隐私.png" alt="Privacy Settings" width="720" />
@@ -141,7 +138,7 @@ The screenshots below are captured from the running desktop app with localized U
 
 <p align="center"><strong>About</strong></p>
 <p align="center">
-  <img src="docs/Introduction_en/关于.png" alt="About Work Review" width="720" />
+  <img src="docs/Introduction_en/关于.png" alt="About Yue-Review" width="720" />
 </p>
 
 </details>
@@ -150,7 +147,7 @@ The screenshots below are captured from the running desktop app with localized U
 
 ## Privacy and Boundaries
 
-Work Review is designed for personal use from the ground up. It is not intended for: employee monitoring · team attendance · performance evaluation · covert tracking
+Yue-Review is designed for personal use from the ground up. It is not intended for: employee monitoring · team attendance · performance evaluation · covert tracking
 
 You can control the recording scope as needed:
 
@@ -188,12 +185,13 @@ You can control the recording scope as needed:
 - AI-enhanced prompt attachments and custom model settings
 - Website semantic categorization: changing a domain category automatically backfills history
 - Multi-segment work time: e.g. morning + afternoon, break time excluded
+- GitLab commits enrichment: fetch commits from a self-hosted GitLab for the report date (per-project 20 / total 200 cap, local-timezone filtered); AI merges them into the report, non-AI mode appends a section; failures degrade silently with a one-line note
 
 ---
 
 ## AI Modes
 
-The core of Work Review is always **local recording**. AI's role is to make records easier to read and review, not a prerequisite for usage.
+The core of Yue-Review is always **local recording**. AI's role is to make records easier to read and review, not a prerequisite for usage.
 
 | Mode | Description |
 |------|------|
@@ -218,11 +216,11 @@ Supported providers: Ollama (local) / LM Studio (local) / OpenAI compatible / De
 | Linux x86_64 (X11 / Wayland) | `.deb` / `.rpm` / `.AppImage` |
 | Linux ARM64 (aarch64) | `.deb` / `.rpm` / `.AppImage` |
 
-**macOS:** Screenshots require the "Screen Recording" permission, and avatar linkage requires "Accessibility + Input Monitoring". If you see a "damaged" warning on first launch: `sudo xattr -rd com.apple.quarantine "/Applications/Work Review.app"`
+**macOS:** Screenshots require the "Screen Recording" permission. If you see a "damaged" warning on first launch: `sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
 
 **Windows:** Depends on Microsoft Edge WebView2 Runtime.
 
-> **Windows 11 Smart App Control**: If Windows shows "Smart App Control blocked this app from running", it's because Work Review is signed with a self-signed certificate (not a commercial EV certificate). You can turn off Smart App Control in "Windows Security → App & browser control → Smart App Control". See [#139](https://github.com/wm94i/Work-Review/issues/139).
+> **Windows 11 Smart App Control**: If Windows shows "Smart App Control blocked this app from running", it's because Yue-Review is signed with a self-signed certificate (not a commercial EV certificate). You can turn off Smart App Control in "Windows Security → App & browser control → Smart App Control". See [#139](https://github.com/wm94i/Work-Review/issues/139).
 
 **Linux:** Screenshots and window tracking depend on the current session type and toolchain. <details><summary>Dependency details</summary>
 
@@ -269,20 +267,9 @@ GDK_BACKEND=x11 ./Work_Review
 ## Extended Capabilities (Beta)
 
 <details>
-<summary>Desktop Avatar</summary>
+<summary>Bot Integration (Feishu / DingTalk / WeCom)</summary>
 
-Uses a standalone desktop pet window to reflect idle / working / reading / meeting / music / video states.
-
-<img src="docs/桌宠.png" alt="Desktop Avatar" width="220" />
-
-Still being actively refined — interaction linkage, state expression, and preset details will continue to improve.
-
-</details>
-
-<details>
-<summary>Bot Integration (Telegram / Feishu / DingTalk / WeCom)</summary>
-
-Query records and generate daily reports remotely from Telegram / Feishu / DingTalk / WeCom via local API + multi-device registration. Supported commands: `/devices`, `/report`, `/generate`, etc. WeCom prefers the intelligent-bot long connection (Bot ID + Secret, no public URL); only one live connection is allowed per bot. Restricted to personal and own multi-device use only.
+Query records and generate daily reports remotely from Feishu / DingTalk / WeCom via local API + multi-device registration. Supported commands: `/devices`, `/report`, `/generate`, etc. WeCom prefers the intelligent-bot long connection (Bot ID + Secret, no public URL); only one live connection is allowed per bot. Restricted to personal and own multi-device use only.
 
 </details>
 
@@ -408,7 +395,6 @@ Requires: Node.js 22+ / Rust stable / Tauri 2 CLI · Tech stack: Tauri 2 + Rust 
 ## Acknowledgements
 
 - Thanks to the [linux.do](https://linux.do/) community for discussion and feedback
-- Desktop Avatar BongoCat resources adapted from [ayangweb/BongoCat](https://github.com/ayangweb/BongoCat) (MIT License), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ## License
 

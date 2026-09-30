@@ -36,6 +36,16 @@ fn format_duration_compact(seconds: i64) -> String {
     }
 }
 
+/// 带符号的时长变化量。format_duration_compact 对 <=0 早退返回 "0s"，
+/// 负变化量若直接传入会显示成 "0s (-37.5%)"，误导模型以为时长没变
+fn signed_duration_compact(delta: i64) -> String {
+    if delta < 0 {
+        format!("-{}", format_duration_compact(-delta))
+    } else {
+        format_duration_compact(delta)
+    }
+}
+
 /// 中文分类名 → 英文 key（支持部分匹配）
 ///
 /// "开发" → "development", "通讯" → "communication", "browser" → "browser"
@@ -277,8 +287,6 @@ pub type CurrentContextFn = Arc<dyn Fn() -> String + Send + Sync>;
 /// 单测传 `Default::default()` 即可（全部禁用，保持既有行为）。
 #[derive(Default, Clone)]
 pub struct AssistantRuntime {
-    /// 手动待办快照（extract_todos 合并用）。
-    pub avatar_followups: Vec<work_review_core::config::AvatarFollowupItem>,
     /// 写操作桥；None = 不注册行动工具。
     pub actions: Option<ActionBridge>,
     /// 确认桥；行动工具存在时必须提供，否则行动工具一律拒绝执行。
@@ -394,12 +402,18 @@ fn user_memory_enum_confirm_preview(
 
 /// 确认卡片上展示的操作摘要（人话描述模型想做什么）。
 pub fn action_confirm_summary(tool: &str, args: &Value) -> String {
+    // 与 user_memory_key_confirm_preview 同一安全立场：模型参数视为不可信输入，
+    // 控制字符（含换行）不回显以防伪造成段文案污染确认卡片，展示限长。
     let s = |key: &str| {
-        args.get(key)
+        let cleaned: String = args
+            .get(key)
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim()
-            .to_string()
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect();
+        truncate_chars(cleaned.trim(), 80)
     };
     let expires_at = || match args.get("expires_at") {
         None | Some(Value::Null) => "永久".to_string(),
@@ -659,16 +673,19 @@ impl<'a> ToolContext<'a> {
         if items.is_empty() {
             return;
         }
-        if let Ok(mut buf) = self.collected_references.lock() {
-            for item in items {
-                let dup = buf.iter().any(|b| {
-                    b.source_id == item.source_id
-                        && b.timestamp == item.timestamp
-                        && b.title == item.title
-                });
-                if !dup {
-                    buf.push(item);
-                }
+        // 纯内存缓冲，中毒恢复取原值：任一次持锁 panic 不应让引用收集从此静默失效
+        let mut buf = self
+            .collected_references
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for item in items {
+            let dup = buf.iter().any(|b| {
+                b.source_id == item.source_id
+                    && b.timestamp == item.timestamp
+                    && b.title == item.title
+            });
+            if !dup {
+                buf.push(item);
             }
         }
     }
@@ -677,24 +694,26 @@ impl<'a> ToolContext<'a> {
     pub fn references_len(&self) -> usize {
         self.collected_references
             .lock()
-            .map(|b| b.len())
-            .unwrap_or(0)
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     /// 取 [start..] 区间的引用克隆（StepResult 携带本轮增量）。
     pub fn drain_from(&self, start: usize) -> Vec<MemorySearchItem> {
-        self.collected_references
+        let buf = self
+            .collected_references
             .lock()
-            .map(|b| b.get(start..).map(|s| s.to_vec()).unwrap_or_default())
-            .unwrap_or_default()
+            .unwrap_or_else(|e| e.into_inner());
+        buf.get(start..).map(|s| s.to_vec()).unwrap_or_default()
     }
 
     /// 取出全部引用（executor 结束时填入 AgentResult）。
     pub fn take_all_references(&self) -> Vec<MemorySearchItem> {
-        self.collected_references
+        let mut b = self
+            .collected_references
             .lock()
-            .map(|mut b| std::mem::take(&mut *b))
-            .unwrap_or_default()
+            .unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *b)
     }
 }
 
@@ -1294,9 +1313,8 @@ fn trend_comparison_execute(ctx: &ToolContext, args: Value) -> Result<String, St
         let pct = delta as f64 / total_a as f64 * 100.0;
         let sign = if delta > 0 { "+" } else { "" };
         lines.push(format!(
-            "  总时长变化: {}{} ({sign}{pct:.1}%)",
-            sign,
-            format_duration_compact(delta)
+            "  总时长变化: {} ({sign}{pct:.1}%)",
+            signed_duration_compact(delta)
         ));
         lines.push("".to_string());
     }
@@ -1378,21 +1396,21 @@ fn fetch_url_parameters() -> Value {
 /// 注：域名解析到内网 IP 的绕过（DNS rebinding）不在此防护范围——
 /// 单用户本地应用的主要威胁是字面量地址，完整防护需逐跳解析校验。
 fn ensure_public_http_url(url: &str) -> Result<(), String> {
-    let lower = url.trim().to_ascii_lowercase();
-    let rest = lower
-        .strip_prefix("https://")
-        .or_else(|| lower.strip_prefix("http://"))
-        .ok_or_else(|| "仅支持 http/https 链接".to_string())?;
-
-    // 主机段：截到 path/query/fragment 之前，剥离 userinfo 与端口
-    let host_port = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
-    let host = if let Some(inner) = host_port.strip_prefix('[') {
-        inner.split(']').next().unwrap_or("")
-    } else {
-        host_port.split(':').next().unwrap_or(host_port)
-    };
-
+    // 用 WHATWG 规范化解析取主机：手写 host 截取对抗不了 url crate 的主机归一，
+    // `http://2130706433/`、`http://0x7f000001/`、`http://127.0.0.1./`、
+    // `http://[::ffff:127.0.0.1]/` 等形式经规范化后才是真实要连接的地址
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "URL 格式无效".to_string())?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err("仅支持 http/https 链接".to_string());
+    }
+    let raw_host = parsed.host_str().unwrap_or("");
+    // IPv6 的 host_str 带方括号（如 "[::1]"），先剥掉再解析；尾点与裸 IP 等价
+    let host = raw_host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if host.is_empty() {
         return Err("URL 缺少主机名".to_string());
     }
@@ -1409,26 +1427,41 @@ fn ensure_public_http_url(url: &str) -> Result<(), String> {
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         let private = match ip {
-            std::net::IpAddr::V4(v4) => {
-                v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_unspecified()
-                    || v4.is_broadcast()
-            }
-            std::net::IpAddr::V6(v6) => {
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    // 唯一本地 fc00::/7 与链路本地 fe80::/10
-                    || (v6.segments()[0] & 0xfe00) == 0xfc00
-                    || (v6.segments()[0] & 0xffc0) == 0xfe80
-            }
+            std::net::IpAddr::V4(v4) => is_non_public_v4(&v4),
+            std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+                // IPv4-mapped IPv6（如 ::ffff:127.0.0.1）实际连接的是映射的 IPv4
+                Some(v4) => is_non_public_v4(&v4),
+                None => {
+                    v6.is_loopback()
+                        || v6.is_unspecified()
+                        // 唯一本地 fc00::/7 与链路本地 fe80::/10
+                        || (v6.segments()[0] & 0xfe00) == 0xfc00
+                        || (v6.segments()[0] & 0xffc0) == 0xfe80
+                }
+            },
         };
         if private {
             return Err("不允许访问本机/内网 IP".to_string());
         }
     }
     Ok(())
+}
+
+fn is_non_public_v4(v4: &std::net::Ipv4Addr) -> bool {
+    v4.is_loopback()
+        || v4.is_private()
+        || v4.is_link_local()
+        || v4.is_unspecified()
+        || v4.is_broadcast()
+        // 0.0.0.0/8：除全零外仍是非公开段，Linux/BSD 内核把该段目的地按本机处理
+        || v4.octets()[0] == 0
+        // 100.64.0.0/10（CGNAT/Tailscale 等 tailnet）、198.18.0.0/15（基准测试）
+        || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        || (v4.octets()[0] == 198 && (v4.octets()[1] & 0xfe) == 18)
+        || v4.is_multicast()
+        // 240.0.0.0/4 保留段（255.255.255.255 广播已单独判定）；std 的
+        // Ipv4Addr::is_reserved 尚未稳定，手写等价位运算
+        || (v4.octets()[0] & 0xf0) == 240
 }
 
 /// 极简 HTML → 正文：剥 script/style/注释与标签，解码常见实体，压缩空白。
@@ -1451,7 +1484,6 @@ fn html_to_text(html: &str) -> String {
         match next_block {
             Some((offset, tag)) => {
                 cleaned.push_str(&html[pos..pos + offset]);
-                let close = if tag == "<!--" { "-->" } else { ">" };
                 let close_tag = match tag {
                     "<script" => "</script",
                     "<style" => "</style",
@@ -1469,7 +1501,6 @@ fn html_to_text(html: &str) -> String {
                         lower[after..].find('>').map(|j| after + j + 1)
                     })
                 };
-                let _ = close;
                 match end {
                     Some(e) => pos = e,
                     None => {
@@ -1580,7 +1611,7 @@ pub(crate) async fn bing_search_html(
                 return r.text().await.map_err(|e| format!("搜索响应读取失败: {e}"));
             }
             Err(e) => {
-                // 只重试连接/超时类错误；其他（如 DNS、SSL）也一并重试，反正最后一次会返回
+                // 只重试连接/超时类瞬态错误；其余（DNS、SSL 等）立即返回，最后一次错误向上抛
                 last_err = format!("搜索请求失败: {e}");
                 let transient = e.is_connect() || e.is_timeout();
                 if !transient {
@@ -2017,7 +2048,7 @@ fn weekly_review_execute(ctx: &ToolContext, args: Value) -> Result<String, Strin
     Ok(truncate_chars(&review.markdown, 3000))
 }
 
-/// extract_todos — 从活动记录提取待跟进事项（含手动待办合并）
+/// extract_todos — 从活动记录提取待跟进事项
 fn extract_todos_execute(ctx: &ToolContext, args: Value) -> Result<String, String> {
     let date_from = args.get("date_from").and_then(|v| v.as_str());
     let date_to = args.get("date_to").and_then(|v| v.as_str());
@@ -2028,13 +2059,7 @@ fn extract_todos_execute(ctx: &ToolContext, args: Value) -> Result<String, Strin
         .map_err(|e| format!("获取活动记录失败: {e}"))?;
     let activities = ctx.filter_activities(activities);
 
-    let extracted = work_intelligence::extract_todos(&activities);
-    let merged = crate::commands::merge_manual_followups_into_todos(
-        extracted,
-        &ctx.runtime.avatar_followups,
-        date_from,
-        date_to,
-    );
+    let merged = work_intelligence::extract_todos(&activities);
 
     if merged.items.is_empty() {
         return Ok("未提取到待跟进事项。".to_string());
@@ -2789,6 +2814,15 @@ mod tests {
     }
 
     #[test]
+    fn test_signed_duration_compact_negative_delta_is_not_zero() {
+        // 回归：负变化量直接喂 format_duration_compact 会因 <=0 早退显示成 "0s"
+        assert_eq!(signed_duration_compact(-2250), "-37m");
+        assert_eq!(signed_duration_compact(-45), "-45s");
+        assert_eq!(signed_duration_compact(3600), "1h0m");
+        assert_eq!(signed_duration_compact(0), "0s");
+    }
+
+    #[test]
     fn test_execute_unknown_tool_returns_error() {
         let registry = ToolRegistry::new();
         let json_str = serde_json::to_string(&registry.to_openai_tools()).unwrap();
@@ -3387,6 +3421,28 @@ mod tests {
         assert!(ensure_public_http_url("http://router.lan/").is_err());
         assert!(ensure_public_http_url("http://nas.home/").is_err());
         assert!(ensure_public_http_url("http://1.0.0.10.in-addr.arpa/").is_err());
+
+        // 主机规范化绕过形态（url crate 归一后仍是内网地址，必须拦截）
+        assert!(ensure_public_http_url("http://2130706433/").is_err());
+        assert!(ensure_public_http_url("http://0x7f000001/").is_err());
+        assert!(ensure_public_http_url("http://127.0.0.1./").is_err());
+        assert!(ensure_public_http_url("http://[::ffff:127.0.0.1]:47831/").is_err());
+        assert!(ensure_public_http_url("http://[::ffff:a00:1]/").is_err());
+        assert!(ensure_public_http_url("http://0x7f.1/").is_err());
+        assert!(ensure_public_http_url("http://0177.0.0.1/").is_err());
+
+        // 0.0.0.0/8 非全零地址：Linux/BSD 内核把该段目的地按本机处理（0.16.32.48 直连回环）
+        assert!(ensure_public_http_url("http://0.16.32.48:47831/").is_err());
+        assert!(ensure_public_http_url("http://0.0.0.1/").is_err());
+        // CGNAT/Tailscale tailnet（100.64.0.0/10）与基准测试段（198.18.0.0/15）
+        assert!(ensure_public_http_url("http://100.100.1.1/").is_err());
+        assert!(ensure_public_http_url("http://198.18.0.1/").is_err());
+        // 组播/保留段
+        assert!(ensure_public_http_url("http://224.0.0.1/").is_err());
+        assert!(ensure_public_http_url("http://240.0.0.1/").is_err());
+        // IPv4-mapped IPv6 形式的同段地址同样要拦
+        assert!(ensure_public_http_url("http://[::ffff:0.16.32.48]/").is_err());
+        assert!(ensure_public_http_url("http://[::ffff:100.100.1.1]/").is_err());
     }
 
     /// HTML 提取：剥 script/style/注释/标签，解实体，压空白，可截断。
@@ -3450,10 +3506,17 @@ mod tests {
             provider: "tavily".to_string(),
             api_key: Some("tvly-test".to_string()),
         });
-        let db = work_review_core::database::Database::new(std::path::Path::new(
-            &std::env::temp_dir().join("wr-web-tools-test.db"),
-        ))
-        .expect("临时库创建失败");
+        // 唯一文件名 + 收尾清理三件套（WAL 伴生文件 + Windows 连接存活时主文件删不掉，
+        // 固定名与不清理都会让 CI 临时目录累积）
+        let db_path = std::env::temp_dir().join(format!(
+            "wr-web-tools-test-{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let db = work_review_core::database::Database::new(std::path::Path::new(&db_path))
+            .expect("临时库创建失败");
         let ctx = ToolContext {
             database: &db,
             ignored_apps: vec![],
@@ -3485,5 +3548,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("query"));
+
+        drop(db); // 先关连接再删文件（Windows 上连接存活时删除静默失败）
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", db_path.display(), suffix));
+        }
     }
 }

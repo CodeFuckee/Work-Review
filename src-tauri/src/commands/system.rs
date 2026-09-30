@@ -1,11 +1,6 @@
 //! Auto-extracted from the historical `commands.rs`. Behavior unchanged.
 
 #[cfg(target_os = "linux")]
-use super::avatar::{
-    gnome_avatar_extension_needs_relogin, is_gnome_avatar_extension_enabled,
-    is_gnome_avatar_extension_installed,
-};
-#[cfg(target_os = "linux")]
 use crate::linux_session::{current_linux_desktop_environment, current_linux_desktop_session};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -114,13 +109,6 @@ pub struct LinuxSessionSupportInfo {
     pub active_window_supported: bool,
     pub screenshot_supported: bool,
     pub browser_url_support_level: String,
-    pub avatar_input_provider: String,
-    pub avatar_input_support_level: String,
-    pub avatar_keyboard_supported: bool,
-    pub avatar_mouse_supported: bool,
-    pub gnome_avatar_extension_installed: bool,
-    pub gnome_avatar_extension_enabled: bool,
-    pub gnome_avatar_extension_needs_relogin: bool,
 }
 
 #[tauri::command]
@@ -136,20 +124,7 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
         let desktop_environment = current_linux_desktop_environment();
         let active_window_provider =
             crate::monitor::current_linux_active_window_provider(session, desktop_environment);
-        let avatar_input_support = crate::avatar_input::current_linux_avatar_input_support();
         let screenshot_support = crate::screenshot::current_linux_screenshot_support();
-        let gnome_avatar_extension_installed = desktop_environment
-            == crate::linux_session::LinuxDesktopEnvironment::Gnome
-            && is_gnome_avatar_extension_installed();
-        let gnome_avatar_extension_enabled = desktop_environment
-            == crate::linux_session::LinuxDesktopEnvironment::Gnome
-            && is_gnome_avatar_extension_enabled();
-        let gnome_avatar_extension_needs_relogin = gnome_avatar_extension_needs_relogin(
-            desktop_environment,
-            gnome_avatar_extension_installed,
-            gnome_avatar_extension_enabled,
-            &avatar_input_support,
-        );
         let active_window_supported = active_window_provider.is_some();
         let browser_url_support_level = if active_window_supported {
             "mixed"
@@ -165,13 +140,6 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
             active_window_supported,
             screenshot_supported: screenshot_support.supported,
             browser_url_support_level: browser_url_support_level.to_string(),
-            avatar_input_provider: avatar_input_support.provider.to_string(),
-            avatar_input_support_level: avatar_input_support.support_level.to_string(),
-            avatar_keyboard_supported: avatar_input_support.keyboard_supported,
-            avatar_mouse_supported: avatar_input_support.mouse_supported,
-            gnome_avatar_extension_installed,
-            gnome_avatar_extension_enabled,
-            gnome_avatar_extension_needs_relogin,
         })
     }
 
@@ -185,13 +153,6 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
             active_window_supported: false,
             screenshot_supported: false,
             browser_url_support_level: "not_applicable".to_string(),
-            avatar_input_provider: "not_applicable".to_string(),
-            avatar_input_support_level: "not_applicable".to_string(),
-            avatar_keyboard_supported: false,
-            avatar_mouse_supported: false,
-            gnome_avatar_extension_installed: false,
-            gnome_avatar_extension_enabled: false,
-            gnome_avatar_extension_needs_relogin: false,
         })
     }
 }
@@ -209,20 +170,10 @@ pub async fn check_permissions() -> Result<serde_json::Value, AppError> {
     #[cfg(not(target_os = "linux"))]
     let screenshot_supported = screen_capture;
 
-    #[cfg(target_os = "linux")]
-    let avatar_input_supported =
-        crate::avatar_input::current_linux_avatar_input_support().support_level != "none";
-    #[cfg(target_os = "macos")]
-    let avatar_input_supported = accessibility && input_monitoring;
-    #[cfg(target_os = "windows")]
-    let avatar_input_supported = true;
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let avatar_input_supported = false;
-
     let all_granted = if cfg!(target_os = "macos") {
         screen_capture && accessibility && input_monitoring
     } else {
-        screenshot_supported && avatar_input_supported
+        screenshot_supported
     };
 
     Ok(serde_json::json!({
@@ -230,10 +181,18 @@ pub async fn check_permissions() -> Result<serde_json::Value, AppError> {
         "accessibility": accessibility,
         "input_monitoring": input_monitoring,
         "screenshot_supported": screenshot_supported,
-        "avatar_input_supported": avatar_input_supported,
         "all_granted": all_granted,
         "platform": std::env::consts::OS,
     }))
+}
+
+/// 显示主窗口
+#[tauri::command]
+pub async fn show_main_window(
+    app: tauri::AppHandle,
+    source_window_label: Option<String>,
+) -> Result<(), AppError> {
+    crate::reveal_main_window(&app, source_window_label.as_deref())
 }
 
 #[cfg(target_os = "macos")]
@@ -269,10 +228,15 @@ pub async fn open_permission_settings(permission: String) -> Result<(), AppError
         let target = macos_permission_settings_url(&permission)
             .ok_or_else(|| AppError::Unknown(format!("不支持的权限类型: {permission}")))?;
 
-        std::process::Command::new("open")
+        // spawn 后必须在后台线程 wait 收割：不 wait 的 Child 悬挂成僵尸进程，
+        // 每次点击残留一个直至应用退出（open 很快退出，仅占用一个临时线程）
+        let mut child = std::process::Command::new("open")
             .arg(target)
             .spawn()
             .map_err(|e| AppError::Unknown(format!("打开系统权限设置失败: {e}")))?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
 
         Ok(())
     }
@@ -313,6 +277,9 @@ fn refresh_dock_icon(activate: bool) {
     use cocoa::foundation::NSString;
     use objc::runtime::Object;
 
+    // SAFETY: 运行在 macOS 主线程的 Tauri setup/命令上下文，NSApp() 返回有效的
+    // 应用实例；msg_send 调用全部走 Cocoa 声明过的方法签名，返回的 Object 指针
+    // 只与 nil 比较或交回 Cocoa 持有，不在 Rust 侧解引用/释放。
     unsafe {
         let app: *mut Object = NSApp();
 
@@ -324,18 +291,14 @@ fn refresh_dock_icon(activate: bool) {
             ofType: NSString::alloc(nil).init_str("icns")
         ];
 
-        // 如果 bundle 中找不到，尝试硬编码路径
-        let path_to_use = if resource != nil {
-            resource
-        } else {
-            NSString::alloc(nil)
-                .init_str("/Applications/Work Review.app/Contents/Resources/icon.icns")
-        };
-
-        let image: *mut Object = NSImage::alloc(nil).initByReferencingFile_(path_to_use);
-        if image != nil {
-            let _: () = objc::msg_send![app, setApplicationIconImage: image];
-            log::info!("已重新设置 Dock 图标");
+        // bundle 内找不到 icon.icns 时直接放弃重设：历史硬编码 /Applications/Work Review.app
+        // 回退在应用更名 Yue-Review 后永不命中，只会静默失败
+        if resource != nil {
+            let image: *mut Object = NSImage::alloc(nil).initByReferencingFile_(resource);
+            if image != nil {
+                let _: () = objc::msg_send![app, setApplicationIconImage: image];
+                log::info!("已重新设置 Dock 图标");
+            }
         }
 
         if activate {
@@ -349,6 +312,8 @@ pub(crate) fn apply_dock_visibility(visible: bool, activate: bool) {
     use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
     use objc::runtime::Object;
 
+    // SAFETY: setActivationPolicy_ 是 cocoa crate 对 NSApplication 声明的方法，
+    // NSApp() 在主线程返回有效实例；对象仅通过方法调用交互，不在 Rust 侧解引用。
     unsafe {
         let app: *mut Object = NSApp();
 
@@ -552,7 +517,33 @@ fn collect_macos_app_bundles(root: &Path, depth: usize, bundles: &mut Vec<PathBu
 }
 
 #[cfg(target_os = "macos")]
+fn macos_default_app_search_roots() -> Vec<PathBuf> {
+    let mut search_roots = vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+        PathBuf::from("/System/Applications/Utilities"),
+    ];
+    if let Some(home_dir) = dirs::home_dir() {
+        search_roots.push(home_dir.join("Applications"));
+    }
+    search_roots
+}
+
+#[cfg(target_os = "macos")]
 fn macos_icon_app_path_candidates(app_name: &str, executable_path: Option<&str>) -> Vec<String> {
+    macos_icon_app_path_candidates_in_roots(
+        app_name,
+        executable_path,
+        &macos_default_app_search_roots(),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_icon_app_path_candidates_in_roots(
+    app_name: &str,
+    executable_path: Option<&str>,
+    search_roots: &[PathBuf],
+) -> Vec<String> {
     let mut candidates: Vec<(i32, String)> = Vec::new();
 
     if let Some(path) = executable_path.and_then(macos_bundle_path_from_executable) {
@@ -568,18 +559,9 @@ fn macos_icon_app_path_candidates(app_name: &str, executable_path: Option<&str>)
         }
     }
 
-    let mut search_roots = vec![
-        PathBuf::from("/Applications"),
-        PathBuf::from("/System/Applications"),
-        PathBuf::from("/System/Applications/Utilities"),
-    ];
-    if let Some(home_dir) = dirs::home_dir() {
-        search_roots.push(home_dir.join("Applications"));
-    }
-
     let mut bundles = Vec::new();
     for root in search_roots {
-        collect_macos_app_bundles(&root, 3, &mut bundles);
+        collect_macos_app_bundles(root, 3, &mut bundles);
     }
 
     for bundle in bundles {
@@ -620,7 +602,10 @@ async fn get_app_icon_impl(
     use std::process::Command;
 
     // v4 从高分辨率 ICNS 裁切并输出 256px 图标，不复用 v3 的低分辨率缓存。
-    let cache_dir = PathBuf::from(format!("/tmp/work_review_icons_{MACOS_ICON_CACHE_VERSION}"));
+    // 用用户级临时目录（env::temp_dir）而非共享的 /tmp：/tmp 路径完全可预测
+    // 且多用户共享，其他本地用户可预置/污染同名 .b64 缓存替换图标内容
+    let cache_dir =
+        std::env::temp_dir().join(format!("work_review_icons_{MACOS_ICON_CACHE_VERSION}"));
     if !cache_dir.exists() {
         let _ = std::fs::create_dir_all(&cache_dir);
     }
@@ -711,12 +696,24 @@ async fn get_app_icon_impl(
 
     log::debug!("找到图标文件: {icns_path}");
 
-    // 使用 sips 转换为 PNG
-    let temp_png = format!(
-        "/tmp/app_icon_{}_{}.png",
-        app_name.replace(' ', "_"),
-        std::process::id()
-    );
+    // 使用 sips 转换为 PNG。临时文件落用户级临时目录 + 随机后缀：
+    // 共享 /tmp 下的可预测路径可被其他用户预置符号链接写穿
+    let safe_name: String = app_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let temp_unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_png = std::env::temp_dir()
+        .join(format!(
+            "app_icon_{safe_name}_{}_{}.png",
+            std::process::id(),
+            temp_unique
+        ))
+        .to_string_lossy()
+        .into_owned();
 
     let macos_icon_source_size = MACOS_ICON_SOURCE_SIZE.to_string();
     let sips_output = Command::new("sips")
@@ -925,6 +922,10 @@ fn encode_windows_icon_path(value: &str) -> Vec<u16> {
         .collect()
 }
 
+/// SAFETY: 调用方须在 Windows 上执行。路径经 encode_windows_icon_path 转为
+/// NUL 结尾的 UTF-16 宽字符后传给 SHGetFileInfoW，长度用 size_of 明确声明；
+/// image_list 通过 SHGetImageList 取得后立即 Release，GetIcon 产出的 HICON
+/// 由调用方负责 DestroyIcon（见 render_windows_icon_pixels 的调用点）。
 #[cfg(target_os = "windows")]
 unsafe fn get_windows_icon_from_shell_image_list(
     path: &str,
@@ -971,6 +972,8 @@ unsafe fn get_windows_icon_from_shell_image_list(
     }
 }
 
+/// SAFETY: 调用方须在 Windows 上执行。wide_path 补齐到 MAX_PATH 长度并以 NUL
+/// 结尾传给 ExtractAssociatedIconW；返回的 HICON 由调用方 DestroyIcon 释放。
 #[cfg(target_os = "windows")]
 unsafe fn get_windows_associated_icon(path: &str) -> Option<winapi::shared::windef::HICON> {
     use std::ptr::null_mut;
@@ -991,6 +994,11 @@ unsafe fn get_windows_associated_icon(path: &str) -> Option<winapi::shared::wind
     }
 }
 
+/// SAFETY: 调用方须在 Windows 上执行，icon 必须是前述两个查找函数返回的有效
+/// HICON。GDI 生命周期：GetIconInfo 产出的 hbmColor/hbmMask 与
+/// CreateCompatibleDC/CreateDIBSection 产出的 DC、位图在渲染后逐一 DeleteDC/
+/// DeleteObject/DestroyIcon 配对释放（含提前返回路径），copy_nonoverlapping
+/// 仅在 GetObjectW 确认 BITMAP 元信息成立后按 bmWidthBytes×高度拷贝像素。
 #[cfg(target_os = "windows")]
 unsafe fn render_windows_icon_pixels(
     icon: winapi::shared::windef::HICON,
@@ -1117,7 +1125,7 @@ fn encode_windows_icon_base64(mut pixels: Vec<u8>, width: u32, height: u32) -> O
         return None;
     }
 
-    for chunk in pixels.chunks_exact_mut(4) {
+    for chunk in pixels.as_chunks_mut::<4>().0 {
         chunk.swap(0, 2);
     }
 
@@ -1257,12 +1265,29 @@ pub async fn save_background_image(
         (s.data_dir.clone(), s.config_path.clone())
     };
 
+    // 纵深防御：IPC 传入的 base64 无需信任。载荷上限 20MB（20MB 原始数据 ≈ 27MB base64）；
+    // 解码设尺寸/内存上限，防止解压炸弹把位图撑到数 GB
+    const MAX_BASE64_CHARS: usize = 28 * 1024 * 1024;
+    if data.len() > MAX_BASE64_CHARS {
+        return Err(AppError::Unknown(
+            "背景图过大：base64 载荷超过 20MB 上限".to_string(),
+        ));
+    }
     // 解码 base64
     let image_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &data)
         .map_err(|e| AppError::Unknown(format!("base64 解码失败: {e}")))?;
 
     // 保存为 JPEG（压缩体积）
-    let img = image::load_from_memory(&image_bytes)
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&image_bytes));
+    reader.limits(limits);
+    let img = reader
+        .with_guessed_format()
+        .map_err(|e| AppError::Unknown(format!("图片解析失败: {e}")))?
+        .decode()
         .map_err(|e| AppError::Unknown(format!("图片解析失败: {e}")))?;
 
     // 限制最大尺寸为 1920px 宽
@@ -1299,7 +1324,9 @@ pub async fn get_background_image(
         _ => return Ok(None),
     };
 
-    let bg_path = data_dir.join(&filename);
+    // config 同步载荷可写入任意字段：background_image 必须校验仍位于 data_dir 内，
+    // 防止绝对路径/.. 逃逸后把 data_dir 外文件以 base64 读回前端
+    let bg_path = super::shared::validated_join(&data_dir, &filename)?;
     if !bg_path.exists() {
         return Ok(None);
     }
@@ -1516,16 +1543,36 @@ mod tests {
     fn 图标解析应忽略与app_name矛盾的executable_path() {
         // 回归：活动采集偶发写入脏数据（app_name 是浏览器，executable_path 却指向 IDE）。
         // 修复前 executable_path 无条件得 i32::MAX，浏览器会错误显示编译器图标。
-        let cands = super::macos_icon_app_path_candidates(
+        // 用临时目录构造应用包，避免测试依赖 CI 运行机上是否安装 Microsoft Edge。
+        let temp_root = std::env::temp_dir().join(format!(
+            "work_review_icon_candidates_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(temp_root.join("Microsoft Edge.app"))
+            .expect("创建浏览器测试包失败");
+        std::fs::create_dir_all(temp_root.join("PyCharm.app")).expect("创建 IDE 测试包失败");
+
+        let cands = super::macos_icon_app_path_candidates_in_roots(
             "Microsoft Edge",
             Some("/Applications/PyCharm.app"),
+            std::slice::from_ref(&temp_root),
         );
+        let _ = std::fs::remove_dir_all(&temp_root);
+
         let first = cands.first();
         assert!(
             first
                 .map(|p| p.contains("Microsoft Edge.app"))
                 .unwrap_or(false),
             "浏览器不应因脏 executable_path 显示编译器图标, 实际首位: {first:?}"
+        );
+        assert!(
+            !cands.iter().any(|p| p.contains("PyCharm.app")),
+            "脏 executable_path 对应的 IDE 不应出现在候选中: {cands:?}"
         );
     }
 

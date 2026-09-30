@@ -24,6 +24,8 @@ pub const BLOCK_LOCAL_OVERVIEW: &str = "LOCAL_OVERVIEW";
 pub const BLOCK_LOCAL_CATEGORY: &str = "LOCAL_CATEGORY";
 pub const BLOCK_LOCAL_APP_USAGE: &str = "LOCAL_APP_USAGE";
 pub const BLOCK_LOCAL_DOMAIN_USAGE: &str = "LOCAL_DOMAIN_USAGE";
+pub const BLOCK_GITLAB_TODAY: &str = "GITLAB_TODAY";
+pub const BLOCK_FILE_EVENTS_TODAY: &str = "FILE_EVENTS_TODAY";
 
 /// 段落积木枚举——每个变体对应一个可独立渲染的统计区块。
 /// 调用方（summary.rs / local.rs）构造 `Vec<StatsBlock>` 传入 `assemble()`，
@@ -49,6 +51,13 @@ pub enum StatsBlock {
     LocalAppUsage,
     /// local 模式：网站访问列表
     LocalDomainUsage,
+    /// GitLab 今日提交（内容来自日报补充的 pre-rendered markdown，经
+    /// assemble 的 `gitlab_markdown` 参数注入，非 stats 驱动；未配置时为
+    /// 空串、wrap_block 自动跳过该块）
+    GitlabToday,
+    /// 文件修改（同 Gitlab 块的注入模式：内容来自 `file_events_markdown`
+    /// 参数，非 stats 驱动；当日无事件时为空串、块整体隐藏）
+    FileEventsToday,
 }
 
 impl StatsBlock {
@@ -63,6 +72,8 @@ impl StatsBlock {
             Self::LocalCategory => BLOCK_LOCAL_CATEGORY,
             Self::LocalAppUsage => BLOCK_LOCAL_APP_USAGE,
             Self::LocalDomainUsage => BLOCK_LOCAL_DOMAIN_USAGE,
+            Self::GitlabToday => BLOCK_GITLAB_TODAY,
+            Self::FileEventsToday => BLOCK_FILE_EVENTS_TODAY,
         }
     }
 
@@ -85,6 +96,10 @@ impl StatsBlock {
             Self::LocalDomainUsage => {
                 render_local_domain_usage_list(stats, locale, semantic_overrides)
             }
+            // GitLab 小节不由 stats 渲染：assemble 会用传入的 gitlab_markdown 替代
+            Self::GitlabToday => String::new(),
+            // 文件修改小节同 GitLab：由 assemble 注入的 file_events_markdown 替代
+            Self::FileEventsToday => String::new(),
         }
     }
 }
@@ -132,12 +147,17 @@ fn number_sections_from(markdown: &str, locale: AppLocale, first_index: usize) -
 /// 按给定顺序组装统计区块，返回带 WR_BLOCK 标记的 markdown 字符串。
 /// 标题序号由 assemble 动态分配（render 函数里的标题不含序号）。
 /// 空内容的块自动跳过（wrap_block 返回空串）。
+/// `gitlab_markdown` 为「GitLab 今日提交」小节的 pre-rendered 内容（含无编号
+/// 标题；未配置时传空串，该块自动跳过）；`file_events_markdown` 为「文件修改」
+/// 小节同款（当日无事件传空串，块整体隐藏）。
 pub fn assemble(
     blocks: &[StatsBlock],
     stats: &DailyStats,
     locale: AppLocale,
     category_overrides: &HashMap<String, String>,
     semantic_overrides: &HashMap<String, String>,
+    gitlab_markdown: &str,
+    file_events_markdown: &str,
 ) -> String {
     assemble_with_section_count(
         blocks,
@@ -145,21 +165,30 @@ pub fn assemble(
         locale,
         category_overrides,
         semantic_overrides,
+        gitlab_markdown,
+        file_events_markdown,
     )
     .0
 }
 
 /// 按给定顺序组装统计区块，并返回实际渲染出的二级段落数量。
+#[allow(clippy::too_many_arguments)]
 pub fn assemble_with_section_count(
     blocks: &[StatsBlock],
     stats: &DailyStats,
     locale: AppLocale,
     category_overrides: &HashMap<String, String>,
     semantic_overrides: &HashMap<String, String>,
+    gitlab_markdown: &str,
+    file_events_markdown: &str,
 ) -> (String, usize) {
     let mut out = String::new();
     for block in blocks {
-        let rendered = block.render(stats, locale, category_overrides, semantic_overrides);
+        let rendered = match block {
+            StatsBlock::GitlabToday => gitlab_markdown.to_string(),
+            StatsBlock::FileEventsToday => file_events_markdown.to_string(),
+            _ => block.render(stats, locale, category_overrides, semantic_overrides),
+        };
         let wrapped = wrap_block(block.block_name(), &rendered);
         if !wrapped.is_empty() {
             out.push_str(&wrapped);
@@ -180,6 +209,8 @@ pub fn parse_block_name(name: &str) -> Option<StatsBlock> {
         "LOCAL_CATEGORY" => Some(StatsBlock::LocalCategory),
         "LOCAL_APP_USAGE" => Some(StatsBlock::LocalAppUsage),
         "LOCAL_DOMAIN_USAGE" => Some(StatsBlock::LocalDomainUsage),
+        "GITLAB_TODAY" => Some(StatsBlock::GitlabToday),
+        "FILE_EVENTS_TODAY" => Some(StatsBlock::FileEventsToday),
         _ => None,
     }
 }
@@ -235,6 +266,8 @@ pub fn default_summary_order() -> Vec<StatsBlock> {
         StatsBlock::AppUsageTable,
         StatsBlock::HourlySummary,
         StatsBlock::DomainUsageTable,
+        StatsBlock::GitlabToday,
+        StatsBlock::FileEventsToday,
     ]
 }
 
@@ -246,7 +279,72 @@ pub fn default_local_order() -> Vec<StatsBlock> {
         StatsBlock::LocalAppUsage,
         StatsBlock::HourlySummary,
         StatsBlock::LocalDomainUsage,
+        StatsBlock::GitlabToday,
+        StatsBlock::FileEventsToday,
     ]
+}
+
+/// 把 GitLab 今日提交块锚定到「按小时活跃度」之前（产品约定的固定位置）。
+///
+/// AI 编排序与用户钉选都可能让块落在别的位置：merge_ai_order 对未覆盖的
+/// GITLAB_TODAY 会追加到末尾，因此组装后必须重锚。用户显式钉选
+/// GITLAB_TODAY 时（apply_preferences 已把它排到最前）视为主动布局，跳过重锚。
+/// 「按小时活跃度」块不在列表中时锚到末尾。
+pub fn place_gitlab_before_hourly(
+    mut blocks: Vec<StatsBlock>,
+    pinned: &[String],
+) -> Vec<StatsBlock> {
+    if pinned.iter().any(|p| p == BLOCK_GITLAB_TODAY) {
+        return blocks;
+    }
+    let Some(from) = blocks
+        .iter()
+        .position(|b| matches!(b, StatsBlock::GitlabToday))
+    else {
+        return blocks;
+    };
+    let gitlab = blocks.remove(from);
+    let anchor = blocks
+        .iter()
+        .position(|b| matches!(b, StatsBlock::HourlySummary))
+        .unwrap_or(blocks.len());
+    blocks.insert(anchor, gitlab);
+    blocks
+}
+
+/// 把「文件修改」块锚定到「GitLab 今日提交」块之后（产品约定的固定位置）。
+///
+/// 与 `place_gitlab_before_hourly` 同理：AI 编排序与用户钉选都可能让块漂移，
+/// merge_ai_order 对未覆盖的 FILE_EVENTS_TODAY 会追加到末尾，组装后重锚。
+/// 用户显式钉选 FILE_EVENTS_TODAY 时视为主动布局，跳过重锚。
+/// GitLab 块不在列表时锚到「按小时活跃度」之前（与 GitLab 块同款锚点），
+/// 该锚点也不在时锚到末尾。
+pub fn place_file_events_after_gitlab(
+    mut blocks: Vec<StatsBlock>,
+    pinned: &[String],
+) -> Vec<StatsBlock> {
+    if pinned.iter().any(|p| p == BLOCK_FILE_EVENTS_TODAY) {
+        return blocks;
+    }
+    let Some(from) = blocks
+        .iter()
+        .position(|b| matches!(b, StatsBlock::FileEventsToday))
+    else {
+        return blocks;
+    };
+    let file_events = blocks.remove(from);
+    let insert_at = match blocks
+        .iter()
+        .position(|b| matches!(b, StatsBlock::GitlabToday))
+    {
+        Some(gitlab_pos) => gitlab_pos + 1,
+        None => blocks
+            .iter()
+            .position(|b| matches!(b, StatsBlock::HourlySummary))
+            .unwrap_or(blocks.len()),
+    };
+    blocks.insert(insert_at, file_events);
+    blocks
 }
 
 const BLOCK_PREFIX_START: &str = "<!-- WR_BLOCK_START:";
@@ -753,6 +851,103 @@ mod tests {
     use super::*;
     use crate::database::{AppUsage, CategoryUsage, DomainUsage, HourlyActivityBucket, UrlDetail};
 
+    #[test]
+    fn 默认顺序文件修改块应紧跟提交块() {
+        let summary = default_summary_order();
+        let gitlab_pos = summary
+            .iter()
+            .position(|b| matches!(b, StatsBlock::GitlabToday))
+            .expect("summary 默认序应含 GitLab 块");
+        assert!(
+            matches!(summary[gitlab_pos + 1], StatsBlock::FileEventsToday),
+            "summary 默认序文件修改块应紧跟 GitLab 块: {summary:?}"
+        );
+
+        let local = default_local_order();
+        let gitlab_pos = local
+            .iter()
+            .position(|b| matches!(b, StatsBlock::GitlabToday))
+            .expect("local 默认序应含 GitLab 块");
+        assert!(
+            matches!(local[gitlab_pos + 1], StatsBlock::FileEventsToday),
+            "local 默认序文件修改块应紧跟 GitLab 块: {local:?}"
+        );
+    }
+
+    #[test]
+    fn 文件块空串应跳过非空应渲染() {
+        let stats = sample_stats_for_numbering();
+        let blocks = [StatsBlock::GitlabToday, StatsBlock::FileEventsToday];
+
+        let (empty, _) = assemble_with_section_count(
+            &blocks,
+            &stats,
+            AppLocale::ZhCn,
+            &HashMap::new(),
+            &HashMap::new(),
+            "## GitLab 今日提交\n\n占位",
+            "",
+        );
+        assert!(empty.contains("WR_BLOCK_START:GITLAB_TODAY"));
+        assert!(
+            !empty.contains("WR_BLOCK_START:FILE_EVENTS_TODAY"),
+            "空串应整体跳过文件块: {empty}"
+        );
+
+        let filled = assemble(
+            &blocks,
+            &stats,
+            AppLocale::ZhCn,
+            &HashMap::new(),
+            &HashMap::new(),
+            "## GitLab 今日提交\n\n占位",
+            "## 文件修改\n\n共 1 个文件",
+        );
+        assert!(filled.contains("WR_BLOCK_START:FILE_EVENTS_TODAY"));
+        assert!(filled.contains("共 1 个文件"));
+    }
+
+    #[test]
+    fn 文件块名应可解析() {
+        assert_eq!(
+            parse_block_name("FILE_EVENTS_TODAY"),
+            Some(StatsBlock::FileEventsToday)
+        );
+        assert_eq!(
+            StatsBlock::FileEventsToday.block_name(),
+            "FILE_EVENTS_TODAY"
+        );
+    }
+
+    #[test]
+    fn 文件块锚定应保持在提交块之后() {
+        // AI 编排/钉选把文件块挤到末尾时应重锚回 GitLab 块之后
+        let shuffled = vec![
+            StatsBlock::CategoryTable,
+            StatsBlock::GitlabToday,
+            StatsBlock::HourlySummary,
+            StatsBlock::FileEventsToday,
+        ];
+        let anchored = place_file_events_after_gitlab(shuffled, &[]);
+        let gitlab_pos = anchored
+            .iter()
+            .position(|b| matches!(b, StatsBlock::GitlabToday))
+            .unwrap();
+        assert!(matches!(
+            anchored[gitlab_pos + 1],
+            StatsBlock::FileEventsToday
+        ));
+
+        // 用户显式钉选文件块时视为主动布局，跳过重锚
+        let pinned = vec![
+            StatsBlock::FileEventsToday,
+            StatsBlock::CategoryTable,
+            StatsBlock::GitlabToday,
+        ];
+        let kept = place_file_events_after_gitlab(pinned, &[BLOCK_FILE_EVENTS_TODAY.to_string()]);
+        assert!(matches!(kept[0], StatsBlock::FileEventsToday));
+    }
+
     fn sample_stats_for_numbering() -> DailyStats {
         DailyStats {
             total_duration: 3600,
@@ -914,6 +1109,8 @@ mod tests {
             AppLocale::ZhCn,
             &HashMap::new(),
             &HashMap::new(),
+            "",
+            "",
         );
 
         assert_eq!(section_count, 2);
@@ -931,6 +1128,8 @@ mod tests {
             AppLocale::En,
             &HashMap::new(),
             &HashMap::new(),
+            "",
+            "",
         );
 
         assert_eq!(section_count, 2);
@@ -947,6 +1146,8 @@ mod tests {
             AppLocale::ZhCn,
             &HashMap::new(),
             &HashMap::new(),
+            "",
+            "",
         );
 
         assert!(markdown.contains("## 一、时间分配\n\n> **短结论：**"));
@@ -980,6 +1181,8 @@ mod tests {
             AppLocale::En,
             &HashMap::new(),
             &HashMap::new(),
+            "",
+            "",
         );
 
         assert!(markdown.contains("## 1. Time Allocation\n\n> **Takeaway:**"));
@@ -990,5 +1193,96 @@ mod tests {
         assert!(markdown.contains("Activity peaked at"));
         assert!(markdown.contains("## 4. Website Details\n\n> **Takeaway:**"));
         assert!(markdown.contains("The longest website visit was github.com"));
+    }
+
+    #[test]
+    fn gitlab块应锚定在按小时活跃度之前() {
+        // 模拟用户缓存的 AI 块序（未覆盖 GITLAB_TODAY，会被 merge 追加到末尾）
+        let blocks = place_gitlab_before_hourly(
+            merge_ai_order(
+                &[
+                    "APP_USAGE_TABLE".to_string(),
+                    "CATEGORY_TABLE".to_string(),
+                    "DOMAIN_USAGE_TABLE".to_string(),
+                    "HOURLY_SUMMARY".to_string(),
+                ],
+                &default_summary_order(),
+            ),
+            &[],
+        );
+        let names: Vec<&str> = blocks.iter().map(|b| b.block_name()).collect();
+        let gitlab = names
+            .iter()
+            .position(|n| *n == BLOCK_GITLAB_TODAY)
+            .expect("应包含 GITLAB_TODAY");
+        let hourly = names
+            .iter()
+            .position(|n| *n == BLOCK_HOURLY_SUMMARY)
+            .expect("应包含 HOURLY_SUMMARY");
+        let domain = names
+            .iter()
+            .position(|n| *n == BLOCK_DOMAIN_USAGE_TABLE)
+            .expect("应包含 DOMAIN_USAGE_TABLE");
+        assert_eq!(
+            gitlab + 1,
+            hourly,
+            "GitLab 应紧跟在按小时活跃度之前: {names:?}"
+        );
+        assert!(domain < gitlab, "网站访问明细应在 GitLab 之前: {names:?}");
+    }
+
+    #[test]
+    fn gitlab块被显式钉选时应尊重钉选不再重锚() {
+        let pinned = [BLOCK_GITLAB_TODAY.to_string()];
+        let blocks = place_gitlab_before_hourly(
+            apply_preferences(default_summary_order(), &pinned),
+            &pinned,
+        );
+        assert_eq!(blocks[0].block_name(), BLOCK_GITLAB_TODAY, "钉选应置顶");
+    }
+
+    #[test]
+    fn gitlab小节经装配应被编号并带块标记() {
+        let stats = sample_stats_for_editorial_notes();
+        let markdown = assemble(
+            &place_gitlab_before_hourly(default_summary_order(), &[]),
+            &stats,
+            AppLocale::ZhCn,
+            &HashMap::new(),
+            &HashMap::new(),
+            "## GitLab 今日提交
+
+- [g/p] [main] abc fix: x
+",
+            "",
+        );
+        assert!(
+            markdown.contains("## 三、GitLab 今日提交"),
+            "GitLab 应按所在位置获得序号: {markdown}"
+        );
+        assert!(
+            markdown.contains("<!-- WR_BLOCK_START:GITLAB_TODAY -->"),
+            "应带可钉选/隐藏的块标记"
+        );
+        assert!(
+            markdown.contains("## 四、按小时活跃度"),
+            "按小时活跃度应顺延编号"
+        );
+    }
+
+    #[test]
+    fn 未配置gitlab时装配应跳过该块() {
+        let stats = sample_stats_for_editorial_notes();
+        let (markdown, count) = assemble_with_section_count(
+            &place_gitlab_before_hourly(default_summary_order(), &[]),
+            &stats,
+            AppLocale::ZhCn,
+            &HashMap::new(),
+            &HashMap::new(),
+            "",
+            "",
+        );
+        assert!(!markdown.contains("GITLAB_TODAY"), "未配置不应出现该块");
+        assert_eq!(count, 4, "未配置时仍为四个数据小节");
     }
 }

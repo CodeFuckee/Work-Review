@@ -92,7 +92,12 @@ static TOKEN_CACHE: Mutex<Option<(String, String, Instant)>> = Mutex::new(None);
 
 async fn get_tenant_token(client: &Client, app_id: &str, app_secret: &str) -> Option<String> {
     {
-        let cache = TOKEN_CACHE.lock().ok()?;
+        // 缓存仅是加速器：锁中毒（某次持锁 panic）时恢复锁继续读，而不是
+        // .ok()? 把 PoisonError 吞成 None——那会让整条飞书回复通道静默失效
+        // 且重启前无法自愈。
+        let cache = TOKEN_CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some((cached_app_id, token, expires)) = cache.as_ref() {
             if cached_app_id == app_id && expires > &Instant::now() {
                 return Some(token.clone());
@@ -110,23 +115,47 @@ async fn get_tenant_token(client: &Client, app_id: &str, app_secret: &str) -> Op
     let token = data.get("tenant_access_token")?.as_str()?.to_string();
     let expire = data.get("expire").and_then(|v| v.as_u64()).unwrap_or(7200);
     let cache_ttl = expire.saturating_sub(60);
-    if let Ok(mut cache) = TOKEN_CACHE.lock() {
-        *cache = Some((
-            app_id.to_string(),
-            token.clone(),
-            Instant::now() + Duration::from_secs(cache_ttl.max(60)),
-        ));
-    }
+    // 写路径与读路径同款中毒恢复：吞掉 PoisonError 会让缓存此后永远写不进去，
+    // 每条消息都多打一次 tenant_access_token API
+    let mut cache = TOKEN_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *cache = Some((
+        app_id.to_string(),
+        token.clone(),
+        Instant::now() + Duration::from_secs(cache_ttl.max(60)),
+    ));
     Some(token)
 }
 
+/// 把 message_id 编码进 URL path 段：仅保留 RFC 3986 unreserved 字符，
+/// 其余字节按 %XX 转义，防止特殊字符改写请求的 path/query 结构。
+/// 飞书真实 message_id（om_ + 十六进制）全部落在保留集内，编码后恒等。
+fn encode_path_segment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 async fn reply_message(client: &Client, token: &str, message_id: &str, text: &str) -> Option<()> {
-    let url = format!("https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply");
+    let url = format!(
+        "https://open.feishu.cn/open-apis/im/v1/messages/{}/reply",
+        encode_path_segment(message_id)
+    );
     let content = serde_json::json!({"text": text}).to_string();
     let resp = client
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
-        .json(&serde_json::json!({"content_type": "text", "content": content}))
+        // 飞书「回复消息」API 的 body 必填字段是 msg_type（不是 content_type），
+        // 字段名写错会被服务端校验拒绝，整条回复通道发不出任何消息
+        .json(&serde_json::json!({"msg_type": "text", "content": content}))
         .timeout(Duration::from_secs(10))
         .send()
         .await
@@ -323,6 +352,19 @@ pub async fn handle_feishu_webhook(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 路径段编码应保留unreserved字符并转义特殊字符() {
+        // 飞书真实 message_id 形态：编码后恒等
+        assert_eq!(
+            encode_path_segment("om_dc13264520392913993dd051dba21dcf"),
+            "om_dc13264520392913993dd051dba21dcf"
+        );
+        // 可改写 URL 结构的字符必须被转义
+        assert_eq!(encode_path_segment("a/b?c#d"), "a%2Fb%3Fc%23d");
+        assert_eq!(encode_path_segment("白板"), "%E7%99%BD%E6%9D%BF");
+        assert_eq!(encode_path_segment(""), "");
+    }
 
     #[test]
     fn 飞书命令应支持斜杠和机器人后缀() {

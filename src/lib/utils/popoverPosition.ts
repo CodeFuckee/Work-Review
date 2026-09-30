@@ -31,6 +31,15 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+// 数值选项解析：缺省/无效值取默认，但显式传入的 0 保留（`||` 会把 0 误当缺省）
+function numericOption(value: unknown, fallback: number): number {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 /**
  * 根据触发器与视口尺寸计算 fixed Popover 的安全位置。
  * 优先向下展开；下方空间不足且上方更宽裕时自动翻转。
@@ -39,12 +48,12 @@ export function getViewportPopoverPlacement(
   rect: PopoverAnchorRect | null = {},
   options: PopoverPlacementOptions = {}
 ): ViewportPopoverPlacement {
-  const viewportWidth = Math.max(0, Number(options.viewportWidth) || 0);
-  const viewportHeight = Math.max(0, Number(options.viewportHeight) || 0);
-  const margin = Math.max(0, Number(options.margin) || DEFAULT_MARGIN);
-  const gap = Math.max(0, Number(options.gap) || DEFAULT_GAP);
-  const minHeight = Math.max(0, Number(options.minHeight) || DEFAULT_MIN_HEIGHT);
-  const preferredWidth = Math.max(0, Number(options.preferredWidth) || DEFAULT_WIDTH);
+  const viewportWidth = Math.max(0, numericOption(options.viewportWidth, 0));
+  const viewportHeight = Math.max(0, numericOption(options.viewportHeight, 0));
+  const margin = Math.max(0, numericOption(options.margin, DEFAULT_MARGIN));
+  const gap = Math.max(0, numericOption(options.gap, DEFAULT_GAP));
+  const minHeight = Math.max(0, numericOption(options.minHeight, DEFAULT_MIN_HEIGHT));
+  const preferredWidth = Math.max(0, numericOption(options.preferredWidth, DEFAULT_WIDTH));
 
   const width = Math.min(preferredWidth, Math.max(0, viewportWidth - margin * 2));
   const maxLeft = Math.max(margin, viewportWidth - margin - width);

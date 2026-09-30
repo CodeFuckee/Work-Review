@@ -12,3 +12,8 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# build script / proc-macro 不参与最终产物，无需 O3+lto 全力优化；
+# 降为 O1 可明显缩短三平台 release 编译时间（尤其顶着 runner 上限的 mac 侧）
+[profile.release.build-override]
+opt-level = 1

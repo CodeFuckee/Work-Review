@@ -6,7 +6,6 @@
 
   import McpServerPanel from './nodeGateway/McpServerPanel.svelte';
   import LocalApiPanel from './nodeGateway/LocalApiPanel.svelte';
-  import TelegramBotPanel from './nodeGateway/TelegramBotPanel.svelte';
   import WecomBotPanel from './nodeGateway/WecomBotPanel.svelte';
   import BotCredentialsPanel from './nodeGateway/BotCredentialsPanel.svelte';
   import DeviceIdentityPanel from './nodeGateway/DeviceIdentityPanel.svelte';
@@ -31,10 +30,6 @@
     localhost_api_enabled: boolean;
     localhost_api_host: string | null;
     localhost_api_port: number;
-    telegram_bot_enabled: boolean;
-    telegram_bot_token: string;
-    telegram_bot_proxy: string;
-    telegram_bot_allowed_chat_ids: number[];
     feishu_bot_enabled: boolean;
     feishu_app_id: string;
     feishu_app_secret: string;
@@ -62,15 +57,6 @@
     lastError: string | null;
   }
 
-  interface TelegramBotStatus {
-    starting: boolean;
-    running: boolean;
-    lastError: string | null;
-    bindCode?: string | null;
-    bindCodeExpired?: boolean;
-    allowedChatIds?: number[];
-  }
-
   interface WecomBotStatus {
     starting: boolean;
     running: boolean;
@@ -95,11 +81,9 @@
 
   let nodeStatus: NodeGatewayStatus = { deviceId: '', protocolVersion: '', deviceName: '' };
   let localStatus: LocalApiStatus = { enabled: false, baseUrl: '', tokenPreview: '', lastError: null };
-  let tgBotStatus: TelegramBotStatus | null = null;
   let wecomBotStatus: WecomBotStatus | null = null;
   let loading = true;
   let saving = false;
-  let tgStatusPollId: ReturnType<typeof setInterval> | null = null;
   let wecomStatusPollId: ReturnType<typeof setInterval> | null = null;
 
   $: mcpDbPath = dataDir ? `${dataDir}/work_review.db` : '';
@@ -129,37 +113,6 @@
     ) {
       config.localhost_api_host = null;
     }
-  }
-
-  function stopTelegramStatusPolling() {
-    if (tgStatusPollId) {
-      clearInterval(tgStatusPollId);
-      tgStatusPollId = null;
-    }
-  }
-
-  async function refreshTelegramBotStatus() {
-    try {
-      tgBotStatus = await invoke<TelegramBotStatus>('get_telegram_bot_status');
-      if (tgBotStatus?.allowedChatIds) {
-        config.telegram_bot_allowed_chat_ids = tgBotStatus.allowedChatIds;
-      }
-    } catch (e) {
-      /* ignore */
-    }
-  }
-
-  function startTelegramStatusPolling() {
-    stopTelegramStatusPolling();
-    refreshTelegramBotStatus();
-    let attempts = 0;
-    tgStatusPollId = setInterval(async () => {
-      attempts++;
-      await refreshTelegramBotStatus();
-      if (attempts >= 6 || (tgBotStatus && !tgBotStatus.starting)) {
-        stopTelegramStatusPolling();
-      }
-    }, 3000);
   }
 
   function stopWecomStatusPolling() {
@@ -193,22 +146,14 @@
   async function loadStatus() {
     loading = true;
     try {
-      const [node, local, tg, wecom] = await Promise.all([
+      const [node, local, wecom] = await Promise.all([
         invoke<NodeGatewayStatus>('get_node_gateway_status'),
         invoke<LocalApiStatus>('get_localhost_api_status'),
-        invoke<TelegramBotStatus>('get_telegram_bot_status'),
         invoke<WecomBotStatus>('get_wecom_bot_status'),
       ]);
       nodeStatus = node;
       localStatus = local;
-      tgBotStatus = tg;
       wecomBotStatus = wecom;
-      if (tgBotStatus?.allowedChatIds) {
-        config.telegram_bot_allowed_chat_ids = tgBotStatus.allowedChatIds;
-      }
-      if (config.telegram_bot_enabled) {
-        startTelegramStatusPolling();
-      }
       if (config.wecom_bot_enabled) {
         startWecomStatusPolling();
       }
@@ -225,15 +170,13 @@
       await invoke<void>('save_config', { config });
       dispatch('change', config);
       // Reload status after save
-      const [node, local, tg, wecom] = await Promise.all([
+      const [node, local, wecom] = await Promise.all([
         invoke<NodeGatewayStatus>('get_node_gateway_status'),
         invoke<LocalApiStatus>('get_localhost_api_status'),
-        invoke<TelegramBotStatus>('get_telegram_bot_status'),
         invoke<WecomBotStatus>('get_wecom_bot_status'),
       ]);
       nodeStatus = node;
       localStatus = local;
-      tgBotStatus = tg;
       wecomBotStatus = wecom;
       if (config.wecom_bot_enabled) {
         startWecomStatusPolling();
@@ -253,9 +196,6 @@
   function handleReloadStatus() {
     loadStatus();
   }
-  function handleStartTgPolling() {
-    startTelegramStatusPolling();
-  }
   function handleStartWecomPolling() {
     startWecomStatusPolling();
   }
@@ -266,7 +206,6 @@
   });
 
   onDestroy(() => {
-    stopTelegramStatusPolling();
     stopWecomStatusPolling();
   });
 </script>
@@ -307,15 +246,6 @@
       <!-- 分组 2：消息通知（默认收起） -->
       <CollapsibleSection title={t('nodeGatewayPage.groupNotifications')} storageKey="settings.node.bots">
         <div class="space-y-3">
-          <TelegramBotPanel
-            {config}
-            {tgBotStatus}
-            {saving}
-            on:save={handleSave}
-            on:startTgPolling={handleStartTgPolling}
-            on:reloadStatus={handleReloadStatus}
-            on:toast={handleToast}
-          />
           <BotCredentialsPanel
             {config}
             {saving}
@@ -360,7 +290,7 @@
       <CollapsibleSection title={t('nodeGatewayPage.groupAdvanced')} storageKey="settings.node.advanced">
         <div class="space-y-4">
           <DeviceIdentityPanel {config} {nodeStatus} />
-          {#if config.telegram_bot_enabled || config.feishu_bot_enabled || config.wecom_bot_enabled || config.dingtalk_bot_enabled}
+          {#if config.feishu_bot_enabled || config.wecom_bot_enabled || config.dingtalk_bot_enabled}
             <DeviceRegistryPanel {config} {localStatus} on:save={handleSave} />
           {/if}
           {#if config.localhost_api_enabled}

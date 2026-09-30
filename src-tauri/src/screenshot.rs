@@ -103,7 +103,7 @@ pub fn has_accessibility_permission(prompt: bool) -> bool {
 }
 
 /// 检查 macOS 输入监控（Input Monitoring）权限
-/// 桌宠全局键盘鼠标联动需要此权限
+/// 权限状态展示与引导（check_permissions / open_permission_settings）使用
 #[cfg(target_os = "macos")]
 pub fn has_input_monitoring_permission() -> bool {
     extern "C" {
@@ -497,6 +497,10 @@ impl ScreenshotService {
             SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
         };
 
+        // SAFETY: GDI 资源在所有路径上成对释放——CreateCompatibleDC 失败即
+        // ReleaseDC(screen_dc)，CreateCompatibleBitmap 失败即 DeleteDC(mem_dc)
+        // + ReleaseDC(screen_dc)，后续各提前返回分支同理先释放再返回，无泄漏；
+        // 位图缓冲区长度均显式传给 API
         unsafe {
             let (source_x, source_y, width, height) = if should_capture_all_displays(&self.config) {
                 (
@@ -606,7 +610,7 @@ impl ScreenshotService {
             }
 
             // BGRA -> RGBA
-            for chunk in pixels.chunks_exact_mut(4) {
+            for chunk in pixels.as_chunks_mut::<4>().0 {
                 chunk.swap(0, 2); // B <-> R
             }
 
@@ -1512,6 +1516,8 @@ fn detect_primary_screen_width() -> Option<u32> {
 #[cfg(target_os = "linux")]
 fn detect_primary_screen_width() -> Option<u32> {
     use x11::xlib;
+    // SAFETY: XOpenDisplay(null) 连接默认显示，连接失败（null）提前返回；
+    // 成功路径恰好一次 XCloseDisplay 关闭连接，display 仅传给只读查询
     unsafe {
         let display = xlib::XOpenDisplay(std::ptr::null());
         if display.is_null() {
@@ -1665,7 +1671,7 @@ fn ocr_temp_root(data_dir: &Path) -> PathBuf {
     let mut hasher = DefaultHasher::new();
     data_dir.to_string_lossy().hash(&mut hasher);
     std::env::temp_dir()
-        .join("work-review")
+        .join("yue-review")
         .join(format!("ocr-{:016x}", hasher.finish()))
 }
 

@@ -6,7 +6,7 @@ use crate::AppState;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
-use work_review_core::config::AppConfig;
+use work_review_core::config::{AiMode, AiProvider, AppConfig};
 use work_review_core::database::Database;
 use work_review_core::error::AppError;
 use work_review_core::privacy::PrivacyFilter;
@@ -25,10 +25,23 @@ const MANAGED_DATA_ENTRIES: &[&str] = &[
 const LIVE_DATABASE_FILES: &[&str] = &["workreview.db", "workreview.db-shm", "workreview.db-wal"];
 
 /// 获取配置
+///
+/// 归一化：编译期注入了内置模型时，「出厂默认配置」（未做任何自定义）的文本模型
+/// 供应商翻转为 `builtin`、日报模式翻转为「AI 增强」——这是开箱默认状态；用户
+/// 显式保存过的自定义配置（非出厂形状 / 非 Local 模式）不会被此逻辑改动。
 #[tauri::command]
 pub async fn get_config(state: State<'_, Arc<Mutex<AppState>>>) -> Result<AppConfig, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    Ok(state.config.clone())
+    let mut config = state.config.clone();
+    if work_review_core::config::builtin_text_model().is_some()
+        && config.text_model.is_factory_default_text()
+    {
+        config.text_model.provider = AiProvider::Builtin;
+        if config.ai_mode == AiMode::Local {
+            config.ai_mode = AiMode::Summary;
+        }
+    }
+    Ok(config)
 }
 
 /// 保存配置
@@ -48,6 +61,16 @@ pub async fn save_config(
     for cached in config.text_model_provider_cache.values() {
         super::ai::validate_model_endpoint(&cached.endpoint)?;
     }
+    // 诊断日志：保存时记录 Plane 配置摘要（不含 api_key），用于定位
+    // 「保存后集成配置丢失」类问题（2026-09-24 用户报告）
+    log::info!(
+        "save_config: plane[enabled={}, url={}, slug={}] gitlab[enabled={}, url={}]",
+        config.plane.enabled,
+        config.plane.url.is_some(),
+        config.plane.workspace_slug.is_some(),
+        config.gitlab.report_enabled,
+        config.gitlab.url.is_some(),
+    );
     persist_app_config(config, app, state.inner())
 }
 
@@ -229,6 +252,11 @@ pub async fn change_data_dir(
     }
 
     let requested_path = to_absolute_path(Path::new(requested_dir))?;
+    // 与 cleanup_old_data_dir 同口径：先规范化再比较。否则大小写/短名/符号链接/「..」
+    // 等价形式选中当前目录时会绕过下方同目录与父子两道校验，进而清空正在使用的数据目录
+    let requested_path = requested_path
+        .canonicalize()
+        .unwrap_or_else(|_| requested_path.clone());
     let current_dir = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         state
@@ -289,6 +317,8 @@ pub async fn change_data_dir(
     state.storage_manager = StorageManager::new(&target_dir, config.storage.clone());
     state.data_dir = target_dir.clone();
     state.config_path = config_path;
+    // 崩溃日志目录同步跟随新数据目录
+    crate::set_crash_report_data_dir(&target_dir);
 
     log::info!("数据目录已切换到: {target_dir:?}");
     drop(state);

@@ -8,16 +8,12 @@ extern crate objc;
 
 mod agent;
 mod autostart;
-mod avatar_engine;
-mod avatar_followup;
-#[allow(dead_code)]
-mod avatar_input;
-mod avatar_proactive;
 mod bot_common;
 mod commands;
 mod config_sync;
 mod dingtalk_bot;
 mod feishu_bot;
+pub mod file_monitor_runtime;
 mod idle_detector;
 mod linux_session;
 mod localhost_api;
@@ -28,35 +24,58 @@ mod remote_upload;
 mod screen_lock;
 mod screenshot;
 mod storage;
-mod telegram_bot;
 mod wecom_aibot;
 mod wecom_bot;
 
 use once_cell::sync::OnceCell;
 use screenshot::ScreenshotService;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use storage::StorageManager;
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Position};
-use work_review_core::config::{
-    config_backup_path, AppConfig, AvatarFollowupItem, ConfigLoadStatus,
-};
+use work_review_core::config::{config_backup_path, AppConfig, ConfigLoadStatus};
 use work_review_core::database::Database;
 use work_review_core::privacy::PrivacyFilter;
 
 // 全局 AppHandle，用于在 macOS Dock 点击时恢复窗口
 static APP_HANDLE: OnceCell<AppHandle> = OnceCell::new();
+// 启动时解析出的实际数据目录：崩溃日志优先写这里（函数注释指引的是
+// `<数据目录>/crashes/`，自定义数据目录的用户去自己的目录才找得到）；
+// 解析完成前的极早期崩溃回退默认目录（此时数据目录还无从得知）。
+// 用 RwLock 而非 OnceCell：运行期 change_data_dir 换目录后要能二次更新
+static CRASH_REPORT_DATA_DIR: RwLock<Option<std::path::PathBuf>> = RwLock::new(None);
+
+/// 数据目录解析完成后调用；运行期 change_data_dir 成功换目录后同样调用
+pub(crate) fn set_crash_report_data_dir(dir: &Path) {
+    if let Ok(mut guard) = CRASH_REPORT_DATA_DIR.write() {
+        *guard = Some(dir.to_path_buf());
+    }
+}
+
+fn crash_report_dir() -> PathBuf {
+    crash_report_dir_for(
+        CRASH_REPORT_DATA_DIR
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref(),
+    )
+}
+
+fn crash_report_dir_for(actual_data_dir: Option<&Path>) -> PathBuf {
+    actual_data_dir
+        .map(|dir| dir.join("crashes"))
+        .unwrap_or_else(|| default_data_dir().join("crashes"))
+}
+
 const MAIN_WINDOW_LABEL: &str = "main";
 const AUTOSTART_LAUNCH_ARG: &str = "--autostart";
 const TRAY_MENU_SHOW_ID: &str = "show";
 const TRAY_MENU_RECORDING_TOGGLE_ID: &str = "recording-toggle";
 const TRAY_MENU_LIGHTWEIGHT_MODE_ID: &str = "lightweight-mode";
-const TRAY_MENU_AVATAR_TOGGLE_ID: &str = "avatar-toggle";
 const TRAY_MENU_QUIT_ID: &str = "quit";
 pub(crate) const RECORDING_STATE_CHANGED_EVENT: &str = "recording-state-changed";
 pub(crate) const CONFIG_CHANGED_EVENT: &str = "config-changed";
@@ -68,7 +87,6 @@ pub(crate) struct TrayMenuState {
     show: AppMenuItem,
     recording_toggle: AppMenuItem,
     lightweight_mode: AppCheckMenuItem,
-    avatar_toggle: AppCheckMenuItem,
     quit: AppMenuItem,
 }
 
@@ -278,9 +296,6 @@ fn tray_label(key: &str, locale: &str) -> &'static str {
         ("lightweight", "en") => "Lightweight Mode",
         ("lightweight", "zh-TW") => "輕量模式",
         ("lightweight", _) => "轻量模式",
-        ("avatar", "en") => "Desktop Pet",
-        ("avatar", "zh-TW") => "桌寵",
-        ("avatar", _) => "桌宠",
         ("recording_start", "en") => "Start Recording",
         ("recording_start", "zh-TW") => "開始錄製",
         ("recording_start", _) => "开始录制",
@@ -310,13 +325,12 @@ pub(crate) fn refresh_tray_menu(app: &AppHandle) {
         return;
     };
 
-    let (is_recording, is_paused, lightweight_mode, avatar_enabled, locale) = {
+    let (is_recording, is_paused, lightweight_mode, locale) = {
         let state = state.lock().unwrap_or_else(|e| e.into_inner());
         (
             state.is_recording,
             state.is_paused,
             state.config.lightweight_mode,
-            state.config.avatar_enabled,
             state.config.locale.clone(),
         )
     };
@@ -333,10 +347,6 @@ pub(crate) fn refresh_tray_menu(app: &AppHandle) {
         .lightweight_mode
         .set_text(tray_label("lightweight", &locale));
     let _ = tray_menu.lightweight_mode.set_checked(lightweight_mode);
-    let _ = tray_menu
-        .avatar_toggle
-        .set_text(tray_label("avatar", &locale));
-    let _ = tray_menu.avatar_toggle.set_checked(avatar_enabled);
     let _ = tray_menu.quit.set_text(tray_label("quit", &locale));
 }
 
@@ -429,14 +439,11 @@ pub struct AppState {
     pub config_path: PathBuf,
     pub is_recording: bool,
     pub is_paused: bool,
-    pub avatar_state: avatar_engine::AvatarStatePayload,
-    pub avatar_generating_report: bool,
     pub generating_report: bool,
     pub localhost_api_runtime: localhost_api::LocalhostApiRuntime,
-    pub telegram_bot_runtime: telegram_bot::TelegramBotRuntime,
     pub wecom_bot_runtime: wecom_aibot::WecomBotRuntime,
-    /// avatar 循环缓存的活动窗口（时间戳 + 窗口信息），供 screenshot 循环复用
-    pub cached_active_window: Option<(std::time::Instant, monitor::ActiveWindow)>,
+    /// 本地文件监控运行句柄（设置启用时为 Some）
+    pub file_monitor: Option<file_monitor_runtime::FileMonitorHandle>,
 }
 
 #[derive(Default)]
@@ -507,10 +514,6 @@ fn should_run_startup_cleanup(status: ConfigLoadStatus) -> bool {
     !status.requires_fail_safe()
 }
 
-fn should_initialize_avatar_input(status: ConfigLoadStatus) -> bool {
-    !status.requires_fail_safe()
-}
-
 /// 清理历史遗留的钥匙串占位符。
 /// 早期未发布版本曾把敏感字段真实值迁入系统钥匙串,磁盘配置写成 "__keychain__" 占位符;
 /// 该机制已整体移除。这里把残留占位符清空,避免被当作真实密钥使用（需在设置中重新填写）。
@@ -530,7 +533,6 @@ fn clear_legacy_keychain_placeholders(config: &mut work_review_core::config::App
         clear_opt(&mut config.openai_api_key);
         clear_opt(&mut config.assistant_search_api_key);
         clear_opt(&mut config.embedding_api_key);
-        clear_opt(&mut config.telegram_bot_token);
         clear_opt(&mut config.feishu_app_secret);
         clear_opt(&mut config.feishu_verification_token);
         clear_opt(&mut config.feishu_encrypt_key);
@@ -679,214 +681,16 @@ fn is_windows_system_dialog(active_window: &monitor::ActiveWindow) -> bool {
         .any(|rule| matches_windows_system_dialog_rule(active_window, rule))
 }
 
-const BREAK_REMINDER_BUFFER_MINUTES: u64 = 5;
-const BREAK_REMINDER_MESSAGE: &str = "该休息一下了，起来活动活动吧。";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BreakReminderPhase {
-    Counting,
-    Cooldown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BreakReminderRuntime {
-    phase: BreakReminderPhase,
-    elapsed_ms: u64,
-    bubble_visible: bool,
-}
-
-impl BreakReminderRuntime {
-    fn new() -> Self {
-        Self {
-            phase: BreakReminderPhase::Counting,
-            elapsed_ms: 0,
-            bubble_visible: false,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.phase = BreakReminderPhase::Counting;
-        self.elapsed_ms = 0;
-        self.bubble_visible = false;
-    }
-
-    fn reset_active_cycle(&mut self) {
-        if self.phase == BreakReminderPhase::Counting {
-            self.elapsed_ms = 0;
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BreakReminderSignal {
-    TickMillis(u64),
-    #[allow(dead_code)]
-    TickMinutes(u64),
-    #[allow(dead_code)]
-    Dismiss,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct BreakReminderAdvanceResult {
-    should_emit: bool,
-    should_clear: bool,
-    payload: Option<avatar_engine::AvatarBubblePayload>,
-}
-
-fn advance_break_reminder(
-    state: &mut BreakReminderRuntime,
-    enabled: bool,
-    interval_minutes: u64,
-    signal: BreakReminderSignal,
-) -> BreakReminderAdvanceResult {
-    let mut result = BreakReminderAdvanceResult::default();
-
-    if !enabled {
-        if state.bubble_visible {
-            result.should_clear = true;
-            result.payload = Some(avatar_engine::AvatarBubblePayload::clear());
-        }
-        state.reset();
-        return result;
-    }
-
-    match signal {
-        BreakReminderSignal::Dismiss => {
-            if state.bubble_visible {
-                state.bubble_visible = false;
-                result.should_clear = true;
-                result.payload = Some(avatar_engine::AvatarBubblePayload::clear());
-            }
-            return result;
-        }
-        BreakReminderSignal::TickMillis(0) | BreakReminderSignal::TickMinutes(0) => return result,
-        _ => {}
-    }
-
-    let delta_ms = match signal {
-        BreakReminderSignal::TickMillis(value) => value,
-        BreakReminderSignal::TickMinutes(value) => value.saturating_mul(60_000),
-        BreakReminderSignal::Dismiss => 0,
-    };
-
-    match state.phase {
-        BreakReminderPhase::Counting => {
-            state.elapsed_ms = state.elapsed_ms.saturating_add(delta_ms);
-            if state.elapsed_ms >= interval_minutes.saturating_mul(60_000) {
-                state.phase = BreakReminderPhase::Cooldown;
-                state.elapsed_ms = 0;
-                state.bubble_visible = true;
-                result.should_emit = true;
-                result.payload = Some(avatar_engine::AvatarBubblePayload::persistent_info(
-                    BREAK_REMINDER_MESSAGE,
-                ));
-            }
-        }
-        BreakReminderPhase::Cooldown => {
-            state.elapsed_ms = state.elapsed_ms.saturating_add(delta_ms);
-            if state.elapsed_ms >= BREAK_REMINDER_BUFFER_MINUTES.saturating_mul(60_000) {
-                state.phase = BreakReminderPhase::Counting;
-                state.elapsed_ms = 0;
-            }
-        }
-    }
-
-    result
-}
-
-const AVATAR_SWITCH_NUDGE_WINDOW_MS: u64 = 3 * 60 * 1000;
-const AVATAR_SWITCH_NUDGE_THRESHOLD: usize = 8;
-const AVATAR_SWITCH_NUDGE_COOLDOWN_MS: u64 = 20 * 60 * 1000;
-const AVATAR_BACKLOG_NUDGE_COOLDOWN_MS: u64 = 90 * 60 * 1000;
-const AVATAR_BACKLOG_NUDGE_MIN_AGE_SECS: i64 = 30 * 60;
-const AVATAR_NUDGE_SWITCH_COMPANION: &str = "__avatar_nudge_switch_companion__";
-const AVATAR_NUDGE_SWITCH_ASSISTANT: &str = "__avatar_nudge_switch_assistant__";
-const AVATAR_NUDGE_SWITCH_COACH: &str = "__avatar_nudge_switch_coach__";
-
-#[derive(Default)]
-struct AvatarNudgeRuntime {
-    recent_switches_ms: VecDeque<u64>,
-    last_switch_nudge_at_ms: u64,
-    last_backlog_nudge_at_ms: u64,
-}
-
-fn avatar_switch_nudge_message_key(persona: &str) -> &'static str {
-    match persona.trim() {
-        "companion" => AVATAR_NUDGE_SWITCH_COMPANION,
-        "coach" => AVATAR_NUDGE_SWITCH_COACH,
-        _ => AVATAR_NUDGE_SWITCH_ASSISTANT,
-    }
-}
-
-fn avatar_backlog_nudge_message_key(persona: &str, count: usize) -> String {
-    format!("__avatar_backlog_nudge__:{}:{}", persona.trim(), count)
-}
-
-fn record_avatar_window_switch(runtime: &mut AvatarNudgeRuntime, now_ms: u64) -> bool {
-    runtime.recent_switches_ms.push_back(now_ms);
-
-    while runtime
-        .recent_switches_ms
-        .front()
-        .is_some_and(|timestamp| now_ms.saturating_sub(*timestamp) > AVATAR_SWITCH_NUDGE_WINDOW_MS)
-    {
-        runtime.recent_switches_ms.pop_front();
-    }
-
-    if runtime.recent_switches_ms.len() < AVATAR_SWITCH_NUDGE_THRESHOLD {
-        return false;
-    }
-
-    if runtime.last_switch_nudge_at_ms != 0
-        && now_ms.saturating_sub(runtime.last_switch_nudge_at_ms) < AVATAR_SWITCH_NUDGE_COOLDOWN_MS
-    {
-        return false;
-    }
-
-    runtime.last_switch_nudge_at_ms = now_ms;
-    true
-}
-
-fn count_open_avatar_followups_for_nudge(items: &[AvatarFollowupItem], now_ts: i64) -> usize {
-    items
-        .iter()
-        .filter(|item| item.status == "open")
-        .filter(|item| now_ts.saturating_sub(item.created_at) >= AVATAR_BACKLOG_NUDGE_MIN_AGE_SECS)
-        .count()
-}
-
-fn should_emit_avatar_backlog_nudge(
-    runtime: &mut AvatarNudgeRuntime,
-    items: &[AvatarFollowupItem],
-    now_ts: i64,
-    now_ms: u64,
-) -> Option<usize> {
-    let count = count_open_avatar_followups_for_nudge(items, now_ts);
-    if count == 0 {
-        return None;
-    }
-
-    if runtime.last_backlog_nudge_at_ms != 0
-        && now_ms.saturating_sub(runtime.last_backlog_nudge_at_ms)
-            < AVATAR_BACKLOG_NUDGE_COOLDOWN_MS
-    {
-        return None;
-    }
-
-    runtime.last_backlog_nudge_at_ms = now_ms;
-    Some(count)
-}
-
 pub(crate) fn default_data_dir() -> PathBuf {
     dirs::data_dir()
-        .map(|d| d.join("work-review"))
+        .map(|d| d.join("yue-review"))
         .unwrap_or_else(|| PathBuf::from("./data"))
 }
 
 fn data_dir_preference_path() -> PathBuf {
     dirs::config_dir()
-        .map(|d| d.join("work-review").join("data-location.json"))
-        .unwrap_or_else(|| PathBuf::from("./work-review-data-location.json"))
+        .map(|d| d.join("yue-review").join("data-location.json"))
+        .unwrap_or_else(|| PathBuf::from("./yue-review-data-location.json"))
 }
 
 fn load_data_dir_preference() -> Option<PathBuf> {
@@ -921,7 +725,22 @@ pub(crate) fn save_data_dir_preference(data_dir: &Path) -> std::io::Result<()> {
     })
     .map_err(std::io::Error::other)?;
 
-    std::fs::write(preference_path, content)?;
+    // 原子写（与 node_gateway 身份文件同款）：直接 truncate+write 中途崩溃会留
+    // 半截 JSON，下次启动解析失败静默回退默认数据目录，用户面对"数据全空"
+    let unique = format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let temp_path = preference_path.with_extension(unique);
+    std::fs::write(&temp_path, content)?;
+    if let Err(e) = std::fs::rename(&temp_path, preference_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -1421,23 +1240,8 @@ fn monitoring_poll_interval_ms() -> u64 {
     monitoring_poll_interval_ms_for_platform(cfg!(target_os = "macos"))
 }
 
-const ACTIVE_WINDOW_CACHE_MAX_AGE_MS: u64 = 1250;
 const MIN_CAPTURE_INTERVAL_MS: u128 = 3000;
 const MIN_BROWSER_CHANGE_CAPTURE_INTERVAL_MS: u128 = 1200;
-
-fn reusable_cached_active_window(
-    cached: Option<&(std::time::Instant, monitor::ActiveWindow)>,
-    now: std::time::Instant,
-) -> Option<monitor::ActiveWindow> {
-    let (sampled_at, active_window) = cached?;
-    let age = now.checked_duration_since(*sampled_at)?;
-
-    if age > Duration::from_millis(ACTIVE_WINDOW_CACHE_MAX_AGE_MS) {
-        return None;
-    }
-
-    Some(active_window.clone())
-}
 
 fn should_probe_browser_url_before_change_detection(
     app_name: &str,
@@ -1501,25 +1305,6 @@ fn should_refresh_browser_url_before_record(app_name: &str, window_title: &str) 
     work_review_core::categorize::is_browser_app(app_name) && !window_title.is_empty()
 }
 
-fn avatar_monitor_poll_interval_ms_for_platform(is_macos: bool, active: bool) -> u64 {
-    if is_macos {
-        if active {
-            750
-        } else {
-            2000
-        }
-    } else if active {
-        180
-    } else {
-        750
-    }
-}
-
-#[allow(dead_code)]
-fn avatar_monitor_poll_interval_ms() -> u64 {
-    avatar_monitor_poll_interval_ms_for_platform(cfg!(target_os = "macos"), true)
-}
-
 fn screen_lock_check_interval_ms_for_platform(is_macos: bool) -> u64 {
     if is_macos {
         5000
@@ -1530,124 +1315,6 @@ fn screen_lock_check_interval_ms_for_platform(is_macos: bool) -> u64 {
 
 fn screen_lock_check_interval_ms() -> u64 {
     screen_lock_check_interval_ms_for_platform(cfg!(target_os = "macos"))
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct AvatarActivityDecision {
-    should_continue: bool,
-    reset_state: Option<avatar_engine::AvatarStatePayload>,
-}
-
-fn avatar_activity_decision(
-    avatar_enabled: bool,
-    is_recording: bool,
-    is_paused: bool,
-    avatar_opacity: f64,
-    avatar_preset: &str,
-    avatar_persona: &str,
-    avatar_body_hidden: bool,
-) -> AvatarActivityDecision {
-    if !avatar_enabled {
-        return AvatarActivityDecision {
-            should_continue: false,
-            reset_state: Some(avatar_engine::apply_avatar_visual_settings(
-                avatar_engine::default_avatar_state(),
-                avatar_opacity,
-                avatar_preset,
-                avatar_persona,
-                avatar_body_hidden,
-            )),
-        };
-    }
-
-    if !is_recording || is_paused {
-        return AvatarActivityDecision {
-            should_continue: false,
-            reset_state: Some(avatar_engine::apply_avatar_visual_settings(
-                avatar_engine::default_avatar_state(),
-                avatar_opacity,
-                avatar_preset,
-                avatar_persona,
-                avatar_body_hidden,
-            )),
-        };
-    }
-
-    AvatarActivityDecision {
-        should_continue: true,
-        reset_state: None,
-    }
-}
-
-fn avatar_proactive_ai_should_run(
-    avatar_enabled: bool,
-    avatar_proactive_ai_enabled: bool,
-    is_paused: bool,
-    text_model: &work_review_core::config::ModelConfig,
-    now_ms: u64,
-    next_check_ms: u64,
-) -> bool {
-    avatar_enabled
-        && avatar_proactive_ai_enabled
-        && !is_paused
-        && !text_model.endpoint.trim().is_empty()
-        && !text_model.model.trim().is_empty()
-        && now_ms >= next_check_ms
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct AvatarTransitionDecision {
-    emit_state: Option<avatar_engine::AvatarStatePayload>,
-    pending_state: Option<avatar_engine::AvatarStatePayload>,
-    pending_hits: u8,
-}
-
-fn avatar_transition_decision(
-    current: Option<&avatar_engine::AvatarStatePayload>,
-    pending: Option<&avatar_engine::AvatarStatePayload>,
-    pending_hits: u8,
-    candidate: &avatar_engine::AvatarStatePayload,
-) -> AvatarTransitionDecision {
-    const AVATAR_MODE_STABILITY_THRESHOLD: u8 = 2;
-
-    match current {
-        None => AvatarTransitionDecision {
-            emit_state: Some(candidate.clone()),
-            pending_state: None,
-            pending_hits: 0,
-        },
-        Some(current_state) if current_state == candidate => AvatarTransitionDecision {
-            emit_state: None,
-            pending_state: None,
-            pending_hits: 0,
-        },
-        Some(current_state) if current_state.mode == candidate.mode => AvatarTransitionDecision {
-            emit_state: Some(candidate.clone()),
-            pending_state: None,
-            pending_hits: 0,
-        },
-        Some(_) => {
-            let next_hits = if pending == Some(candidate) {
-                pending_hits.saturating_add(1)
-            } else {
-                1
-            };
-
-            if next_hits >= AVATAR_MODE_STABILITY_THRESHOLD {
-                AvatarTransitionDecision {
-                    emit_state: Some(candidate.clone()),
-                    pending_state: None,
-                    pending_hits: 0,
-                }
-            } else {
-                AvatarTransitionDecision {
-                    emit_state: None,
-                    pending_state: Some(candidate.clone()),
-                    pending_hits: next_hits,
-                }
-            }
-        }
-    }
 }
 
 fn should_skip_transient_window(active_window: &monitor::ActiveWindow) -> bool {
@@ -1683,455 +1350,6 @@ fn should_skip_system_window(active_window: &monitor::ActiveWindow) -> bool {
     is_sys || is_minimized_window || is_explorer_shell || is_windows_system_dialog
 }
 
-async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
-    let mut last_avatar_state: Option<avatar_engine::AvatarStatePayload> = None;
-    let mut pending_avatar_state: Option<avatar_engine::AvatarStatePayload> = None;
-    let mut pending_avatar_hits: u8 = 0;
-    let mut last_window_signature: Option<String> = None;
-    let mut break_reminder_runtime = BreakReminderRuntime::new();
-    let mut avatar_nudge_runtime = AvatarNudgeRuntime::default();
-    // 频繁切换检测运行时
-    let mut last_switch_signature: Option<String> = None;
-    let mut recent_switches_ms: std::collections::VecDeque<u64> = std::collections::VecDeque::new();
-    let mut last_focus_nudge_ms: u64 = 0;
-    // 工作目标庆祝：防止同一天重复庆祝
-    let mut goal_celebrated_date: String = String::new();
-    let mut goal_check_counter: u32 = 0;
-    let mut cached_rules: Vec<work_review_core::config::AppCategoryRule> = Vec::new();
-    let mut cached_custom_categories: Vec<work_review_core::config::CustomCategory> = Vec::new();
-    let mut cached_rules_signature: u64 = 0;
-    const IDLE_TIMEOUT_MINUTES: u64 = 3;
-    let idle_detector = idle_detector::IdleDetector::new(IDLE_TIMEOUT_MINUTES);
-    // 桌宠模型生成提醒运行时状态
-    let task_start_ms = chrono::Local::now().timestamp_millis().max(0) as u64;
-    let mut next_proactive_check_ms: u64 = task_start_ms + 10 * 60_000; // 启动后 10 分钟首次
-    let mut proactive_mood: Option<(String, u64)> = None; // (mode, expires_ms)
-    let mut active_app_since_ms: u64 = task_start_ms;
-    let mut last_proactive_app: Option<String> = None;
-
-    loop {
-        let (
-            avatar_enabled,
-            avatar_proactive_ai_enabled,
-            avatar_generating_report,
-            avatar_opacity,
-            avatar_preset,
-            avatar_persona,
-            avatar_body_hidden,
-            is_recording,
-            is_paused,
-            break_reminder_enabled,
-            break_reminder_interval_minutes,
-        ) = {
-            let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            (
-                state_guard.config.avatar_enabled,
-                state_guard.config.avatar_proactive_ai_enabled,
-                state_guard.avatar_generating_report,
-                state_guard.config.avatar_opacity,
-                state_guard.config.avatar_preset.clone(),
-                state_guard.config.avatar_persona.clone(),
-                state_guard.config.avatar_body_hidden,
-                state_guard.is_recording,
-                state_guard.is_paused,
-                state_guard.config.break_reminder_enabled,
-                state_guard.config.break_reminder_interval_minutes,
-            )
-        };
-
-        let text_model = {
-            let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            state_guard.config.text_model.clone()
-        };
-
-        let activity_decision = avatar_activity_decision(
-            avatar_enabled,
-            is_recording,
-            is_paused,
-            avatar_opacity,
-            &avatar_preset,
-            &avatar_persona,
-            avatar_body_hidden,
-        );
-        let poll_interval_ms = avatar_monitor_poll_interval_ms_for_platform(
-            cfg!(target_os = "macos"),
-            activity_decision.should_continue,
-        );
-        tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;
-
-        if !activity_decision.should_continue {
-            let reminder_result = advance_break_reminder(
-                &mut break_reminder_runtime,
-                false,
-                break_reminder_interval_minutes,
-                BreakReminderSignal::TickMillis(0),
-            );
-            if let Some(payload) = reminder_result.payload.as_ref() {
-                avatar_engine::emit_avatar_bubble(&app, payload);
-            }
-
-            pending_avatar_state = None;
-            pending_avatar_hits = 0;
-            last_window_signature = None;
-            avatar_nudge_runtime.recent_switches_ms.clear();
-
-            if let Some(reset_state) = activity_decision.reset_state {
-                let should_emit_reset = last_avatar_state.as_ref() != Some(&reset_state);
-                {
-                    let mut state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-                    state_guard.avatar_state = reset_state.clone();
-                }
-
-                if avatar_enabled && should_emit_reset {
-                    avatar_engine::emit_avatar_state(&app, &reset_state);
-                }
-
-                last_avatar_state = Some(reset_state);
-            } else {
-                last_avatar_state = None;
-            }
-            continue;
-        }
-
-        let sampled_at = std::time::Instant::now();
-        let active_window = match monitor::get_active_window_fast() {
-            Ok(window) => window,
-            Err(_) => continue,
-        };
-
-        {
-            let mut state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            state_guard.cached_active_window = Some((sampled_at, active_window.clone()));
-            let rules = &state_guard.config.app_category_rules;
-            let cats = &state_guard.config.custom_categories;
-            let sig = rules.len() as u64
-                | rules.last().map_or(0u64, |r| {
-                    let mut h: u64 = 0;
-                    for b in r.app_name.as_bytes() {
-                        h = h.wrapping_add(*b as u64);
-                    }
-                    for b in r.category.as_bytes() {
-                        h = h.wrapping_mul(31).wrapping_add(*b as u64);
-                    }
-                    h
-                });
-            if sig != cached_rules_signature {
-                cached_rules = rules.clone();
-                cached_custom_categories = cats.clone();
-                cached_rules_signature = sig;
-            }
-        };
-        let app_category_rules = &cached_rules;
-        let app_custom_categories = &cached_custom_categories;
-
-        if should_skip_transient_window(&active_window) || should_skip_system_window(&active_window)
-        {
-            continue;
-        }
-
-        let input_idle = idle_detector.is_input_idle();
-        // 工作目标庆祝：每 ~60 轮检查一次（约 1-2 分钟）
-        goal_check_counter = goal_check_counter.wrapping_add(1);
-        if goal_check_counter.is_multiple_of(60) && avatar_enabled {
-            let (goal_minutes, goal_notify) = {
-                let s = state.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    s.config.daily_work_goal_minutes,
-                    s.config.goal_notifications,
-                )
-            };
-            if goal_notify {
-                if let Some(goal) = goal_minutes {
-                    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                    if today != goal_celebrated_date {
-                        let work_secs = {
-                            let s = state.lock().unwrap_or_else(|e| e.into_inner());
-                            let segments = s.config.effective_work_segments();
-                            s.database
-                                .get_daily_stats_with_segments(&today, &segments)
-                                .map(|st| st.work_time_duration)
-                                .unwrap_or(0)
-                        };
-                        if work_secs >= (goal as i64 * 60) {
-                            avatar_engine::emit_avatar_bubble(
-                                &app,
-                                &avatar_engine::AvatarBubblePayload::success(
-                                    "🎉 今日工作目标达成！继续保持！",
-                                ),
-                            );
-                            goal_celebrated_date = today;
-                        }
-                    }
-                }
-            }
-        }
-
-        let reminder_result = if !(avatar_enabled && break_reminder_enabled) {
-            advance_break_reminder(
-                &mut break_reminder_runtime,
-                false,
-                break_reminder_interval_minutes,
-                BreakReminderSignal::TickMillis(0),
-            )
-        } else if break_reminder_runtime.phase == BreakReminderPhase::Cooldown {
-            advance_break_reminder(
-                &mut break_reminder_runtime,
-                true,
-                break_reminder_interval_minutes,
-                BreakReminderSignal::TickMillis(poll_interval_ms),
-            )
-        } else if input_idle {
-            break_reminder_runtime.reset_active_cycle();
-            BreakReminderAdvanceResult::default()
-        } else {
-            advance_break_reminder(
-                &mut break_reminder_runtime,
-                true,
-                break_reminder_interval_minutes,
-                BreakReminderSignal::TickMillis(poll_interval_ms),
-            )
-        };
-        if let Some(payload) = reminder_result.payload.as_ref() {
-            avatar_engine::emit_avatar_bubble(&app, payload);
-        }
-
-        let avatar_state = avatar_engine::apply_avatar_visual_settings(
-            avatar_engine::derive_avatar_state_with_rules(
-                app_category_rules,
-                app_custom_categories,
-                &active_window.app_name,
-                &active_window.window_title,
-                active_window.browser_url.as_deref(),
-                input_idle,
-                avatar_generating_report,
-            ),
-            avatar_opacity,
-            &avatar_preset,
-            &avatar_persona,
-            avatar_body_hidden,
-        );
-
-        let window_signature = format!(
-            "{}|{}|{}",
-            active_window.app_name,
-            active_window.window_title,
-            active_window.browser_url.as_deref().unwrap_or_default()
-        );
-        let window_changed = last_window_signature.as_deref() != Some(window_signature.as_str());
-        if last_proactive_app.as_deref() != Some(active_window.app_name.as_str()) {
-            active_app_since_ms = chrono::Local::now().timestamp_millis().max(0) as u64;
-            last_proactive_app = Some(active_window.app_name.clone());
-        }
-
-        // 方向 2：频繁切换检测 —— 5 分钟内切换 ≥6 次 → 桌宠提醒专注（30 分钟冷却）
-        let actually_switched = last_switch_signature.as_deref() != Some(window_signature.as_str());
-        last_switch_signature = Some(window_signature.clone());
-        if actually_switched && is_recording && !is_paused {
-            let switch_ms = chrono::Local::now().timestamp_millis().max(0) as u64;
-            recent_switches_ms.push_back(switch_ms);
-            while let Some(&old) = recent_switches_ms.front() {
-                if switch_ms.saturating_sub(old) > 5 * 60 * 1000 {
-                    recent_switches_ms.pop_front();
-                } else {
-                    break;
-                }
-            }
-            if recent_switches_ms.len() >= 6
-                && switch_ms.saturating_sub(last_focus_nudge_ms) > 30 * 60 * 1000
-            {
-                avatar_engine::emit_avatar_bubble(
-                    &app,
-                    &avatar_engine::AvatarBubblePayload::info(
-                        "检测到频繁切换应用，要试试专注一段时间吗？",
-                    ),
-                );
-                last_focus_nudge_ms = switch_ms;
-                recent_switches_ms.clear();
-            }
-        }
-
-        let transition_decision = avatar_transition_decision(
-            last_avatar_state.as_ref(),
-            pending_avatar_state.as_ref(),
-            pending_avatar_hits,
-            &avatar_state,
-        );
-
-        pending_avatar_state = transition_decision.pending_state;
-        pending_avatar_hits = transition_decision.pending_hits;
-
-        if let Some(mut next_avatar_state) = transition_decision.emit_state {
-            // 桌宠模型生成提醒的情绪覆盖：AI 给的表情未过期则覆盖 mode
-            let mood_now_ms = chrono::Local::now().timestamp_millis().max(0) as u64;
-            match &proactive_mood {
-                Some((mood_mode, expires_ms)) if mood_now_ms < *expires_ms => {
-                    next_avatar_state.mode = mood_mode.clone();
-                }
-                Some(_) => {
-                    proactive_mood = None; // 过期清空
-                }
-                None => {}
-            }
-            let collect_cost_ms = sampled_at.elapsed().as_millis();
-            let previous_mode = last_avatar_state
-                .as_ref()
-                .map(|state| state.mode.as_str())
-                .unwrap_or("none");
-
-            {
-                let mut state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-                state_guard.avatar_state = next_avatar_state.clone();
-            }
-
-            avatar_engine::emit_avatar_state(&app, &next_avatar_state);
-
-            let entered_idle = match &last_avatar_state {
-                Some(previous) => !previous.is_idle && next_avatar_state.is_idle,
-                None => next_avatar_state.is_idle,
-            };
-
-            if entered_idle {
-                avatar_engine::emit_avatar_bubble(
-                    &app,
-                    &avatar_engine::AvatarBubblePayload::info("先放松一下，待会再继续推进。"),
-                );
-            }
-
-            log::info!(
-                "🐾 桌宠状态切换: {} -> {} | 窗口={} | 采集耗时={}ms",
-                previous_mode,
-                next_avatar_state.mode,
-                window_signature,
-                collect_cost_ms
-            );
-
-            last_avatar_state = Some(next_avatar_state);
-            last_window_signature = Some(window_signature);
-        } else if window_changed {
-            log::debug!(
-                "🐾 桌宠检测到前台切换，但状态未变: {} | 采集耗时={}ms",
-                window_signature,
-                sampled_at.elapsed().as_millis()
-            );
-            last_window_signature = Some(window_signature);
-        }
-
-        if avatar_enabled && window_changed {
-            let now = chrono::Local::now();
-            let now_ts = now.timestamp();
-            let now_ms = now.timestamp_millis().max(0) as u64;
-            let switch_nudge_ready = record_avatar_window_switch(&mut avatar_nudge_runtime, now_ms);
-            let date_from = (now - chrono::Duration::days(3))
-                .format("%Y-%m-%d")
-                .to_string();
-            let followup_result = {
-                let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-                let activities = crate::commands::load_filtered_activities_in_range(
-                    &state_guard,
-                    Some(date_from.as_str()),
-                    None,
-                    480,
-                );
-                (
-                    activities,
-                    state_guard.config.avatar_persona.clone(),
-                    state_guard.config.avatar_followups.clone(),
-                )
-            };
-
-            if let (Ok(activities), persona, manual_followups) = followup_result {
-                let mut emitted_followup = false;
-                if let Some(payload) = crate::avatar_followup::find_followup_suggestion(
-                    &activities,
-                    &active_window,
-                    &persona,
-                    &manual_followups,
-                    now_ts,
-                    now_ms,
-                ) {
-                    if crate::avatar_followup::should_emit_followup(&payload.project_key, now_ms) {
-                        crate::avatar_followup::emit_followup_suggestion(&app, &payload);
-                        crate::avatar_followup::note_followup_emitted(&payload.project_key, now_ms);
-                        emitted_followup = true;
-                    }
-                }
-
-                if !emitted_followup && switch_nudge_ready {
-                    avatar_engine::emit_avatar_bubble(
-                        &app,
-                        &avatar_engine::AvatarBubblePayload::info(avatar_switch_nudge_message_key(
-                            &persona,
-                        )),
-                    );
-                } else if !emitted_followup {
-                    if let Some(count) = should_emit_avatar_backlog_nudge(
-                        &mut avatar_nudge_runtime,
-                        &manual_followups,
-                        now_ts,
-                        now_ms,
-                    ) {
-                        avatar_engine::emit_avatar_bubble(
-                            &app,
-                            &avatar_engine::AvatarBubblePayload::info(
-                                avatar_backlog_nudge_message_key(&persona, count),
-                            ),
-                        );
-                    }
-                }
-            }
-        }
-
-        // 桌宠模型生成提醒：到点才调一次文本模型，模型自主决定是否提示和提示内容
-        let proactive_now_ms = chrono::Local::now().timestamp_millis().max(0) as u64;
-        if avatar_proactive_ai_should_run(
-            avatar_enabled,
-            avatar_proactive_ai_enabled,
-            is_paused,
-            &text_model,
-            proactive_now_ms,
-            next_proactive_check_ms,
-        ) {
-            let active_minutes = proactive_now_ms.saturating_sub(active_app_since_ms) / 60_000;
-            let recent_switches = recent_switches_ms.len() as u32;
-            let (work_seconds_today, hour, minute) = {
-                let now = chrono::Local::now();
-                let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-                let today = now.format("%Y-%m-%d").to_string();
-                let segments = state_guard.config.effective_work_segments();
-                let work_secs = state_guard
-                    .database
-                    .get_daily_stats_with_segments(&today, &segments)
-                    .map(|st| st.work_time_duration.max(0) as u64)
-                    .unwrap_or(0);
-                let h = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
-                let m = now.format("%M").to_string().parse::<u32>().unwrap_or(0);
-                (work_secs, h, m)
-            };
-            let context = avatar_proactive::ProactiveContext {
-                app_name: active_window.app_name.clone(),
-                active_minutes,
-                work_seconds_today,
-                recent_switches,
-                is_idle: input_idle,
-                hour,
-                minute,
-            };
-            let outcome = avatar_proactive::decide_and_speak(
-                &app,
-                &text_model,
-                &avatar_persona,
-                "zh-CN",
-                &context,
-            )
-            .await;
-            if let Some((mode, expires)) = outcome.mood {
-                proactive_mood = Some((mode, expires));
-            }
-            next_proactive_check_ms = outcome.next_check_ms;
-        }
-    }
-}
-
 // 系统托盘在 setup 钩子中使用 TrayIconBuilder 创建 (Tauri v2)
 
 /// 后台截屏任务
@@ -2151,11 +1369,11 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         let guard = state.lock().unwrap_or_else(|e| e.into_inner());
         guard.config.idle_threshold_minutes as u64
     };
-    let idle_detector = idle_detector::IdleDetector::new(idle_threshold_minutes.max(1));
+    let mut idle_detector = idle_detector::IdleDetector::new(idle_threshold_minutes.max(1));
     let mut last_idle_log_time = std::time::Instant::now();
     let mut is_currently_idle = false; // 当前是否处于空闲状态
 
-    let poll_interval_ms = monitoring_poll_interval_ms(); // 桌宠状态和窗口切换检测优先更快反馈
+    let poll_interval_ms = monitoring_poll_interval_ms();
 
     // OCR 并发限制：最多 2 个 OCR 任务同时运行，防止任务堆积消耗内存
     let ocr_semaphore = Arc::new(tokio::sync::Semaphore::new(2));
@@ -2169,17 +1387,24 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         .checked_sub(Duration::from_millis(screen_lock_check_interval_ms()))
         .unwrap_or_else(std::time::Instant::now);
     let mut cached_screen_locked = false;
+    // 只在进入锁屏时打一条日志：锁屏期间每轮都打 info 会刷屏（整夜锁屏上千行）
+    let mut logged_screen_lock = false;
 
     loop {
         // 首先检查录制状态并获取配置
-        let decision = {
+        let (decision, idle_threshold_minutes) = {
             let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            recording_loop_decision(
-                state_guard.is_recording,
-                state_guard.is_paused,
-                state_guard.config.screenshot_interval,
+            (
+                recording_loop_decision(
+                    state_guard.is_recording,
+                    state_guard.is_paused,
+                    state_guard.config.screenshot_interval,
+                ),
+                state_guard.config.idle_threshold_minutes as u64,
             )
         };
+        // 空闲阈值随配置热更新（截图间隔本就每轮读取，仅此处此前漏了）
+        idle_detector.set_idle_timeout_minutes(idle_threshold_minutes.max(1));
 
         if decision.reset_capture_clock {
             last_capture_time = std::time::Instant::now();
@@ -2199,54 +1424,35 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
 
         // 检测屏幕锁定状态，锁屏时不统计时长
         if cached_screen_locked {
-            log::info!("🔒 屏幕已锁定，暂停活动统计");
+            if !logged_screen_lock {
+                log::info!("🔒 屏幕已锁定，暂停活动统计");
+                logged_screen_lock = true;
+            }
             last_app_name = None; // 重置应用状态，解锁后视为新开始
             last_capture_time = std::time::Instant::now(); // 重置截图计时，避免解锁后累加锁屏时长
             tokio::time::sleep(Duration::from_secs(5)).await;
             continue;
         }
+        logged_screen_lock = false;
 
         let screenshot_interval = decision.screenshot_interval;
 
-        // 轮询检测活动窗口（1秒间隔），让桌宠状态切换更及时
+        // 轮询检测活动窗口
         tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;
 
         // 获取当前活动窗口
         // 失败原因：Windows 睡眠/待机/UAC 时无前台窗口、macOS 权限不足等
         // 此时重置计时器，避免累积的时长被错误归属到下一个真实应用
-        let active_window_now = std::time::Instant::now();
-        let cached_active_window = {
-            let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            reusable_cached_active_window(
-                state_guard.cached_active_window.as_ref(),
-                active_window_now,
-            )
-        };
-        let (mut active_window, used_full_window_lookup) =
-            if let Some(window) = cached_active_window {
-                // 头像循环缓存不含浏览器 URL；浏览器窗口需要走完整采集路径。
-                if work_review_core::categorize::is_browser_app(&window.app_name)
-                    && window.browser_url.is_none()
-                {
-                    match monitor::get_active_window() {
-                        Ok(window) => (window, true),
-                        Err(_) => (window, false),
-                    }
-                } else {
-                    (window, false)
+        let (mut active_window, used_full_window_lookup) = (
+            match monitor::get_active_window() {
+                Ok(w) => w,
+                Err(_) => {
+                    last_capture_time = std::time::Instant::now();
+                    continue;
                 }
-            } else {
-                (
-                    match monitor::get_active_window() {
-                        Ok(w) => w,
-                        Err(_) => {
-                            last_capture_time = std::time::Instant::now();
-                            continue;
-                        }
-                    },
-                    true,
-                )
-            };
+            },
+            true,
+        );
         let mut browser_url_probe_attempted = browser_url_probe_attempted_after_full_lookup(
             used_full_window_lookup,
             work_review_core::categorize::is_browser_app(&active_window.app_name),
@@ -2280,10 +1486,15 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         // 注意 explorer 特殊处理：有窗口标题时是文件管理器，应该记录
         {
             if should_skip_system_window(&active_window) {
+                // debug 参数惰性求值：默认 info 级时不加锁；开启 debug 时标题须脱敏
                 log::debug!(
                     "跳过系统/桌面窗口: {} (title={}, minimized={})",
                     active_window.app_name,
-                    active_window.window_title,
+                    state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .privacy_filter
+                        .filter_text(&active_window.window_title),
                     active_window.is_minimized
                 );
                 last_app_name = None;
@@ -2312,12 +1523,24 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             },
         ) {
             if last_browser_url.as_deref() != Some(resolved_url.as_str()) {
-                log::debug!(
-                    "浏览器 URL 预探测命中: {} | {} -> {}",
-                    active_window.app_name,
-                    active_window.window_title,
-                    resolved_url
-                );
+                // 标题/URL 落日志前脱敏；热路径，仅 debug 级开启时才加锁过滤
+                if log::log_enabled!(log::Level::Debug) {
+                    let (filtered_title, filtered_url) = {
+                        let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            state_guard
+                                .privacy_filter
+                                .filter_text(&active_window.window_title),
+                            state_guard.privacy_filter.filter_text(&resolved_url),
+                        )
+                    };
+                    log::debug!(
+                        "浏览器 URL 预探测命中: {} | {} -> {}",
+                        active_window.app_name,
+                        filtered_title,
+                        filtered_url
+                    );
+                }
             }
             active_window.browser_url = Some(resolved_url);
         }
@@ -2346,12 +1569,24 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             };
 
             if let Some(recovered_url) = recovered_url {
-                log::debug!(
-                    "恢复浏览器 URL: {} | {} -> {}",
-                    active_window.app_name,
-                    active_window.window_title,
-                    recovered_url
-                );
+                // 标题/URL 落日志前脱敏；热路径，仅 debug 级开启时才加锁过滤
+                if log::log_enabled!(log::Level::Debug) {
+                    let (filtered_title, filtered_url) = {
+                        let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            state_guard
+                                .privacy_filter
+                                .filter_text(&active_window.window_title),
+                            state_guard.privacy_filter.filter_text(&recovered_url),
+                        )
+                    };
+                    log::debug!(
+                        "恢复浏览器 URL: {} | {} -> {}",
+                        active_window.app_name,
+                        filtered_title,
+                        filtered_url
+                    );
+                }
                 active_window.browser_url = Some(recovered_url);
             }
         }
@@ -2388,12 +1623,25 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
 
         // ===== 应用切换日志 =====
         if app_changed && last_app_name.is_some() {
+            // 与入库同规：标题先过敏感信息过滤再落日志，避免邮件主题/会话名
+            // 等未脱敏内容绕过隐私规则进入日志文件
+            let (prev_title_log, cur_title_log) = {
+                let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                (
+                    state_guard
+                        .privacy_filter
+                        .filter_text(previous_window_title.as_deref().unwrap_or("")),
+                    state_guard
+                        .privacy_filter
+                        .filter_text(&active_window.window_title),
+                )
+            };
             log::info!(
                 "📊 应用切换: {} [{}] → {} [{}]",
                 last_app_name.as_deref().unwrap_or("无"),
-                previous_window_title.as_deref().unwrap_or(""),
+                prev_title_log,
                 active_window.app_name,
-                active_window.window_title,
+                cur_title_log,
             );
         }
 
@@ -2467,12 +1715,24 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             },
         ) {
             if active_window.browser_url.as_deref() != Some(resolved_url.as_str()) {
-                log::debug!(
-                    "浏览器 URL 落库前刷新: {} | {} -> {}",
-                    active_window.app_name,
-                    active_window.window_title,
-                    resolved_url
-                );
+                // 标题/URL 落日志前脱敏；热路径，仅 debug 级开启时才加锁过滤
+                if log::log_enabled!(log::Level::Debug) {
+                    let (filtered_title, filtered_url) = {
+                        let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            state_guard
+                                .privacy_filter
+                                .filter_text(&active_window.window_title),
+                            state_guard.privacy_filter.filter_text(&resolved_url),
+                        )
+                    };
+                    log::debug!(
+                        "浏览器 URL 落库前刷新: {} | {} -> {}",
+                        active_window.app_name,
+                        filtered_title,
+                        filtered_url
+                    );
+                }
             }
             active_window.browser_url = Some(resolved_url);
             url_changed = match (&last_browser_url, &active_window.browser_url) {
@@ -2905,17 +2165,20 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                         if !ocr_result.text.is_empty() {
                                             let filtered_text =
                                                 ocr::filter_sensitive_text(&ocr_result.text);
-                                            if let Ok(state_guard) = state_clone.lock() {
-                                                let _ = state_guard.database.update_activity_ocr(
-                                                    latest_id,
-                                                    Some(filtered_text),
-                                                );
-                                                log::info!(
-                                                    "OCR 完成(合并): 活动 {} 识别到 {} 个字符",
-                                                    latest_id,
-                                                    ocr_result.text.len()
-                                                );
-                                            }
+                                            // 锁中毒也恢复而非静默跳过（与全仓
+                                            // unwrap_or_else(into_inner) 口径一致）
+                                            let state_guard = state_clone
+                                                .lock()
+                                                .unwrap_or_else(|e| e.into_inner());
+                                            let _ = state_guard.database.update_activity_ocr(
+                                                latest_id,
+                                                Some(filtered_text),
+                                            );
+                                            log::info!(
+                                                "OCR 完成(合并): 活动 {} 识别到 {} 个字符",
+                                                latest_id,
+                                                ocr_result.text.len()
+                                            );
                                         }
                                     }
                                     Ok(_) => {}
@@ -3100,20 +2363,21 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                                             ocr::filter_sensitive_text(
                                                                 &ocr_result.text,
                                                             );
-                                                        if let Ok(state_guard) = state_clone.lock()
-                                                        {
-                                                            let _ = state_guard
-                                                                .database
-                                                                .update_activity_ocr(
-                                                                    activity_id,
-                                                                    Some(filtered_text),
-                                                                );
-                                                            log::info!(
-                                                        "OCR 完成(新建): 活动 {} 识别到 {} 个字符",
-                                                        activity_id,
-                                                        ocr_result.text.len()
-                                                    );
-                                                        }
+                                                        // 锁中毒也恢复而非静默跳过
+                                                        let state_guard = state_clone
+                                                            .lock()
+                                                            .unwrap_or_else(|e| e.into_inner());
+                                                        let _ = state_guard
+                                                            .database
+                                                            .update_activity_ocr(
+                                                                activity_id,
+                                                                Some(filtered_text),
+                                                            );
+                                                        log::info!(
+                                                            "OCR 完成(新建): 活动 {} 识别到 {} 个字符",
+                                                            activity_id,
+                                                            ocr_result.text.len()
+                                                        );
                                                     }
                                                 }
                                                 Ok(_) => {}
@@ -3142,9 +2406,13 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                                     match remote_upload::upload_screenshot(&remote_cfg, &ap, &rp).await {
                                                         Ok(url) => {
                                                             log::info!("远程上传成功: {url}");
-                                                            if let Ok(g) = st.lock() {
-                                                                let _ = g.database.update_activity_screenshot_url(activity_id, &url);
-                                                            }
+                                                            // 锁中毒也恢复而非静默跳过
+                                                            let g =
+                                                                st.lock().unwrap_or_else(|e| e.into_inner());
+                                                            let _ = g.database
+                                                                .update_activity_screenshot_url(
+                                                                    activity_id, &url,
+                                                                );
                                                         }
                                                         Err(e) => log::warn!("远程上传失败: {e}"),
                                                     }
@@ -3288,7 +2556,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
             };
             let ow_category = classification.base_category.clone();
             let current_ts = chrono::Local::now().timestamp();
-            let ow_duration = poll_interval_ms.div_ceil(1000) as i64;
+            // 本块只在截图发生的轮次执行到（未截图的轮次早已 continue），
+            // 与主活动同口径按"距上次采集的实际间隔"记账；用轮询间隔会把
+            // 挂满整个截图周期的浮动窗口时长低估约一个数量级
+            let ow_duration = elapsed_secs.max(1) as i64;
 
             // 查找该应用的最近活动记录，尝试合并
             let latest = {
@@ -3539,7 +2810,7 @@ fn install_crash_handler() {
             location,
             backtrace
         );
-        let crash_dir = default_data_dir().join("crashes");
+        let crash_dir = crash_report_dir();
         match std::fs::create_dir_all(&crash_dir).and_then(|_| {
             std::fs::write(
                 crash_dir.join(format!("crash-{}.log", now.format("%Y%m%d_%H%M%S"))),
@@ -3587,11 +2858,12 @@ async fn remote_upload_backfill_task(state: Arc<Mutex<AppState>>) {
 
         let mut uploaded = 0u32;
         for (activity_id, relative_path) in pending {
-            // 历史数据可能存过绝对路径，跳过以免拼出畸形的远程对象键
-            if std::path::Path::new(&relative_path).is_absolute() {
-                continue;
-            }
-            let local_path = data_dir.join(&relative_path);
+            // 历史数据可能存过绝对路径或被污染含 `..`：这里读取后内容会上传远程
+            // 存储，与截图读取/删除面同款 validated_join 护栏，非法路径直接跳过
+            let local_path = match commands::validated_join(&data_dir, &relative_path) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
             if !local_path.exists() {
                 continue; // 本地文件已被保留策略清理，无从补传
             }
@@ -3665,6 +2937,10 @@ async fn classify_entities_with_model(
         .timeout(std::time::Duration::from_secs(60))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
+        .map_err(|e| {
+            log::warn!("实体分类 HTTP client 构建失败，本轮跳过语义分类: {e}");
+            e
+        })
         .ok()?;
     let mut request = client.post(&url).json(&serde_json::json!({
         "model": model.model,
@@ -3676,7 +2952,14 @@ async fn classify_entities_with_model(
         request = request.header("Authorization", format!("Bearer {key}"));
     }
 
-    let response = request.send().await.ok()?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| {
+            log::warn!("实体分类模型请求发送失败（DNS/连接/超时），本轮跳过语义分类: {e}");
+            e
+        })
+        .ok()?;
     if !response.status().is_success() {
         log::warn!("实体分类模型调用失败: HTTP {}", response.status());
         return None;
@@ -3732,7 +3015,8 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
             url_durations,
         ) = {
             let guard = state.lock().unwrap_or_else(|e| e.into_inner());
-            let model = guard.config.text_model.clone();
+            // 文本模型兜底：用户未配置时使用编译期内置模型（若已注入）
+            let model = work_review_core::config::effective_text_model(&guard.config.text_model);
             let category_options = guard
                 .config
                 .custom_categories
@@ -3866,6 +3150,28 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
             continue;
         };
 
+        // 整批只扫一次近 14 天浏览器 URL：此前每个 domain 实体各调一次
+        // get_browser_activity_urls（无 LIMIT 全量拉取）且在 AppState 锁内进行，
+        // 一批最多 12 个实体 = 最多 12 次全表扫描持全局锁，会阻塞采集循环与 UI 命令
+        let mut domain_url_ids: std::collections::HashMap<String, Vec<i64>> =
+            std::collections::HashMap::new();
+        if results.iter().any(|(key, _, _)| key.starts_with("domain:")) {
+            let rows = {
+                let guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                guard
+                    .database
+                    .get_browser_activity_urls(now - RETRO_SECS)
+                    .unwrap_or_default()
+            };
+            for (id, url) in rows {
+                let row_domain = work_review_core::config::PrivacyConfig::extract_domain(&url);
+                domain_url_ids
+                    .entry(row_domain.split(':').next().unwrap_or("").to_string())
+                    .or_default()
+                    .push(id);
+            }
+        }
+
         let mut learned = 0usize;
         for (key, base, semantic) in results {
             // 模型对没把握的实体返回 "skip":不学习、不缓存,留待将来有更多上下文再判
@@ -3891,9 +3197,11 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
                 log::warn!("写入实体分类缓存失败({key}): {e}");
                 continue;
             }
-            if let Ok(mut map) = entity_category_cache().write() {
-                map.insert(key.clone(), (base.clone(), semantic.clone()));
-            }
+            // 锁中毒也恢复而非静默跳过（内存缓存与库内缓存从此脱节）
+            let mut map = entity_category_cache()
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            map.insert(key.clone(), (base.clone(), semantic.clone()));
 
             // 回溯修正近 14 天历史记录,让统计"自己变准"
             let updated = if let Some(app) = key.strip_prefix("app:") {
@@ -3903,22 +3211,7 @@ async fn entity_classify_task(state: Arc<Mutex<AppState>>) {
                     .reclassify_app_activities(app, &base, &semantic, now - RETRO_SECS)
                     .unwrap_or(0)
             } else if let Some(domain) = key.strip_prefix("domain:") {
-                let rows = {
-                    let guard = state.lock().unwrap_or_else(|e| e.into_inner());
-                    guard
-                        .database
-                        .get_browser_activity_urls(now - RETRO_SECS)
-                        .unwrap_or_default()
-                };
-                let ids: Vec<i64> = rows
-                    .into_iter()
-                    .filter(|(_, url)| {
-                        let row_domain =
-                            work_review_core::config::PrivacyConfig::extract_domain(url);
-                        row_domain.split(':').next().unwrap_or("") == domain
-                    })
-                    .map(|(id, _)| id)
-                    .collect();
+                let ids = domain_url_ids.get(domain).cloned().unwrap_or_default();
                 let guard = state.lock().unwrap_or_else(|e| e.into_inner());
                 guard
                     .database
@@ -4007,6 +3300,8 @@ async fn main() {
     // 获取数据目录
     let data_dir = resolve_data_dir();
     log::info!("数据目录: {data_dir:?}");
+    // 解析完成，此后发生的崩溃日志跟随实际数据目录
+    set_crash_report_data_dir(&data_dir);
 
     // 加载配置
     let config_path = data_dir.join("config.json");
@@ -4148,24 +3443,11 @@ async fn main() {
             } else {
                 log::info!("✅ 辅助功能权限已授权");
             }
-
-            // 3. 输入监控权限（桌宠键鼠联动必需）
-            if config.avatar_enabled && !screenshot::has_input_monitoring_permission() {
-                log::warn!("⚠️  输入监控权限未授权，正在请求...");
-                log::warn!("   请在「系统设置 → 隐私与安全性 → 输入监控」中授权 Work Review");
-                screenshot::request_input_monitoring_permission();
-            } else if config.avatar_enabled {
-                log::info!("✅ 输入监控权限已授权");
-            }
         }
     }
 
     // 初始化存储管理器
     let storage_manager = StorageManager::new(&data_dir, config.storage.clone());
-    let initial_avatar_opacity = config.avatar_opacity;
-    let initial_avatar_preset = config.avatar_preset.clone();
-    let initial_avatar_persona = config.avatar_persona.clone();
-    let initial_avatar_body_hidden = config.avatar_body_hidden;
 
     // 配置损坏时使用默认存储策略会误删历史数据，因此故障安全启动必须跳过清理。
     if should_run_startup_cleanup(config_load_status) {
@@ -4190,19 +3472,10 @@ async fn main() {
         config_path,
         is_recording,
         is_paused,
-        avatar_state: avatar_engine::apply_avatar_visual_settings(
-            avatar_engine::default_avatar_state(),
-            initial_avatar_opacity,
-            &initial_avatar_preset,
-            &initial_avatar_persona,
-            initial_avatar_body_hidden,
-        ),
-        avatar_generating_report: false,
         generating_report: false,
         localhost_api_runtime: localhost_api::LocalhostApiRuntime::default(),
-        telegram_bot_runtime: telegram_bot::TelegramBotRuntime::default(),
         wecom_bot_runtime: wecom_aibot::WecomBotRuntime::default(),
-        cached_active_window: None,
+        file_monitor: None,
     }));
     let app_lifecycle_state = Arc::new(Mutex::new(AppLifecycleState::default()));
 
@@ -4242,7 +3515,12 @@ async fn main() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let lightweight_mode = window
                     .try_state::<Arc<Mutex<AppState>>>()
-                    .and_then(|state| state.lock().ok().map(|guard| guard.config.lightweight_mode))
+                    .map(|state| {
+                        state
+                            .lock()
+                            .map(|guard| guard.config.lightweight_mode)
+                            .unwrap_or_else(|e| e.into_inner().config.lightweight_mode)
+                    })
                     .unwrap_or(false);
 
                 if main_window_close_behavior(lightweight_mode)
@@ -4303,69 +3581,32 @@ async fn main() {
                 let _ = app.emit("main-window-visibility", true);
             }
 
+            // 启动文件监控（配置已启用且配置了工作文件夹时）
+            {
+                let state_arc = state.inner().clone();
+                let mut state_guard = state_arc.lock().unwrap_or_else(|e| e.into_inner());
+                let fm_config = state_guard.config.file_monitor.clone();
+                let running = crate::file_monitor_runtime::apply_config_locked(
+                    &mut state_guard,
+                    &state_arc,
+                    &fm_config,
+                );
+                log::info!(
+                    "文件监控启动: running={running} folders={:?}",
+                    fm_config.folders
+                );
+            }
+
             let state_clone = state.inner().clone();
             let state_clone2 = state.inner().clone();
-            let state_clone3 = state.inner().clone();
             let state_clone4 = state.inner().clone();
             let state_clone5 = state.inner().clone();
             let state_clone6 = state.inner().clone();
             let state_for_tray = state.inner().clone();
-            let app_handle = app.handle().clone();
             let screenshot_app_handle = app.handle().clone();
-
-            let (
-                avatar_enabled,
-                avatar_scale,
-                avatar_body_hidden,
-                avatar_position,
-                avatar_state,
-                config_load_status,
-            ) = {
-                let state_guard = state.inner().lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    state_guard.config.avatar_enabled,
-                    state_guard.config.avatar_scale,
-                    state_guard.config.avatar_body_hidden,
-                    state_guard.config.avatar_x.zip(state_guard.config.avatar_y),
-                    state_guard.avatar_state.clone(),
-                    state_guard.config_load_status,
-                )
-            };
-
-            if let Err(e) = avatar_engine::sync_avatar_window(
-                app.handle(),
-                avatar_enabled,
-                avatar_scale,
-                avatar_position,
-                false,
-                avatar_body_hidden,
-            ) {
-                log::warn!("初始化桌宠窗口失败: {e}");
-            } else if avatar_enabled {
-                avatar_engine::emit_avatar_state(app.handle(), &avatar_state);
-            }
-
-            // 初始化智能穿透运行时 flag（从启动 config，供 input bridge 轮询无锁读）。
-            // 配置损坏时不得注册全局键鼠监听，以免故障安全启动仍采集输入事件。
-            if should_initialize_avatar_input(config_load_status) {
-                if let Ok(s) = state.inner().lock() {
-                    avatar_input::set_avatar_enabled_flag(s.config.avatar_enabled);
-                    avatar_input::set_avatar_click_through_flag(s.config.avatar_click_through);
-                }
-                avatar_input::start_avatar_input_monitor(app.handle());
-                avatar_input::spawn_avatar_input_monitor_retry(app.handle().clone());
-                avatar_input::spawn_avatar_input_bridge(app.handle().clone());
-            } else {
-                avatar_input::set_avatar_enabled_flag(false);
-                avatar_input::set_avatar_click_through_flag(false);
-                log::warn!("配置损坏，已跳过全局键鼠监听初始化");
-            }
 
             if let Err(e) = localhost_api::sync_localhost_api_runtime(app.handle(), state.inner()) {
                 log::warn!("初始化本地 API 失败: {e}");
-            }
-            if let Err(e) = telegram_bot::sync_telegram_bot_runtime(state.inner()) {
-                log::warn!("初始化 Telegram Bot 失败: {e}");
             }
             if let Err(e) = wecom_aibot::sync_wecom_bot_runtime(state.inner()) {
                 log::warn!("初始化企业微信 Bot 失败: {e}");
@@ -4394,12 +3635,6 @@ async fn main() {
             )
             .checked(false)
             .build(app)?;
-            let avatar_toggle = CheckMenuItemBuilder::with_id(
-                TRAY_MENU_AVATAR_TOGGLE_ID,
-                tray_label("avatar", &tray_locale),
-            )
-            .checked(avatar_enabled)
-            .build(app)?;
             let quit =
                 MenuItemBuilder::with_id(TRAY_MENU_QUIT_ID, tray_label("quit", &tray_locale))
                     .build(app)?;
@@ -4409,7 +3644,6 @@ async fn main() {
                 .separator()
                 .item(&recording_toggle)
                 .item(&lightweight_mode)
-                .item(&avatar_toggle)
                 .separator()
                 .item(&quit)
                 .build()?;
@@ -4418,7 +3652,6 @@ async fn main() {
                 show: show.clone(),
                 recording_toggle: recording_toggle.clone(),
                 lightweight_mode: lightweight_mode.clone(),
-                avatar_toggle: avatar_toggle.clone(),
                 quit: quit.clone(),
             });
             refresh_tray_menu(app.handle());
@@ -4485,21 +3718,6 @@ async fn main() {
                             refresh_tray_menu(app);
                         }
                     }
-                    TRAY_MENU_AVATAR_TOGGLE_ID => {
-                        let next_config = {
-                            let state = state_for_tray.lock().unwrap_or_else(|e| e.into_inner());
-                            let mut config = state.config.clone();
-                            config.avatar_enabled = !config.avatar_enabled;
-                            config
-                        };
-
-                        if let Err(e) =
-                            commands::persist_app_config(next_config, app.clone(), &state_for_tray)
-                        {
-                            log::warn!("从托盘切换桌宠失败: {e}");
-                            refresh_tray_menu(app);
-                        }
-                    }
                     _ => {}
                 })
                 .on_tray_icon_event(move |_tray, event| {
@@ -4521,10 +3739,6 @@ async fn main() {
             // 启动后台截屏任务
             tauri::async_runtime::spawn(async move {
                 background_screenshot_task(state_clone, screenshot_app_handle).await;
-            });
-
-            tauri::async_runtime::spawn(async move {
-                background_avatar_task(state_clone3, app_handle).await;
             });
 
             // 启动小时摘要生成任务（每小时检查一次）
@@ -4579,9 +3793,24 @@ async fn main() {
             commands::export_reports_range,
             commands::get_localhost_api_status,
             commands::get_node_gateway_status,
-            commands::get_telegram_bot_status,
             commands::get_wecom_bot_status,
-            commands::generate_telegram_bot_bind_code,
+            commands::gitlab_test_connection,
+            commands::gitlab_list_projects,
+            commands::gitlab_list_authors,
+            commands::gitlab_sync_commits_for_date,
+            commands::gitlab_commit_diff,
+            commands::get_gitlab_commits_for_date,
+            commands::get_gitlab_project_stats,
+            commands::plane_test_connection,
+            commands::plane_fetch_preview,
+            commands::plane_sync_work_items_for_date,
+            commands::get_plane_work_items_for_date,
+            commands::plane_attributions_for_date,
+            commands::get_daily_project_adjustments,
+            commands::set_daily_project_adjustment,
+            commands::list_plane_projects,
+            commands::get_file_monitor_stats,
+            commands::file_monitor_status,
             commands::generate_text_with_model,
             commands::reveal_localhost_api_token,
             commands::rotate_localhost_api_token,
@@ -4594,16 +3823,10 @@ async fn main() {
             commands::pause_recording,
             commands::resume_recording,
             commands::get_recording_state,
-            commands::get_avatar_state,
-            commands::save_avatar_position,
-            commands::persist_avatar_position,
-            commands::set_avatar_window_expanded,
-            commands::set_avatar_interactive_regions,
             commands::get_data_dir,
             commands::get_default_data_dir,
             commands::get_runtime_platform,
             commands::get_linux_session_support,
-            commands::install_gnome_avatar_extension,
             commands::change_data_dir,
             commands::cleanup_old_data_dir,
             commands::check_github_update,
@@ -4614,6 +3837,7 @@ async fn main() {
             commands::get_screenshot_full,
             commands::test_remote_storage,
             commands::test_model,
+            commands::has_builtin_model,
             commands::get_ai_providers,
             commands::fetch_models,
             commands::get_running_apps,
@@ -4661,7 +3885,6 @@ async fn main() {
             commands::get_background_image,
             commands::clear_background_image,
             commands::show_main_window,
-            commands::handle_avatar_followup_action,
             get_platform,
         ])
         .build(tauri::generate_context!())
@@ -4704,34 +3927,23 @@ mod tests {
     #![allow(clippy::field_reassign_with_default)]
 
     use super::{
-        advance_break_reminder, avatar_activity_decision, avatar_monitor_poll_interval_ms,
-        avatar_monitor_poll_interval_ms_for_platform, avatar_proactive_ai_should_run,
-        avatar_transition_decision, browser_change_capture_min_interval_ms,
-        browser_url_probe_attempted_after_full_lookup, describe_config_file_issue,
-        duplicate_instance_should_stay_silent, effective_dock_visibility, initial_recording_state,
-        launch_args_contain_autostart, main_window_close_behavior, monitoring_poll_interval_ms,
+        browser_change_capture_min_interval_ms, browser_url_probe_attempted_after_full_lookup,
+        crash_report_dir_for, describe_config_file_issue, duplicate_instance_should_stay_silent,
+        effective_dock_visibility, initial_recording_state, launch_args_contain_autostart,
+        main_window_close_behavior, monitoring_poll_interval_ms,
         monitoring_poll_interval_ms_for_platform, persist_previous_activity_backfill,
-        previous_app_backfill_duration, record_avatar_window_switch, recording_loop_decision,
-        resolve_activity_classification, resolve_browser_url_once, reusable_cached_active_window,
-        screen_lock_check_interval_ms_for_platform, should_confirm_idle,
-        should_emit_avatar_backlog_nudge, should_hide_main_window_on_setup,
-        should_initialize_avatar_input, should_initialize_startup_permissions,
+        previous_app_backfill_duration, recording_loop_decision, resolve_activity_classification,
+        resolve_browser_url_once, screen_lock_check_interval_ms_for_platform, should_confirm_idle,
+        should_hide_main_window_on_setup, should_initialize_startup_permissions,
         should_merge_contiguous_activity, should_persist_merge_update, should_prevent_exit,
         should_probe_browser_url_before_change_detection, should_request_screen_capture_permission,
         should_run_startup_cleanup, should_skip_system_window, tray_recording_toggle_action,
-        tray_recording_toggle_label, AvatarNudgeRuntime, BreakReminderRuntime, BreakReminderSignal,
-        MainWindowCloseBehavior, RecordingToggleAction,
-    };
-    use crate::avatar_engine::{
-        apply_avatar_visual_settings, default_avatar_state, derive_avatar_state,
+        tray_recording_toggle_label, MainWindowCloseBehavior, RecordingToggleAction,
     };
     use crate::monitor::ActiveWindow;
     use std::path::PathBuf;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-    use work_review_core::config::{
-        AiProvider, AppConfig, AvatarFollowupItem, ConfigLoadStatus, ModelConfig,
-        WebsiteSemanticRule,
-    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use work_review_core::config::{AppConfig, ConfigLoadStatus, WebsiteSemanticRule};
     use work_review_core::database::Database;
     use work_review_core::privacy::PrivacyFilter;
 
@@ -4749,6 +3961,19 @@ mod tests {
             initial_recording_state(ConfigLoadStatus::Corrupted),
             (false, true)
         );
+    }
+
+    #[test]
+    fn 崩溃日志目录应优先实际数据目录且未解析时回退默认() {
+        use std::path::Path;
+
+        let actual = crash_report_dir_for(Some(Path::new("D:/work-data")));
+        assert_eq!(actual, Path::new("D:/work-data").join("crashes"));
+
+        // 极早期（数据目录尚未解析）崩溃：回退默认目录下的 crashes
+        let fallback = crash_report_dir_for(None);
+        assert_eq!(fallback, super::default_data_dir().join("crashes"));
+        assert!(fallback.ends_with("crashes"));
     }
 
     #[test]
@@ -4901,14 +4126,6 @@ mod tests {
     }
 
     #[test]
-    fn 当前平台桌宠独立轮询间隔应匹配平台策略() {
-        assert_eq!(
-            avatar_monitor_poll_interval_ms(),
-            avatar_monitor_poll_interval_ms_for_platform(cfg!(target_os = "macos"), true)
-        );
-    }
-
-    #[test]
     fn 域名语义规则应覆盖浏览器活动默认分类() {
         let mut config = AppConfig::default();
         config.website_semantic_rules = vec![WebsiteSemanticRule {
@@ -4931,14 +4148,6 @@ mod tests {
     #[test]
     fn 非mac主监控轮询间隔应保持半秒() {
         assert_eq!(monitoring_poll_interval_ms_for_platform(false), 500);
-    }
-
-    #[test]
-    fn 非mac桌宠活跃轮询间隔应压到一百八十毫秒() {
-        assert_eq!(
-            avatar_monitor_poll_interval_ms_for_platform(false, true),
-            180
-        );
     }
 
     #[test]
@@ -5093,172 +4302,8 @@ mod tests {
     }
 
     #[test]
-    fn mac桌宠活跃轮询间隔应降频() {
-        assert_eq!(
-            avatar_monitor_poll_interval_ms_for_platform(true, true),
-            750
-        );
-    }
-
-    #[test]
-    fn mac桌宠空闲轮询间隔应进一步降频() {
-        assert_eq!(
-            avatar_monitor_poll_interval_ms_for_platform(true, false),
-            2000
-        );
-    }
-
-    #[test]
     fn mac锁屏检测轮询间隔应显著降频() {
         assert_eq!(screen_lock_check_interval_ms_for_platform(true), 5000);
-    }
-
-    #[test]
-    fn 新鲜的活动窗口缓存应被截图循环复用() {
-        let now = Instant::now();
-        let cached_window = ActiveWindow {
-            app_name: "Cursor".to_string(),
-            window_title: "main.rs".to_string(),
-            browser_url: None,
-            executable_path: None,
-            window_bounds: None,
-            is_minimized: false,
-        };
-
-        let reused = reusable_cached_active_window(Some(&(now, cached_window.clone())), now);
-
-        assert!(reused.is_some());
-        let reused = reused.expect("fresh cache should be reused");
-        assert_eq!(reused.app_name, cached_window.app_name);
-        assert_eq!(reused.window_title, cached_window.window_title);
-    }
-
-    #[test]
-    fn 过期的活动窗口缓存不应被截图循环复用() {
-        let now = Instant::now();
-        let cached_window = ActiveWindow {
-            app_name: "Cursor".to_string(),
-            window_title: "main.rs".to_string(),
-            browser_url: None,
-            executable_path: None,
-            window_bounds: None,
-            is_minimized: false,
-        };
-        let stale_at = now
-            .checked_sub(Duration::from_millis(1500))
-            .expect("stale timestamp should be valid");
-
-        let reused = reusable_cached_active_window(Some(&(stale_at, cached_window)), now);
-
-        assert!(reused.is_none());
-    }
-
-    #[test]
-    fn 暂停录制时桌宠应回到待命状态() {
-        let decision =
-            avatar_activity_decision(true, true, true, 0.82, "keyboard-focus", "assistant", false);
-
-        assert!(!decision.should_continue);
-        assert_eq!(
-            decision.reset_state,
-            Some(apply_avatar_visual_settings(
-                default_avatar_state(),
-                0.82,
-                "keyboard-focus",
-                "assistant",
-                false,
-            ))
-        );
-    }
-
-    #[test]
-    fn 停止录制时桌宠应回到待命状态() {
-        let decision = avatar_activity_decision(
-            true,
-            false,
-            false,
-            0.82,
-            "minimal-office",
-            "assistant",
-            false,
-        );
-
-        assert!(!decision.should_continue);
-        assert_eq!(
-            decision.reset_state,
-            Some(apply_avatar_visual_settings(
-                default_avatar_state(),
-                0.82,
-                "minimal-office",
-                "assistant",
-                false,
-            ))
-        );
-    }
-
-    #[test]
-    fn 桌宠模型生成提醒必须显式开启才会调用文本模型() {
-        let model = ModelConfig {
-            provider: AiProvider::Ollama,
-            endpoint: "http://localhost:11434".to_string(),
-            api_key: None,
-            model: "qwen3".to_string(),
-            ..ModelConfig::default_text()
-        };
-
-        assert!(avatar_proactive_ai_should_run(
-            true, true, false, &model, 1_000, 1_000
-        ));
-        assert!(!avatar_proactive_ai_should_run(
-            true, false, false, &model, 1_000, 1_000
-        ));
-        assert!(!avatar_proactive_ai_should_run(
-            false, true, false, &model, 1_000, 1_000
-        ));
-        assert!(!avatar_proactive_ai_should_run(
-            true, true, true, &model, 1_000, 1_000
-        ));
-        assert!(!avatar_proactive_ai_should_run(
-            true, true, false, &model, 999, 1_000
-        ));
-
-        let empty_model = ModelConfig {
-            model: String::new(),
-            ..model
-        };
-
-        assert!(!avatar_proactive_ai_should_run(
-            true,
-            true,
-            false,
-            &empty_model,
-            1_000,
-            1_000
-        ));
-    }
-
-    #[test]
-    fn 模式首次波动时不应立刻切换桌宠状态() {
-        let current = derive_avatar_state("Cursor", "main.rs", None, false, false);
-        let candidate = derive_avatar_state("Google Chrome", "产品文档 - docs", None, false, false);
-
-        let decision = avatar_transition_decision(Some(&current), None, 0, &candidate);
-
-        assert_eq!(decision.emit_state, None);
-        assert_eq!(decision.pending_state, Some(candidate));
-        assert_eq!(decision.pending_hits, 1);
-    }
-
-    #[test]
-    fn 模式连续两次命中后才应切换桌宠状态() {
-        let current = derive_avatar_state("Cursor", "main.rs", None, false, false);
-        let candidate = derive_avatar_state("Google Chrome", "产品文档 - docs", None, false, false);
-
-        let decision = avatar_transition_decision(Some(&current), Some(&candidate), 1, &candidate);
-
-        assert_eq!(decision.emit_state, Some(candidate));
-        assert_eq!(decision.pending_state, None);
-        assert_eq!(decision.pending_hits, 0);
     }
 
     #[test]
@@ -5556,19 +4601,6 @@ mod tests {
     }
 
     #[test]
-    fn 配置损坏时应跳过键鼠采集() {
-        assert!(!should_initialize_avatar_input(ConfigLoadStatus::Corrupted));
-
-        for status in [
-            ConfigLoadStatus::Loaded,
-            ConfigLoadStatus::Missing,
-            ConfigLoadStatus::RecoveredFromBackup,
-        ] {
-            assert!(should_initialize_avatar_input(status));
-        }
-    }
-
-    #[test]
     fn 配置文件问题描述应区分不存在与读取解析失败() {
         let path = std::path::Path::new("/tmp/work-review-config.json");
 
@@ -5579,106 +4611,6 @@ mod tests {
         assert_eq!(
             describe_config_file_issue(path, Some("JSON 语法错误")),
             "/tmp/work-review-config.json 读取或解析失败: JSON 语法错误"
-        );
-    }
-
-    #[test]
-    fn 休息提醒首次达到阈值时应触发一次() {
-        let mut state = BreakReminderRuntime::new();
-
-        let first =
-            advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(49));
-        let second =
-            advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(1));
-
-        assert!(!first.should_emit);
-        assert!(second.should_emit);
-        assert!(second
-            .payload
-            .as_ref()
-            .is_some_and(|payload| payload.persistent));
-    }
-
-    #[test]
-    fn 休息提醒应在五分钟缓冲后重新开始下一轮计时() {
-        let mut state = BreakReminderRuntime::new();
-
-        let first =
-            advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(50));
-        let cooldown =
-            advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(5));
-        let next_round =
-            advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(50));
-
-        assert!(first.should_emit);
-        assert!(!cooldown.should_emit);
-        assert!(next_round.should_emit);
-    }
-
-    #[test]
-    fn 手动关闭提醒不应打断下一轮计时() {
-        let mut state = BreakReminderRuntime::new();
-
-        let _ = advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(50));
-        let dismiss = advance_break_reminder(&mut state, true, 50, BreakReminderSignal::Dismiss);
-        let _ = advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(5));
-        let next_round =
-            advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(50));
-
-        assert!(dismiss.should_clear);
-        assert!(next_round.should_emit);
-    }
-
-    #[test]
-    fn 关闭休息提醒时应立即清除当前气泡并停止计时() {
-        let mut state = BreakReminderRuntime::new();
-        let _ = advance_break_reminder(&mut state, true, 50, BreakReminderSignal::TickMinutes(50));
-
-        let disabled =
-            advance_break_reminder(&mut state, false, 50, BreakReminderSignal::TickMinutes(1));
-
-        assert!(disabled.should_clear);
-        assert!(!disabled.should_emit);
-    }
-
-    #[test]
-    fn 短时间频繁切换窗口时应触发主动提醒() {
-        let mut runtime = AvatarNudgeRuntime::default();
-
-        // 需要 8 次切换才触发（阈值从 4 调整为 8）
-        assert!(!record_avatar_window_switch(&mut runtime, 1_000));
-        assert!(!record_avatar_window_switch(&mut runtime, 20_000));
-        assert!(!record_avatar_window_switch(&mut runtime, 40_000));
-        assert!(!record_avatar_window_switch(&mut runtime, 60_000));
-        assert!(!record_avatar_window_switch(&mut runtime, 80_000));
-        assert!(!record_avatar_window_switch(&mut runtime, 100_000));
-        assert!(!record_avatar_window_switch(&mut runtime, 120_000));
-        assert!(record_avatar_window_switch(&mut runtime, 140_000));
-        // 冷却期内不再触发
-        assert!(!record_avatar_window_switch(&mut runtime, 145_000));
-    }
-
-    #[test]
-    fn 待跟进堆积一段时间后应触发主动提醒() {
-        let mut runtime = AvatarNudgeRuntime::default();
-        let followups = vec![AvatarFollowupItem {
-            id: "1".to_string(),
-            title: "支付回调".to_string(),
-            date: "2024-03-09".to_string(),
-            source_app: "Cursor".to_string(),
-            source_title: "payments.ts".to_string(),
-            project_key: "cursor::payments".to_string(),
-            created_at: 1_710_000_000,
-            status: "open".to_string(),
-        }];
-
-        assert_eq!(
-            should_emit_avatar_backlog_nudge(&mut runtime, &followups, 1_710_003_000, 30_000),
-            Some(1)
-        );
-        assert_eq!(
-            should_emit_avatar_backlog_nudge(&mut runtime, &followups, 1_710_003_100, 31_000),
-            None
         );
     }
 }

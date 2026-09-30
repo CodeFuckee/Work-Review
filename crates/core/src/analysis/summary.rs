@@ -1,6 +1,7 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_summary_order, format_section_heading,
-    merge_ai_order, wrap_block, BLOCK_AI_ANALYSIS,
+    merge_ai_order, place_file_events_after_gitlab, place_gitlab_before_hourly, wrap_block,
+    BLOCK_AI_ANALYSIS,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -299,7 +300,6 @@ fn openai_compatible_chat_completion_urls(endpoint: &str) -> Vec<String> {
     if !base.ends_with("/v1") {
         urls.push(format!("{base}/v1/chat/completions"));
     }
-    urls.dedup();
     urls
 }
 
@@ -334,11 +334,12 @@ impl SummaryAnalyzer {
         generation_timeout: Duration,
     ) -> Self {
         let ai_budget = summary_request_timeout(generation_timeout);
+        // 构建失败不得回退为无超时 Client（会把快速失败变成永久挂起）
         let client = Client::builder()
             .timeout(ai_budget)
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .expect("reqwest Client 初始化失败（TLS 后端不可用）");
 
         Self {
             provider,
@@ -449,7 +450,10 @@ impl SummaryAnalyzer {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();
                 last_error = Some(format!("{url} API 错误 ({status}): {error_text}"));
-                if status.is_client_error() {
+                // 404/405/410 是路径级不匹配（端点漏带 /v1 的典型形态），换下一个
+                // 候选地址；其余 4xx（401 鉴权、400 请求体、429 限流等）与路径无关，
+                // 换路径也不会好，快速失败
+                if status.is_client_error() && !matches!(status.as_u16(), 404 | 405 | 410) {
                     break;
                 }
                 continue;
@@ -474,9 +478,16 @@ impl SummaryAnalyzer {
         let max_tokens_steps: &[u32] = &[4096, 2048, 1024];
 
         for &max_tokens in max_tokens_steps {
+            // 端点防重复拼接：用户可能直接粘贴完整 .../messages 地址
+            let endpoint = self.endpoint.trim_end_matches('/');
+            let messages_url = if endpoint.ends_with("/messages") {
+                endpoint.to_string()
+            } else {
+                format!("{endpoint}/messages")
+            };
             let response = self
                 .client
-                .post(format!("{}/messages", self.endpoint))
+                .post(messages_url)
                 .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
@@ -642,7 +653,14 @@ impl SummaryAnalyzer {
         keywords
     }
 
-    fn build_ai_prompt(&self, date: &str, stats: &DailyStats, activities: &[Activity]) -> String {
+    fn build_ai_prompt(
+        &self,
+        date: &str,
+        stats: &DailyStats,
+        activities: &[Activity],
+        gitlab_ai_context: Option<&str>,
+        semantic_name_overrides: &HashMap<String, String>,
+    ) -> String {
         let apps_list = join_list(
             self.locale,
             stats
@@ -665,7 +683,7 @@ impl SummaryAnalyzer {
                 .domain_usage
                 .iter()
                 .take(5)
-                .map(|domain| format_domain_label(domain, self.locale, &HashMap::new()))
+                .map(|domain| format_domain_label(domain, self.locale, semantic_name_overrides))
                 .collect(),
         );
 
@@ -679,7 +697,7 @@ impl SummaryAnalyzer {
                 AppLocale::Ar => "لا تتوفر بيانات نشاط بالساعة".to_string(),
             });
 
-        let timeline = generate_activity_timeline(activities, self.locale);
+        let timeline = generate_activity_timeline(activities, &[], self.locale);
 
         // 为 override 分支保留引用（base_prompt 构建后会 move 这些变量）
         let apps_list_for_override = apps_list.clone();
@@ -964,7 +982,12 @@ Close with one sentence about the day's work state."#,
             base_prompt
         };
 
-        append_custom_prompt_for_locale(final_prompt, &self.custom_prompt, self.locale)
+        let mut prompt =
+            append_custom_prompt_for_locale(final_prompt, &self.custom_prompt, self.locale);
+        if let Some(gitlab_ctx) = gitlab_ai_context {
+            prompt.push_str(&format!("\n\n{gitlab_ctx}"));
+        }
+        prompt
     }
 
     fn generate_fallback_ai_content(&self, apps_list: &str) -> String {
@@ -1015,7 +1038,14 @@ Rules:\n\
 - Do not include sections not listed above"
         );
 
-        let content = self.generate_ai_content(&prompt).await.ok()?;
+        // 失败分支静默回退默认顺序会让编排问题无从排查，落 warn 留痕
+        let content = match self.generate_ai_content(&prompt).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("decide_block_order: AI 段落排序调用失败，回退默认顺序: {e}");
+                return None;
+            }
+        };
         let trimmed = content
             .trim()
             .trim_start_matches("```json")
@@ -1023,7 +1053,13 @@ Rules:\n\
             .trim()
             .trim_end_matches("```")
             .trim();
-        let parsed: Vec<String> = serde_json::from_str(trimmed).ok()?;
+        let parsed: Vec<String> = match serde_json::from_str(trimmed) {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!("decide_block_order: 排序结果 JSON 解析失败，回退默认顺序: {e}");
+                return None;
+            }
+        };
         if parsed.is_empty() {
             return None;
         }
@@ -1042,6 +1078,7 @@ impl Analyzer for SummaryAnalyzer {
         locale: AppLocale,
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
+        gitlab: &crate::gitlab::GitlabReportSupplement,
     ) -> Result<GeneratedReport> {
         log::info!("生成混合模式日报：固定模板 + AI 扩展");
 
@@ -1087,13 +1124,21 @@ impl Analyzer for SummaryAnalyzer {
             Some(order) => merge_ai_order(order, &default_order),
             None => default_order,
         };
-        let blocks = apply_preferences(ordered, &self.pinned_blocks);
+        let blocks = place_file_events_after_gitlab(
+            place_gitlab_before_hourly(
+                apply_preferences(ordered, &self.pinned_blocks),
+                &self.pinned_blocks,
+            ),
+            &self.pinned_blocks,
+        );
         let (stats_sections, section_count) = assemble_with_section_count(
             &blocks,
             stats,
             locale,
             &category_name_overrides,
             &semantic_name_overrides,
+            &gitlab.local_section,
+            &gitlab.file_events.local_section,
         );
         report.push_str(&stats_sections);
 
@@ -1119,7 +1164,29 @@ impl Analyzer for SummaryAnalyzer {
                 .collect(),
         );
 
-        let ai_prompt = self.build_ai_prompt(date, stats, activities);
+        // AI 上下文 = GitLab 提交 + 文件修改聚合（两段补充内容共用一个可选串，
+        // build_ai_prompt 只认整体有无；均为空时不携带）
+        let combined_ai_context = {
+            let gitlab_ctx = gitlab.ai_context.as_deref().unwrap_or("");
+            let file_ctx = gitlab.file_events.ai_context.as_str();
+            match (gitlab_ctx.is_empty(), file_ctx.is_empty()) {
+                (true, true) => None,
+                (true, false) => Some(file_ctx.to_string()),
+                (false, true) => Some(gitlab_ctx.to_string()),
+                (false, false) => Some(format!(
+                    "{gitlab_ctx}
+
+{file_ctx}"
+                )),
+            }
+        };
+        let ai_prompt = self.build_ai_prompt(
+            date,
+            stats,
+            activities,
+            combined_ai_context.as_deref(),
+            &semantic_name_overrides,
+        );
         let ai_content = match tokio::time::timeout_at(
             ai_deadline,
             self.generate_ai_content(&ai_prompt),
@@ -1149,7 +1216,7 @@ impl Analyzer for SummaryAnalyzer {
         report.push_str(&wrap_block(BLOCK_AI_ANALYSIS, &ai_section));
 
         // 活动时间线放在最底部
-        let timeline = generate_activity_timeline(activities, locale);
+        let timeline = generate_activity_timeline(activities, &gitlab.entries, locale);
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);
@@ -1374,7 +1441,7 @@ mod tests {
     fn ai提示词应要求固定观察证据建议小结结构() {
         let analyzer = test_analyzer(AppLocale::ZhCn);
         let stats = sample_stats_for_ai_structure();
-        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[]);
+        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None, &HashMap::new());
 
         assert!(prompt.contains("### 观察"));
         assert!(prompt.contains("### 证据"));
@@ -1401,7 +1468,7 @@ mod tests {
     fn 英文ai提示词和回退内容应使用固定英文结构() {
         let analyzer = test_analyzer(AppLocale::En);
         let stats = sample_stats_for_ai_structure();
-        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[]);
+        let prompt = analyzer.build_ai_prompt("2026-06-22", &stats, &[], None, &HashMap::new());
         let fallback = analyzer.generate_fallback_ai_content("VS Code (1h)");
 
         for content in [prompt, fallback] {
@@ -1434,6 +1501,7 @@ mod tests {
                 AppLocale::ZhCn,
                 HashMap::new(),
                 HashMap::new(),
+                &crate::gitlab::GitlabReportSupplement::default(),
             )
             .await
             .expect("网络失败时也应生成 fallback 日报");

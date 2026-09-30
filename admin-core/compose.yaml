@@ -1,0 +1,42 @@
+# =============================================================================
+# work-review 管理后台 · yue-review stack
+# 部署：docker compose -p yue-review -f admin-core/compose.yaml up -d --wait
+# 运行环境（10.37.80.25）：
+#   * 生产配置挂载 ~/workreview/admin-config/（DB 口令/JWT 密钥，密钥不进仓库）
+#   * Postgres 数据卷 ~/workreview/pgdata/
+# 管理界面：http://10.37.80.25:4191
+# =============================================================================
+
+services:
+  admin:
+    image: workreview-admin:latest
+    restart: unless-stopped
+    ports:
+      - "4191:18010"
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - /home/mdc/workreview/admin-config:/app/ConfigCenter
+    networks:
+      - default
+      - supabase_default
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # supabase_default 网络上另有 supabase 的 db 服务别名，主机名用唯一值避免歧义
+    hostname: workreview-db
+    ports:
+      - "15433:5432"
+    environment:
+      TZ: Asia/Shanghai
+      # 仅首次初始化空数据卷时生效；线上库口令在首启时已固定
+      POSTGRES_PASSWORD: ${WR_DB_PASSWORD:-changeit-init-only}
+    volumes:
+      - /home/mdc/workreview/pgdata:/var/lib/postgresql/data
+
+networks:
+  supabase_default:
+    external: true

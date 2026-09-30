@@ -179,11 +179,23 @@ pub async fn handle_dingtalk_callback(
         return DingtalkResponse::error(400, "sessionWebhook 域名不在钉钉白名单内，已拒绝出站请求");
     }
 
+    // 白名单语义是"只许直连钉钉"：禁用重定向跟随，防止 sessionWebhook 被
+    // 30x 跳到白名单外的地址（默认 client 会跟 10 跳，307/308 还会原样重发
+    // POST body——即整段日报内容外泄）。正常路径钉钉直接 200，行为不变。
+    let reply_client = match Client::builder()
+        .timeout(Duration::from_secs(35))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return DingtalkResponse::error(500, format!("HTTP client error: {e}")),
+    };
+
     let reply_body = serde_json::json!({
         "msgtype": "text",
         "text": { "content": reply }
     });
-    match client
+    match reply_client
         .post(session_webhook)
         .json(&reply_body)
         .timeout(Duration::from_secs(10))

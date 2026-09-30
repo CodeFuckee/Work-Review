@@ -1,11 +1,14 @@
 {
   "name": "work-review",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.2.20",
   "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22"
+  },
+  "allowScripts": {
+    "esbuild": true
   },
   "scripts": {
     "dev": "vite",
@@ -18,11 +21,14 @@
     "icons:providers": "node --import tsx scripts/fetch-provider-icons.ts",
     "star-history": "node --import tsx scripts/capture-star-history.ts",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "node scripts/tauri-dev-with-key.mjs",
+    "tauri:dev:raw": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:local-mac": "tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.local.conf.json"
+    "tauri:build:local-mac": "tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.local.conf.json",
+    "test:frontend:coverage": "node --import tsx --test --experimental-test-coverage \"**/*.test.ts\""
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^3.0.0",
     "@tauri-apps/cli": "^2.10.1",
     "@tsconfig/svelte": "^5.0.8",

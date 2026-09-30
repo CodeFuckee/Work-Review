@@ -27,6 +27,11 @@ test('前端、Tauri 与 Cargo 的五个版本源必须一致', () => {
     /\[\[package\]\]\s+name = "work-review"\s+version = "([^"]+)"/
   )?.[1];
 
+  // 诊断：CI 上出现「运行时版本漂移」时打印五个源的实际值与 git 状态，便于定位来源。
+  console.log(
+    `[version-diagnostic] pkg=${pkg.version} lock=${packageLock.version} root=${packageLock.packages?.['']?.version} tauri=${tauriConf.version} cargo=${cargoVersion} cargoLock=${cargoLockVersion}`,
+  );
+
   assert.equal(pkg.version, packageLock.version, 'package-lock.json 顶层版本不一致');
   assert.equal(pkg.version, packageLock.packages?.['']?.version, 'package-lock.json 根包版本不一致');
   assert.equal(

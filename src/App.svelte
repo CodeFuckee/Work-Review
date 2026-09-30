@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount, tick, type ComponentType } from 'svelte';
-  import Router, { push } from 'svelte-spa-router';
+  import { onMount } from 'svelte';
+  import Router, { location, push } from 'svelte-spa-router';
   import { wrap } from 'svelte-spa-router/wrap';
   import Sidebar from './lib/components/Sidebar.svelte';
   import Toast from './lib/components/Toast.svelte';
@@ -10,6 +10,7 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { cache, getLocalDate } from './lib/stores/cache.ts';
   import { recordingStore } from './lib/stores/recording.ts';
+  import { resolveAuthGateFromStorage } from './lib/stores/auth.ts';
   import { applyLocaleToDocument, initializeLocale, locale, t } from '$lib/i18n/index.ts';
   import { preloadAppIcons, type AppIconInvoke } from './lib/stores/iconCache.ts';
   import { runUpdateFlow } from './lib/utils/updater.ts';
@@ -53,10 +54,6 @@
   interface RecordingStateChangedPayload {
     isRecording: boolean;
     isPaused: boolean;
-  }
-
-  interface AvatarTimelinePayload {
-    date?: string;
   }
 
   interface BackgroundChangeDetail {
@@ -165,11 +162,6 @@
       && value.every((item) => typeof item === 'boolean');
   }
 
-  function isAvatarTimelinePayload(value: unknown): value is AvatarTimelinePayload {
-    return isRecord(value)
-      && (value.date === undefined || typeof value.date === 'string');
-  }
-
   async function getRuntimeConfig(): Promise<RuntimeConfig> {
     const payload = await invoke<unknown>('get_config');
     if (!isRuntimeConfig(payload)) {
@@ -234,15 +226,6 @@
   }
 
   const appWindow = getSafeCurrentWebviewWindow();
-  const currentWindowLabel = appWindow.label;
-  const isAvatarWindow = currentWindowLabel === 'avatar';
-  let AvatarWindowComponent: ComponentType | null = null;
-
-  if (isAvatarWindow) {
-    import('./routes/avatar/AvatarWindow.svelte').then((module) => {
-      AvatarWindowComponent = module.default;
-    });
-  }
 
   // 視窗拖拽（Linux WebKitGTK 不支援 -webkit-app-region: drag，改用 Tauri API）
   let lastDragClick = 0;
@@ -348,6 +331,7 @@
 
   const routes = {
     '/': wrap({ asyncComponent: () => import('./routes/Overview.svelte') }),
+    '/auth': wrap({ asyncComponent: () => import('./routes/auth/Auth.svelte') }),
     '/timeline': wrap({ asyncComponent: () => import('./routes/timeline/Timeline.svelte') }),
     '/timeline/summary/:date': wrap({ asyncComponent: () => import('./routes/timeline/Summary.svelte') }),
     '/timeline/summary': wrap({ asyncComponent: () => import('./routes/timeline/Summary.svelte') }),
@@ -369,6 +353,18 @@
   let uiVisualStyle: UiVisualStyle = 'c';
   let unsubscribeLocale: () => void = () => {};
   $: currentLocale = $locale;
+
+  // 认证门：login=未登录（强制跳登录页）/ grace=token 过期（离线宽限）/ allow=放行
+  type AuthGateState = 'allow' | 'grace' | 'login';
+  let authGate: AuthGateState = 'allow';
+  $: isAuthRoute = $location === '/auth';
+  $: if (authGate === 'login' && $location && $location !== '/auth') {
+    void push('/auth');
+  }
+
+  function refreshAuthGate(): void {
+    authGate = resolveAuthGateFromStorage() as AuthGateState;
+  }
 
   function detectSystemTheme(): boolean {
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -499,15 +495,10 @@
     window.addEventListener('drop', preventFileDrop);
     window.addEventListener('contextmenu', preventNativeContextMenu);
 
-    if (isAvatarWindow) {
-      return () => {
-        window.removeEventListener('dragover', preventFileDrop);
-        window.removeEventListener('drop', preventFileDrop);
-        window.removeEventListener('contextmenu', preventNativeContextMenu);
-      };
-    }
-
     initializeLocale();
+    refreshAuthGate();
+    const handleAuthChanged = () => refreshAuthGate();
+    window.addEventListener('auth-changed', handleAuthChanged);
     unsubscribeLocale = locale.subscribe((nextLocale) => {
       applyLocaleToDocument(nextLocale);
     });
@@ -528,6 +519,7 @@
 
     // 同步注册的 locale subscription 立即可清理
     pendingCleanup.push(() => unsubscribeLocale());
+    pendingCleanup.push(() => window.removeEventListener('auth-changed', handleAuthChanged));
     pendingCleanup.push(() => window.removeEventListener('dragover', preventFileDrop));
     pendingCleanup.push(() => window.removeEventListener('drop', preventFileDrop));
     pendingCleanup.push(() => window.removeEventListener('contextmenu', preventNativeContextMenu));
@@ -641,31 +633,6 @@
       );
       if (disposed) { try { if (unlistenConfigChanged) unlistenConfigChanged(); } catch {} return; }
       pendingCleanup.push(unlistenConfigChanged);
-
-      const unlistenAvatarTimeline = await safeListen(
-        'avatar-open-timeline',
-        isAvatarTimelinePayload,
-        async (payload) => {
-          const nextDate = typeof payload.date === 'string' ? payload.date.trim() : '';
-
-          try {
-            await push('/timeline');
-            if (nextDate) {
-              window.history.replaceState(
-                window.history.state,
-                '',
-                `/timeline?date=${encodeURIComponent(nextDate)}`
-              );
-            }
-            await tick();
-            window.dispatchEvent(new CustomEvent('timeline-focus-date', { detail: payload }));
-          } catch (e) {
-            console.error('桌宠跳转时间线失败:', e);
-          }
-        },
-      );
-      if (disposed) { try { if (unlistenAvatarTimeline) unlistenAvatarTimeline(); } catch {} return; }
-      pendingCleanup.push(unlistenAvatarTimeline);
 
       // 监听背景图更新事件（来自设置页，实时预览）
       const handleBgChange = (e: Event) => handleBackgroundChanged(e);
@@ -799,11 +766,6 @@
   });
 </script>
 
-{#if isAvatarWindow}
-  {#if AvatarWindowComponent}
-    <svelte:component this={AvatarWindowComponent} />
-  {/if}
-{:else}
 <div class="app-shell ui-style-{uiVisualStyle} platform-{platform || 'web'} flex h-screen overflow-hidden relative">
   <div class="app-shell-ambient pointer-events-none absolute inset-0 z-0 opacity-80">
     <div class="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.14),transparent_62%)] dark:bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.18),transparent_62%)]"></div>
@@ -884,17 +846,31 @@
   <!-- 注意：这里不能加 z-index（如 z-10），否则会形成层叠上下文，
        把内部弹窗/Toast（z-[100..210]）整体压到拖拽条 z-50 之下，
        导致弹窗顶部 28px 被拖拽层拦截成"点击变拖动窗口"。 -->
-  <div class="app-shell-stage relative flex-1 grid grid-cols-[13.5rem_minmax(0,1fr)] gap-3 m-2 {platform !== 'macos' ? 'app-shell-stage--windowbar' : 'app-shell-stage--macos'}">
-    <!-- 左侧边栏 -->
+  <div class="app-shell-stage relative flex-1 grid grid-cols-[13.5rem_minmax(0,1fr)] gap-3 m-2 {platform !== 'macos' ? 'app-shell-stage--windowbar' : 'app-shell-stage--macos'} {isAuthRoute ? 'app-shell-stage--auth' : ''}">
+    <!-- 左侧边栏（登录页隐藏，登录页独占整行） -->
+    {#if !isAuthRoute}
     <aside class="app-shell-sidebar-frame min-h-0">
       <div class="app-shell-sidebar h-full flex flex-col overflow-hidden">
         <Sidebar {isRecording} {isPaused} {theme} on:themeChange={handleThemeChange} />
       </div>
     </aside>
+    {/if}
 
     <!-- 右侧主内容区域 -->
     <section class="app-shell-main-frame min-h-0">
       <div class="app-shell-main relative h-full flex flex-col overflow-hidden">
+        {#if authGate === 'grace' && !isAuthRoute}
+          <div class="mx-2 mt-2 flex items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+            <span>{t('auth.graceNotice')}</span>
+            <button
+              type="button"
+              on:click={() => push('/auth')}
+              class="shrink-0 rounded-lg border border-amber-400 px-2 py-1 font-medium hover:bg-amber-100 dark:hover:bg-amber-500/20"
+            >
+              {t('auth.reloginAction')}
+            </button>
+          </div>
+        {/if}
         <main class="app-shell-main-scroll flex-1 overflow-auto">
           {#key currentLocale}
             <Router {routes} />
@@ -906,4 +882,3 @@
     </section>
   </div>
 </div>
-{/if}

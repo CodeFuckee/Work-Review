@@ -283,3 +283,56 @@ pub enum SignalSource {
     /// 用户执行 followup 操作
     FollowupAction,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 缺省字段反序列化应应用serde默认值() {
+        let json = r#"{
+            "id": "s",
+            "name": "n",
+            "description": "d",
+            "version": "1.0.0",
+            "category": "report",
+            "pipeline": {
+                "query": { "type": "daily_stats", "date": "2026-01-01" },
+                "output": { "type": "text", "template": "t" }
+            }
+        }"#;
+        let pkg: SkillPackage = serde_json::from_str(json).unwrap();
+        assert!(pkg.enabled, "enabled 缺省应为 true");
+        assert!(
+            pkg.adaptive.max_change_rate.abs() - 0.2 < 1e-9,
+            "max_change_rate 缺省 0.2"
+        );
+        assert_eq!(pkg.adaptive.cooldown_hours, 24);
+        assert_eq!(pkg.adaptive.rollback_window_hours, 72);
+        assert!(!pkg.adaptive.enabled, "自适应缺省关闭");
+        assert!(pkg.required_permissions.is_empty());
+    }
+
+    #[test]
+    fn 查询与转换的反序列化默认值应生效() {
+        let pipeline_json = r#"{
+            "query": { "type": "search_activities", "query": "vscode" },
+            "transforms": [
+                { "type": "sort", "field": "duration" },
+                { "type": "limit", "count": 5 }
+            ],
+            "output": { "type": "markdown", "template": "m" }
+        }"#;
+        let pipeline: Pipeline = serde_json::from_str(pipeline_json).unwrap();
+        match pipeline.query {
+            QueryStep::SearchActivities { limit, .. } => assert_eq!(limit, 50, "limit 缺省 50"),
+            other => panic!("形状不符: {other:?}"),
+        }
+        match &pipeline.transforms[0] {
+            TransformStep::Sort { order, .. } => {
+                assert_eq!(*order, SortOrder::Desc, "排序缺省降序")
+            }
+            other => panic!("形状不符: {other:?}"),
+        }
+    }
+}

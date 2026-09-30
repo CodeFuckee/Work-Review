@@ -78,6 +78,5 @@ test('浏览器预览环境缺少 Tauri event metadata 时主应用事件监听�
   assert.match(appSource, /safeListen\('main-window-visibility', isBoolean/);
   assert.match(appSource, /await safeListen\(\s*'recording-state-changed'/);
   assert.match(appSource, /await safeListen\(\s*'config-changed'/);
-  assert.match(appSource, /await safeListen\(\s*'avatar-open-timeline'/);
   assert.match(appSource, /await safeListen\(\s*'screenshot-taken'/);
 });

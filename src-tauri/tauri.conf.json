@@ -74,18 +74,13 @@
       }
     }
   },
-  "productName": "Work Review",
-  "mainBinaryName": "Work_Review",
-  "version": "1.1.2",
-  "identifier": "com.workreview.app",
+  "productName": "Yue-Review",
+  "mainBinaryName": "Yue_Review",
+  "version": "1.2.20",
+  "identifier": "com.yuereview.app",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE5RTJFOUZBREEwMTA5RjIKUldUeUNRSGErdW5pcVdnajJvT3B2Vm9wdXlwb0QvVTBoQUZTTGYvSHJ2emhma3BWdnE3Q3dJTnkK",
-      "endpoints": [
-        "https://github.com/wm94i/Work-Review/releases/latest/download/updater.json",
-        "https://gh-proxy.cn/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghproxy.json",
-        "https://gh-proxy.com/https://github.com/wm94i/Work-Review/releases/latest/download/updater-ghp.json"
-      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBOTFGOUMyNTQ2NzI2NjcKUldSbkptZFV3dm1SaXVWQnAzcW9SNVFBWEdyR2tycXVvVWsvN2YraUV2S0ZOaHo4K3Jyd2RmSkoK",
       "windows": {
         "installMode": "passive"
       }
@@ -95,7 +90,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Work Review",
+        "title": "Yue复盘",
         "width": 1000,
         "height": 700,
         "visible": false,
@@ -108,11 +103,12 @@
         "transparent": false,
         "alwaysOnTop": false,
         "dragDropEnabled": false,
-        "useHttpsScheme": true
+        "useHttpsScheme": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --allow-running-insecure-content --unsafely-treat-insecure-origin-as-secure=http://10.37.80.25:4191"
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://api.github.com https://gh-proxy.cn https://gh-proxy.com"
+      "csp": "default-src 'self'; img-src 'self' data: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* http://10.37.80.25:*"
     }
   }
 }

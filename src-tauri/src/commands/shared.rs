@@ -3,10 +3,9 @@
 use crate::AppState;
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
-use work_review_core::config::{AppConfig, AvatarFollowupItem, PrivacyConfig};
+use work_review_core::config::{AppConfig, ConfigLoadStatus, PrivacyConfig};
 use work_review_core::database::Activity;
 use work_review_core::error::AppError;
-use work_review_core::work_intelligence::TodoExtractionResult;
 
 /// 从问题中提取时间范围关键词，返回 (date_from, date_to)
 ///
@@ -43,6 +42,9 @@ pub fn parse_temporal_range(question: &str) -> (Option<String>, Option<String>) 
     if let Ok(re) = regex::Regex::new(r"(?:最近|近|过去)\s*(\d+)\s*天") {
         for caps in re.captures_iter(&normalized) {
             if let Ok(n) = caps[1].parse::<i64>() {
+                // N 无上限时 chrono::Duration::days 在超大数值上 panic（该问题
+                // 文本经助手 fast_answer 直达此处），夹紧到 10 年内
+                let n = n.clamp(0, 3650);
                 ranges.push((today - chrono::Duration::days(n), today));
             }
         }
@@ -136,6 +138,11 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), AppError> {
             "非法路径：不允许使用绝对路径".to_string(),
         ));
     }
+    // Windows 上形如 `\Windows\x.png` 的路径没有盘符前缀、不算绝对路径，
+    // 但 `Path::join` 会用根路径替换掉 base 的其余部分而逃逸 data_dir，必须一并拒绝
+    if p.has_root() {
+        return Err(AppError::Unknown("非法路径：不允许使用根路径".to_string()));
+    }
     if p.components()
         .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
     {
@@ -144,6 +151,21 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+/// 校验相对路径后拼接到 base 目录下，并二次确认结果仍位于 base 内
+pub(crate) fn validated_join(
+    base: &std::path::Path,
+    path: &str,
+) -> Result<std::path::PathBuf, AppError> {
+    validate_relative_path(path)?;
+    let full = base.join(path);
+    if !full.starts_with(base) {
+        return Err(AppError::Unknown(
+            "非法路径：路径越出了数据目录".to_string(),
+        ));
+    }
+    Ok(full)
 }
 
 pub(crate) fn collect_privacy_filters(state: &AppState) -> (Vec<String>, Vec<String>) {
@@ -210,72 +232,6 @@ pub(crate) fn load_filtered_activities_in_range(
     ))
 }
 
-fn manual_followups_in_range(
-    items: &[AvatarFollowupItem],
-    date_from: Option<&str>,
-    date_to: Option<&str>,
-) -> Vec<AvatarFollowupItem> {
-    items
-        .iter()
-        .filter(|item| item.status == "open")
-        .filter(|item| {
-            date_from
-                .map(|start| item.date.as_str() >= start)
-                .unwrap_or(true)
-                && date_to.map(|end| item.date.as_str() <= end).unwrap_or(true)
-        })
-        .cloned()
-        .collect()
-}
-
-pub(crate) fn merge_manual_followups_into_todos(
-    mut extracted: TodoExtractionResult,
-    manual_items: &[AvatarFollowupItem],
-    date_from: Option<&str>,
-    date_to: Option<&str>,
-) -> TodoExtractionResult {
-    let manual_items = manual_followups_in_range(manual_items, date_from, date_to);
-    if manual_items.is_empty() {
-        return extracted;
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    for item in &extracted.items {
-        seen.insert(item.title.trim().to_lowercase());
-    }
-
-    for item in manual_items {
-        let normalized = item.title.trim().to_lowercase();
-        if normalized.is_empty() || !seen.insert(normalized) {
-            continue;
-        }
-
-        extracted
-            .items
-            .push(work_review_core::work_intelligence::TodoItem {
-                title: item.title.clone(),
-                date: item.date.clone(),
-                source_title: item.source_title.clone(),
-                source_app: item.source_app.clone(),
-                confidence: 96,
-                reason: "桌宠手动加入待跟进".to_string(),
-            });
-    }
-
-    extracted.items.sort_by(|a, b| {
-        b.confidence
-            .cmp(&a.confidence)
-            .then_with(|| b.date.cmp(&a.date))
-            .then_with(|| a.title.cmp(&b.title))
-    });
-    extracted.items.truncate(20);
-    extracted.summary = format!(
-        "共整理出 {} 条待跟进项（含桌宠手动加入）。",
-        extracted.items.len()
-    );
-    extracted
-}
-
 pub(crate) fn persist_app_config(
     mut config: AppConfig,
     app: AppHandle,
@@ -285,19 +241,8 @@ pub(crate) fn persist_app_config(
     let new_embedding_config_fingerprint =
         super::semantic_memory::embedding_config_fingerprint(&config);
     let new_privacy_fingerprint = super::semantic_memory::privacy_fingerprint(&config.privacy);
-    let (
-        previous_avatar_enabled,
-        previous_avatar_scale,
-        previous_avatar_opacity,
-        previous_avatar_preset,
-        previous_avatar_click_through,
-        previous_avatar_body_hidden,
-        previous_avatar_x,
-        previous_avatar_y,
-        previous_hide_dock_icon,
-        previous_lightweight_mode,
-        avatar_state,
-    ) = {
+    let (previous_hide_dock_icon, previous_lightweight_mode) = {
+        let state_arc = state.clone();
         let mut state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         let previous_config = state.config.clone();
         let previous_embedding_config_fingerprint =
@@ -319,133 +264,41 @@ pub(crate) fn persist_app_config(
         config.save(&config_path)?;
 
         state.config = config.clone();
+        // 配置已成功落盘：刷新启动时的加载状态快照。否则启动时 Corrupted（fail-safe
+        // 跳过周期清理以保护数据）的用户在设置页修复配置后，storage_cleanup_task 仍
+        // 永久按 Corrupted 跳过，直到重启
+        if state.config_load_status.requires_fail_safe() {
+            state.config_load_status = ConfigLoadStatus::Loaded;
+        }
         state.storage_manager.update_config(config.storage.clone());
         state.screenshot_service.update_config(&config.storage);
-        state.privacy_filter.update_config(&config.privacy);
-        state.avatar_state = crate::avatar_engine::apply_avatar_visual_settings(
-            state.avatar_state.clone(),
-            config.avatar_opacity,
-            &config.avatar_preset,
-            &config.avatar_persona,
-            config.avatar_body_hidden,
+        // 文件监控：按新配置热重载监听器（未启用时停掉）
+        crate::file_monitor_runtime::apply_config_locked(
+            &mut state,
+            &state_arc,
+            &config.file_monitor,
         );
+        state.privacy_filter.update_config(&config.privacy);
         (
-            previous_config.avatar_enabled,
-            previous_config.avatar_scale,
-            previous_config.avatar_opacity,
-            previous_config.avatar_preset,
-            previous_config.avatar_click_through,
-            previous_config.avatar_body_hidden,
-            previous_config.avatar_x,
-            previous_config.avatar_y,
             previous_config.hide_dock_icon,
             previous_config.lightweight_mode,
-            state.avatar_state.clone(),
         )
     };
 
-    let avatar_window_changed = previous_avatar_enabled != config.avatar_enabled
-        || previous_avatar_scale != config.avatar_scale
-        || previous_avatar_body_hidden != config.avatar_body_hidden
-        || previous_avatar_x != config.avatar_x
-        || previous_avatar_y != config.avatar_y;
-    let avatar_click_through_changed = previous_avatar_click_through != config.avatar_click_through;
-    let avatar_visual_changed = previous_avatar_opacity != config.avatar_opacity
-        || previous_avatar_preset != config.avatar_preset;
-    // 隐藏本体既是窗口尺寸变化也是视觉变化（前端需重新渲染 canvas 显隐）
-    let avatar_body_hidden_changed = previous_avatar_body_hidden != config.avatar_body_hidden;
     let dock_visibility_changed = previous_hide_dock_icon != config.hide_dock_icon
         || previous_lightweight_mode != config.lightweight_mode;
-
-    if avatar_window_changed {
-        crate::avatar_engine::sync_avatar_window(
-            &app,
-            config.avatar_enabled,
-            config.avatar_scale,
-            config.avatar_x.zip(config.avatar_y),
-            false,
-            config.avatar_body_hidden,
-        )
-        .map_err(|e| AppError::Unknown(format!("同步桌宠窗口失败: {e}")))?;
-
-        // 窗口创建/显示后应用鼠标穿透设置
-        if config.avatar_enabled && config.avatar_click_through {
-            crate::avatar_engine::set_avatar_click_through(&app, true);
-        }
-    }
-
-    if config.avatar_enabled
-        && (avatar_window_changed || avatar_visual_changed || avatar_body_hidden_changed)
-        && !refresh_avatar_state_for_current_window(&app, state)
-    {
-        crate::avatar_engine::emit_avatar_state(&app, &avatar_state);
-    }
-
-    if avatar_click_through_changed && config.avatar_enabled {
-        crate::avatar_engine::set_avatar_click_through(&app, config.avatar_click_through);
-    }
-
-    // 同步智能穿透运行时 flag（供 spawn_avatar_input_bridge 轮询无锁读）
-    crate::avatar_input::set_avatar_enabled_flag(config.avatar_enabled);
-    crate::avatar_input::set_avatar_click_through_flag(config.avatar_click_through);
-    if avatar_window_changed || avatar_click_through_changed {
-        crate::avatar_input::force_resync_click_through();
-    }
 
     if dock_visibility_changed {
         crate::sync_effective_dock_visibility(&app);
     }
 
     crate::localhost_api::sync_localhost_api_runtime(&app, state)?;
-    crate::telegram_bot::sync_telegram_bot_runtime(state)?;
     crate::wecom_aibot::sync_wecom_bot_runtime(state)?;
     crate::config_sync::spawn_push(config.clone());
     crate::emit_config_changed(&app, &config);
 
     log::info!("配置已保存");
     Ok(())
-}
-
-fn refresh_avatar_state_for_current_window(app: &AppHandle, state: &Arc<Mutex<AppState>>) -> bool {
-    let active_window = match crate::monitor::get_active_window_fast() {
-        Ok(window) => window,
-        Err(_) => return false,
-    };
-
-    let next_avatar_state = {
-        let mut state_guard = match state.lock() {
-            Ok(guard) => guard,
-            Err(e) => {
-                log::warn!("刷新桌宠状态时获取状态锁失败: {e}");
-                return false;
-            }
-        };
-
-        if !state_guard.config.avatar_enabled {
-            return false;
-        }
-
-        let next_state = crate::avatar_engine::apply_avatar_visual_settings(
-            crate::avatar_engine::derive_avatar_state_with_rules(
-                &state_guard.config.app_category_rules,
-                &state_guard.config.custom_categories,
-                &active_window.app_name,
-                &active_window.window_title,
-                active_window.browser_url.as_deref(),
-                state_guard.avatar_state.is_idle,
-                state_guard.avatar_generating_report,
-            ),
-            state_guard.config.avatar_opacity,
-            &state_guard.config.avatar_preset,
-            &state_guard.config.avatar_persona,
-            state_guard.config.avatar_body_hidden,
-        );
-        state_guard.avatar_state = next_state.clone();
-        next_state
-    };
-
-    crate::avatar_engine::emit_avatar_state(app, &next_avatar_state);
-    true
 }
 
 #[cfg(test)]
@@ -632,6 +485,19 @@ mod tests {
     fn test_temporal_recent_3_days() {
         let (from, to) = parse_temporal_range("最近3天的工作");
         assert_eq!(from.as_deref(), Some(days_ago_str(3).as_str()));
+        assert_eq!(to.as_deref(), Some(today_str().as_str()));
+    }
+
+    #[test]
+    fn test_temporal_oversized_n_days_is_clamped_not_panic() {
+        // 回归：超大 N 曾使 chrono::Duration::days 越界 panic（用户问题文本
+        // 经助手 fast_answer 直达此处），现应夹紧到 10 年内正常返回
+        let (from, to) = parse_temporal_range("最近99999999999天做了什么");
+        assert_eq!(from.as_deref(), Some(days_ago_str(3650).as_str()));
+        assert_eq!(to.as_deref(), Some(today_str().as_str()));
+        // 普通数值不受夹紧影响
+        let (from, to) = parse_temporal_range("过去90天");
+        assert_eq!(from.as_deref(), Some(days_ago_str(90).as_str()));
         assert_eq!(to.as_deref(), Some(today_str().as_str()));
     }
 

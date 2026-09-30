@@ -20,7 +20,6 @@ import {
   type StreamEventResult,
   type StreamMessage,
 } from './routes/ask/streamEvent.ts';
-import { formatBubbleMessage } from './lib/components/Avatar/bubbleMessage.ts';
 import { formatUserError } from './lib/utils/errorDisplay.ts';
 import {
   prepareTimelineActivities,
@@ -84,52 +83,6 @@ import {
   type DomainSourceTrackItem,
   getSemanticCategoryColor,
 } from './routes/overviewDomainPresentation.ts';
-import {
-  type AvatarActionLoopMeta,
-  type AvatarBubbleLocale,
-  type AvatarIdleMotionMeta,
-  type AvatarMode,
-  type AvatarModeMeta,
-  type AvatarPersona,
-  type AvatarStateBubble,
-  type AvatarTransitionMeta,
-  getAvatarActionLoopMeta,
-  getAvatarIdleMotionMeta,
-  getAvatarModeMeta,
-  getAvatarMotionStepDelay,
-  getAvatarStateBubble,
-  getAvatarTransitionMeta,
-} from './lib/components/Avatar/avatarStateMeta.ts';
-import {
-  AVATAR_PRESET_DEFAULT,
-  AVATAR_PRESET_OPTIONS,
-  type AvailableAvatarPresetId,
-  type AvatarPresetDefinition,
-  type AvatarPresetOption,
-  getAvatarPresetDefinition,
-  getAvatarPresetOption,
-  normalizeAvatarPresetId,
-} from './lib/components/Avatar/avatarPresetRegistry.ts';
-import {
-  AVATAR_OPACITY_DEFAULT,
-  AVATAR_OPACITY_MAX,
-  AVATAR_OPACITY_MIN,
-  AVATAR_SCALE_DEFAULT,
-  AVATAR_SCALE_MAX,
-  AVATAR_SCALE_MIN,
-  type AvatarConfigSaver,
-  type AvatarSettingsConfig,
-  type AvatarToggleUiState,
-  clampAvatarOpacity,
-  clampAvatarScale,
-  formatAvatarOpacityLabel,
-  formatAvatarScaleLabel,
-  getAvatarToggleToast,
-  getAvatarToggleUiState,
-  toggleAvatarSetting,
-  updateAvatarOpacitySetting,
-  updateAvatarScaleSetting,
-} from './lib/utils/avatarToggle.ts';
 import {
   type FocusTrapActionResult,
   trapFocus,
@@ -259,20 +212,6 @@ type Equal<Left, Right> =
     : false;
 
 type Expect<Value extends true> = Value;
-
-type ExpectedAvatarSettingsConfig = {
-  avatar_enabled?: unknown;
-  break_reminder_enabled?: unknown;
-  avatar_scale?: unknown;
-  avatar_opacity?: unknown;
-};
-
-type ExpectedAvatarToggleUiState = {
-  trackClass: string;
-  thumbClass: string;
-  buttonClass: string;
-  ariaLabel: string;
-};
 
 type ExpectedFocusTrapActionResult = {
   destroy(): void;
@@ -495,7 +434,6 @@ type ExpectedAssistantStore = {
   setConversationId: (conversationId: number | null | undefined) => void;
   beginSending: (requestId: string) => void;
   finishSending: (requestId: string) => void;
-  updateLastStreaming: (updater: ExpectedAssistantMessageUpdater) => void;
   updateMessageById: (
     messageId: string,
     updater: ExpectedAssistantMessageUpdater,
@@ -601,7 +539,6 @@ type ExpectedCacheState = {
   overview: ExpectedOverviewCacheEntry;
   timeline: Record<string, ExpectedTimelineCacheEntry>;
   reports: Record<string, ExpectedCacheEntry>;
-  hourlySummaries: Record<string, unknown>;
   reportGenerating: boolean;
   config: unknown | null;
 };
@@ -688,21 +625,6 @@ type ExpectedDurationFormatOptions = {
 
 type ExpectedLocaleStore = Writable<ExpectedLocale>;
 
-interface NamedAvatarSettingsConfig {
-  avatar_enabled: boolean;
-  break_reminder_enabled: boolean;
-  avatar_scale: number;
-  avatar_opacity: number;
-  marker: string;
-}
-
-declare const namedAvatarSettingsConfig: NamedAvatarSettingsConfig;
-declare const saveNamedAvatarSettingsConfig: AvatarConfigSaver<NamedAvatarSettingsConfig>;
-
-void toggleAvatarSetting(namedAvatarSettingsConfig, saveNamedAvatarSettingsConfig);
-void updateAvatarScaleSetting(namedAvatarSettingsConfig, 1, saveNamedAvatarSettingsConfig);
-void updateAvatarOpacitySetting(namedAvatarSettingsConfig, 1, saveNamedAvatarSettingsConfig);
-
 type HistoryBuilderContract = Expect<Equal<
   typeof buildHistoryPayload,
   (messages: unknown) => HistoryPayloadEntry[]
@@ -745,11 +667,6 @@ type StreamReducerContract = Expect<Equal<
     event: unknown,
     fallbackError?: string,
   ) => StreamEventResult
->>;
-
-type BubbleMessageContract = Expect<Equal<
-  typeof formatBubbleMessage,
-  (message: unknown) => string
 >>;
 
 type ErrorDisplayContract = Expect<Equal<
@@ -908,149 +825,6 @@ type DomainPresentationContract = Expect<Equal<
 type SemanticCategoryColorContract = Expect<Equal<
   typeof getSemanticCategoryColor,
   (categoryKey: unknown) => string
->>;
-
-type AvatarModeMetaContract = Expect<Equal<
-  typeof getAvatarModeMeta,
-  (mode: AvatarMode, contextLabel?: string) => AvatarModeMeta
->>;
-
-type AvatarStateBubbleContract = Expect<Equal<
-  typeof getAvatarStateBubble,
-  (
-    mode: AvatarMode,
-    locale?: AvatarBubbleLocale,
-    contextLabel?: string,
-    persona?: AvatarPersona,
-  ) => AvatarStateBubble | null
->>;
-
-type AvatarActionLoopContract = Expect<Equal<
-  typeof getAvatarActionLoopMeta,
-  (mode: AvatarMode, contextLabel?: string, beat?: number) => AvatarActionLoopMeta
->>;
-
-type AvatarMotionDelayContract = Expect<Equal<
-  typeof getAvatarMotionStepDelay,
-  (mode: AvatarMode, contextLabel?: string, beat?: number) => number
->>;
-
-type AvatarTransitionContract = Expect<Equal<
-  typeof getAvatarTransitionMeta,
-  (
-    fromMode: AvatarMode,
-    toMode: AvatarMode,
-    fromContextLabel?: string,
-    toContextLabel?: string,
-  ) => AvatarTransitionMeta
->>;
-
-type AvatarIdleMotionContract = Expect<Equal<
-  typeof getAvatarIdleMotionMeta,
-  (mode: AvatarMode, contextLabel?: string, beat?: number) => AvatarIdleMotionMeta
->>;
-
-type AvatarPresetDefaultContract = Expect<Equal<
-  typeof AVATAR_PRESET_DEFAULT,
-  'original-standard'
->>;
-
-type AvatarPresetOptionsContract = Expect<Equal<
-  typeof AVATAR_PRESET_OPTIONS,
-  readonly AvatarPresetOption[]
->>;
-
-type AvatarPresetNormalizeContract = Expect<Equal<
-  typeof normalizeAvatarPresetId,
-  (presetId: string) => AvailableAvatarPresetId
->>;
-
-type AvatarPresetDefinitionContract = Expect<Equal<
-  typeof getAvatarPresetDefinition,
-  (presetId: string) => AvatarPresetDefinition
->>;
-
-type AvatarPresetOptionContract = Expect<Equal<
-  typeof getAvatarPresetOption,
-  (presetId: string) => AvatarPresetOption
->>;
-
-type AvatarScaleMinContract = Expect<Equal<typeof AVATAR_SCALE_MIN, 0.4>>;
-type AvatarScaleMaxContract = Expect<Equal<typeof AVATAR_SCALE_MAX, 1.3>>;
-type AvatarScaleDefaultContract = Expect<Equal<typeof AVATAR_SCALE_DEFAULT, 0.9>>;
-type AvatarOpacityMinContract = Expect<Equal<typeof AVATAR_OPACITY_MIN, 0.45>>;
-type AvatarOpacityMaxContract = Expect<Equal<typeof AVATAR_OPACITY_MAX, 1>>;
-type AvatarOpacityDefaultContract = Expect<Equal<typeof AVATAR_OPACITY_DEFAULT, 0.82>>;
-
-type AvatarSettingsConfigContract = Expect<Equal<
-  AvatarSettingsConfig,
-  ExpectedAvatarSettingsConfig
->>;
-
-type AvatarConfigSaverContract = Expect<Equal<
-  AvatarConfigSaver<{ marker: string }>,
-  (config: { marker: string }) => void | PromiseLike<void>
->>;
-
-type AvatarToggleUiStateContract = Expect<Equal<
-  AvatarToggleUiState,
-  ExpectedAvatarToggleUiState
->>;
-
-type AvatarToggleToastContract = Expect<Equal<
-  typeof getAvatarToggleToast,
-  (enabled: boolean) => string
->>;
-
-type AvatarToggleUiContract = Expect<Equal<
-  typeof getAvatarToggleUiState,
-  (enabled: boolean, saving?: boolean) => ExpectedAvatarToggleUiState
->>;
-
-type AvatarToggleSettingContract = Expect<Equal<
-  typeof toggleAvatarSetting,
-  <TConfig extends ExpectedAvatarSettingsConfig>(
-    config: TConfig,
-    saveConfig: (config: TConfig) => void | PromiseLike<void>,
-  ) => Promise<boolean>
->>;
-
-type AvatarScaleClampContract = Expect<Equal<
-  typeof clampAvatarScale,
-  (value: unknown) => number
->>;
-
-type AvatarScaleLabelContract = Expect<Equal<
-  typeof formatAvatarScaleLabel,
-  (value: unknown) => string
->>;
-
-type AvatarScaleUpdateContract = Expect<Equal<
-  typeof updateAvatarScaleSetting,
-  <TConfig extends ExpectedAvatarSettingsConfig>(
-    config: TConfig,
-    nextScale: unknown,
-    saveConfig: (config: TConfig) => void | PromiseLike<void>,
-  ) => Promise<number>
->>;
-
-type AvatarOpacityClampContract = Expect<Equal<
-  typeof clampAvatarOpacity,
-  (value: unknown) => number
->>;
-
-type AvatarOpacityLabelContract = Expect<Equal<
-  typeof formatAvatarOpacityLabel,
-  (value: unknown) => string
->>;
-
-type AvatarOpacityUpdateContract = Expect<Equal<
-  typeof updateAvatarOpacitySetting,
-  <TConfig extends ExpectedAvatarSettingsConfig>(
-    config: TConfig,
-    nextOpacity: unknown,
-    saveConfig: (config: TConfig) => void | PromiseLike<void>,
-  ) => Promise<number>
 >>;
 
 type FocusTrapActionResultContract = Expect<Equal<
@@ -1407,7 +1181,6 @@ export type TypeScriptMigrationContracts =
   | RequestGateContract
   | StarterPromptContract
   | StreamReducerContract
-  | BubbleMessageContract
   | ErrorDisplayContract
   | TimelinePreparationContract
   | TimelineUpsertContract
@@ -1434,35 +1207,6 @@ export type TypeScriptMigrationContracts =
   | DomainTrackContract
   | DomainPresentationContract
   | SemanticCategoryColorContract
-  | AvatarModeMetaContract
-  | AvatarStateBubbleContract
-  | AvatarActionLoopContract
-  | AvatarMotionDelayContract
-  | AvatarTransitionContract
-  | AvatarIdleMotionContract
-  | AvatarPresetDefaultContract
-  | AvatarPresetOptionsContract
-  | AvatarPresetNormalizeContract
-  | AvatarPresetDefinitionContract
-  | AvatarPresetOptionContract
-  | AvatarScaleMinContract
-  | AvatarScaleMaxContract
-  | AvatarScaleDefaultContract
-  | AvatarOpacityMinContract
-  | AvatarOpacityMaxContract
-  | AvatarOpacityDefaultContract
-  | AvatarSettingsConfigContract
-  | AvatarConfigSaverContract
-  | AvatarToggleUiStateContract
-  | AvatarToggleToastContract
-  | AvatarToggleUiContract
-  | AvatarToggleSettingContract
-  | AvatarScaleClampContract
-  | AvatarScaleLabelContract
-  | AvatarScaleUpdateContract
-  | AvatarOpacityClampContract
-  | AvatarOpacityLabelContract
-  | AvatarOpacityUpdateContract
   | FocusTrapActionResultContract
   | FocusTrapContract
   | RecordingStateInputContract

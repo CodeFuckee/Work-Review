@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="100" alt="Work Review">
+  <img src="src-tauri/icons/icon.png" width="100" alt="Yue-Review">
 </p>
 
-<h1 align="center">Work Review</h1>
+<h1 align="center">Yue复盘 <span lang="en">Yue-Review</span></h1>
 
 <p align="center">
   <strong>本地优先的个人工作回顾工具：自动记录上下文，帮你复盘和生成日报。</strong>
@@ -37,7 +37,7 @@
 
 ## 它解决什么问题
 
-Work Review 面向个人工作复盘，适合用来回答这些问题：
+Yue-Review 面向个人工作复盘，适合用来回答这些问题：
 
 - 我今天到底做了什么？
 - 这几天主要在推进什么？
@@ -53,10 +53,12 @@ Work Review 面向个人工作复盘，适合用来回答这些问题：
 
 - **自动记录工作上下文** — 记录前台应用、浏览器页面、窗口标题、使用时长、可选截图和 OCR 文本，减少手动补记
 - **统一时间线和统计** — 概览、时间线、工作助手、日报共用同一份本地记录，既能看趋势，也能追到具体上下文
-- **本地记录问答** — 用基础模板或你配置的模型回答“今天做了什么”“某个任务花了多久”“最近在推进什么”等问题
+- **本地记录问答** — 用基础模板、你配置的模型，或内置模型（未配置任何模型时开箱即用）回答“今天做了什么”“某个任务花了多久”“最近在推进什么”等问题
 - **日报生成与导出** — 生成结构化日报，支持 Markdown 导出、自动导出、段落编辑、钉选/隐藏和 AI 编排顺序
-- **隐私优先，本地可控** — 数据默认保存在本地 SQLite；AI 可不启用，模型调用使用你自己的 API Key，不经第三方中转
-- **桌面化身 Beta** — 用桌面化身反馈工作状态，并逐步扩展到主动提醒和上下文辅助
+- **私有化 GitLab 集成** — 可选配置 GitLab（服务地址 + 个人访问令牌 + 项目白名单），生成日报时把该日期内你的代码提交以独立小节「GitLab 今日提交」展示（固定位于网站访问明细与按小时活跃度之间，支持段落钉选/隐藏；AI 分析可引用提交但不重复罗列；无提交显示占位说明）；纳入工作的作者支持从仓库贡献者中勾选（只写邮箱，按提交数排序并标记当前账号）
+- **自动版本与发布流水线** — 每次 main 流水线全绿后自动把版本末位 +1（逢 100 进位，如 1.2.99 → 1.3.0）并同步五处版本源，打 `vX.Y.Z` tag 触发三平台打包与发布；每次推送还会编译三平台 release 二进制作为 CI 产物
+- **每次推送直接下载安装包** — 每次 main 流水线全绿后同时产出三平台完整安装包（dmg / deb / rpm / AppImage / nsis exe + 便携 zip）并上传为 CI artifact（保留 30 天）。最新构建链接：`https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-windows`（另有 `package-daily-macos-arm64`、`package-daily-macos-x64`、`package-daily-linux-x64`、`package-daily-linux-arm64`）。tag 发布版经原 Release 流程永久保留安装包。
+- **隐私优先，本地可控** — 数据默认保存在本地 SQLite；AI 可不启用，模型调用使用你自己的 API Key，不经第三方中转。未配置任何模型时将使用内置模型，此时问答/日报内容会发送至内置模型对应的第三方 AI 服务
 - **多语言界面** — 支持简体中文、English、繁體中文、العربية（阿拉伯语，RTL 布局）
 
 ---
@@ -124,11 +126,6 @@ Work Review 面向个人工作复盘，适合用来回答这些问题：
   <img src="docs/Introduction_zh/设置-AI模型.png" alt="AI 模型设置" width="720" />
 </p>
 
-<p align="center"><strong>桌面化身</strong></p>
-<p align="center">
-  <img src="docs/Introduction_zh/设置-桌面化身.png" alt="桌面化身设置" width="720" />
-</p>
-
 <p align="center"><strong>隐私设置</strong></p>
 <p align="center">
   <img src="docs/Introduction_zh/设置-隐私.png" alt="隐私设置" width="720" />
@@ -141,7 +138,7 @@ Work Review 面向个人工作复盘，适合用来回答这些问题：
 
 <p align="center"><strong>关于</strong></p>
 <p align="center">
-  <img src="docs/Introduction_zh/关于.png" alt="关于 Work Review" width="720" />
+  <img src="docs/Introduction_zh/关于.png" alt="关于 Yue-Review" width="720" />
 </p>
 
 </details>
@@ -150,7 +147,7 @@ Work Review 面向个人工作复盘，适合用来回答这些问题：
 
 ## 隐私与边界
 
-Work Review 从设计上面向个人使用，不适用于：员工监控 · 团队考勤 · 绩效考核 · 隐形追踪
+Yue-Review 从设计上面向个人使用，不适用于：员工监控 · 团队考勤 · 绩效考核 · 隐形追踪
 
 你可以按需控制记录范围：
 
@@ -188,12 +185,13 @@ Work Review 从设计上面向个人使用，不适用于：员工监控 · 团�
 - AI 增强下的附加提示词和自定义模型
 - 网站语义分类：修改域名分类后自动回填历史
 - 多段工作时间：如上午 + 下午，休息时间不计入
+- GitLab 提交补充：从私有化 GitLab 拉取日报日期当天的提交（每项目最多 20 条、全局最多 200 条，按本机时区过滤），以独立小节固定展示在网站访问明细与按小时活跃度之间；AI 分析可引用提交内容但不单列小节；未配置时省略小节，拉取失败在小节内附失败说明；时间线页与日报活动时间线按时间交错展示提交行（提交入库持久化，历史可回看）
 
 ---
 
 ## AI 模式
 
-Work Review 的核心始终是**本地记录**。AI 的作用是让记录更容易阅读和复盘，而不是使用前提。
+Yue-Review 的核心始终是**本地记录**。AI 的作用是让记录更容易阅读和复盘，而不是使用前提。
 
 | 模式 | 说明 |
 |------|------|
@@ -218,7 +216,7 @@ Work Review 的核心始终是**本地记录**。AI 的作用是让记录更容�
 | Linux x86_64 (X11 / Wayland) | `.deb` / `.rpm` / `.AppImage` |
 | Linux ARM64 (aarch64) | `.deb` / `.rpm` / `.AppImage` |
 
-**macOS：** 截图需「屏幕录制」权限，桌宠联动需「辅助功能 + 输入监控」。首次提示"已损坏"时：`sudo xattr -rd com.apple.quarantine "/Applications/Work Review.app"`
+**macOS：** 截图需「屏幕录制」权限。首次提示"已损坏"时：`sudo xattr -rd com.apple.quarantine "/Applications/Yue-Review.app"`
 
 **Windows：** 依赖 Microsoft Edge WebView2 Runtime。
 
@@ -269,20 +267,9 @@ GDK_BACKEND=x11 ./Work_Review
 ## 扩展能力（Beta）
 
 <details>
-<summary>桌面化身</summary>
+<summary>Bot 联动（飞书 / 钉钉 / 企业微信）</summary>
 
-用独立桌宠窗口反馈待机/办公/阅读/会议/音乐/视频等状态。
-
-<img src="docs/桌宠.png" alt="桌面化身" width="220" />
-
-当前仍在持续完善中，会继续改进交互联动、状态表达和预设细节。
-
-</details>
-
-<details>
-<summary>Bot 联动（Telegram / 飞书 / 钉钉 / 企业微信）</summary>
-
-通过本地 API + 多设备注册，从 Telegram / 飞书 / 钉钉 / 企业微信远程查询记录与生成日报。支持命令：`/devices`、`/report`、`/generate` 等。企业微信优先使用智能机器人长连接（Bot ID + Secret，无需公网）；同一机器人同时只能保持一条长连接。仅限个人和本人多设备联动使用。
+通过本地 API + 多设备注册，从飞书 / 钉钉 / 企业微信远程查询记录与生成日报。支持命令：`/devices`、`/report`、`/generate` 等。企业微信优先使用智能机器人长连接（Bot ID + Secret，无需公网）；同一机器人同时只能保持一条长连接。仅限个人和本人多设备联动使用。
 
 </details>
 
@@ -408,7 +395,6 @@ npm run tauri:build  # 构建
 ## 致谢
 
 - 感谢 [linux.do](https://linux.do/) 社区的交流与讨论支持
-- 桌面化身 BongoCat 资源改编自 [ayangweb/BongoCat](https://github.com/ayangweb/BongoCat) (MIT License)，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ## License
 

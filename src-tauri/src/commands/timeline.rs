@@ -17,15 +17,22 @@ pub(crate) fn get_timeline_inner(
     state: &Arc<Mutex<AppState>>,
 ) -> Result<Vec<Activity>, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    let activities = state.database.get_timeline(&date, limit, offset)?;
+    // 上限钳制（同 /v1/activities 的 .min(10_000) 先例）：limit/offset 查询参数不直通 DB
+    let activities = state.database.get_timeline(
+        &date,
+        limit.map(|v| v.min(10_000)),
+        offset.map(|v| v.min(1_000_000)),
+    )?;
     let (ignored_apps, excluded_domains) = collect_privacy_filters(&state);
     let filtered = filter_activities_by_privacy(activities, &ignored_apps, &excluded_domains);
 
     if !ignored_apps.is_empty() || !excluded_domains.is_empty() {
+        // 只记条数不记清单：哪些应用/域名被隐藏本身是隐私配置，
+        // 明文进持久日志后每次打开时间线都落一份（同第七轮日志脱敏口径）
         log::info!(
-            "隐私过滤: 需过滤应用 {:?}, 域名 {:?}，结果 {} 条",
-            ignored_apps,
-            excluded_domains,
+            "隐私过滤: 应用规则 {} 条, 域名规则 {} 条，结果 {} 条",
+            ignored_apps.len(),
+            excluded_domains.len(),
             filtered.len()
         );
     }
@@ -54,22 +61,37 @@ pub async fn get_activity(
     state.database.get_activity_by_id(id)
 }
 
+/// 校验时间线导出目标路径：非空且以 .json 结尾。路径来自请求方，
+/// 写文件前的第一道限定（父目录校验由 validate_export_dir 负责）。
+fn validate_timeline_export_target(target: &str) -> Result<PathBuf, AppError> {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Config("请先选择导出文件路径".to_string()));
+    }
+    let target_path_buf = PathBuf::from(trimmed);
+    let is_json = target_path_buf
+        .extension()
+        .map(|ext| ext.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    if !is_json {
+        return Err(AppError::Config("导出文件必须以 .json 结尾".to_string()));
+    }
+    Ok(target_path_buf)
+}
+
 /// 导出指定日期的时间线为 JSON 文件
 ///
 /// - 复用 `get_timeline_inner` 的隐私过滤（忽略应用 / 排除域名）
 /// - `include_ocr = false` 时，OCR 文本会被清空，避免泄露屏幕内容
-/// - 写入路径为用户选择的 `target_path`，必须以 `.json` 结尾
+/// - 写入路径为用户选择的 `target_path`，必须以 `.json` 结尾，父目录经
+///   `validate_export_dir` 校验（拒绝隐藏/敏感目录，防止任意路径写入）
 pub(crate) fn export_timeline_json_inner(
     date: String,
     target_path: String,
     include_ocr: bool,
     state: &Arc<Mutex<AppState>>,
 ) -> Result<String, AppError> {
-    let target = target_path.trim();
-    if target.is_empty() {
-        return Err(AppError::Config("请先选择导出文件路径".to_string()));
-    }
-    let target_path_buf = PathBuf::from(target);
+    let target_path_buf = validate_timeline_export_target(&target_path)?;
 
     // 走完整时间线（不分页），并应用隐私过滤
     let mut activities = get_timeline_inner(date.clone(), None, None, state)?;
@@ -81,8 +103,11 @@ pub(crate) fn export_timeline_json_inner(
 
     // 父目录可能不存在（用户选了新位置），尝试创建
     if let Some(parent) = target_path_buf.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            std::fs::create_dir_all(parent)?;
+        if !parent.as_os_str().is_empty() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+            super::report::validate_export_dir(parent)?;
         }
     }
 
@@ -121,9 +146,8 @@ pub async fn get_screenshot_thumbnail(
     path: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, AppError> {
-    super::shared::validate_relative_path(&path)?;
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    let full_path = state.data_dir.join(&path);
+    let full_path = super::shared::validated_join(&state.data_dir, &path)?;
     state
         .screenshot_service
         .generate_thumbnail_base64(&full_path, 400)
@@ -135,10 +159,37 @@ pub async fn get_screenshot_full(
     path: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, AppError> {
-    super::shared::validate_relative_path(&path)?;
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    let full_path = state.data_dir.join(&path);
+    let full_path = super::shared::validated_join(&state.data_dir, &path)?;
     state
         .screenshot_service
         .generate_full_image_base64(&full_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 时间线导出路径必须以json结尾() {
+        assert!(validate_timeline_export_target("").is_err(), "空路径应拒绝");
+        assert!(
+            validate_timeline_export_target("   ").is_err(),
+            "纯空白路径应拒绝"
+        );
+        assert!(
+            validate_timeline_export_target("/tmp/work-review-export").is_err(),
+            "无后缀应拒绝"
+        );
+        assert!(
+            validate_timeline_export_target("/tmp/work-review-export.md").is_err(),
+            "非 json 后缀应拒绝"
+        );
+        let ok = validate_timeline_export_target("/tmp/work-review-export.JSON")
+            .expect("大写 .JSON 应放行（大小写不敏感）");
+        assert!(
+            ok.to_string_lossy().to_lowercase().ends_with(".json"),
+            "放行路径应以 .json 结尾"
+        );
+    }
 }

@@ -1,4 +1,8 @@
-const electronSvg = `data:image/svg+xml;utf8,${encodeURIComponent(
+function encodeSvg(svg: string): string {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const electronSvg = encodeSvg(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
     <rect x="6" y="6" width="36" height="36" rx="12" fill="#EEF4FF" />
     <path d="M16 24c0-6 3.6-10 8-10s8 4 8 10-3.6 10-8 10-8-4-8-10Z" stroke="#4F46E5" stroke-width="2.4" />
@@ -6,11 +10,7 @@ const electronSvg = `data:image/svg+xml;utf8,${encodeURIComponent(
     <path d="M12 30c5.2-2.8 18.8-2.8 24 0" stroke="#4F46E5" stroke-width="2.4" stroke-linecap="round" />
     <circle cx="24" cy="24" r="3.4" fill="#4F46E5" />
   </svg>`
-)}`;
-
-function encodeSvg(svg: string): string {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
+);
 
 const discoverSvg = encodeSvg(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
@@ -37,18 +37,41 @@ const authSvg = encodeSvg(
   </svg>`
 );
 
-const fallbackIconMap = new Map<string, string>([
-  ['work review', '/icons/256x256.png'],
-  ['work-review', '/icons/256x256.png'],
-  ['work_review', '/icons/256x256.png'],
-  ['electron', electronSvg],
-  ['electron helper', electronSvg],
-  ['discover', discoverSvg],
-  ['mail', mailSvg],
-  ['邮件', mailSvg],
-  ['system authentication', authSvg],
-  ['coreautha', authSvg],
-]);
+/** 兜底图标匹配表。exact=规范化后整名相等，includes=包含子串。
+ * 精确名（原 fallbackIconMap）与子串名（原 getFallbackAppIcon 长条件列表）
+ * 原本分散两处各自维护同一批应用（yue 家族就只存在于子串侧），合到一张表
+ * 防单边漂移。顺序敏感：exact 组整体在前（保持原两阶段语义），组内保序。 */
+const FALLBACK_ICON_RULES: ReadonlyArray<{
+  kind: 'exact' | 'includes';
+  needle: string;
+  icon: string;
+}> = [
+  { kind: 'exact', needle: 'work review', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'work-review', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'work_review', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'daily report', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'daily-report', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'daily_report', icon: '/icons/256x256.png' },
+  { kind: 'exact', needle: 'electron', icon: electronSvg },
+  { kind: 'exact', needle: 'electron helper', icon: electronSvg },
+  { kind: 'exact', needle: 'discover', icon: discoverSvg },
+  { kind: 'exact', needle: 'mail', icon: mailSvg },
+  { kind: 'exact', needle: '邮件', icon: mailSvg },
+  { kind: 'exact', needle: 'system authentication', icon: authSvg },
+  { kind: 'exact', needle: 'coreautha', icon: authSvg },
+  { kind: 'includes', needle: 'work review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'work-review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'work_review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'daily report', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'daily-report', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'daily_report', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue-review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue_review', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue复盘', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'yue復盤', icon: '/icons/256x256.png' },
+  { kind: 'includes', needle: 'electron', icon: electronSvg },
+];
 
 function normalizeName(appName: unknown): string {
   return typeof appName === 'string' ? appName.trim().toLowerCase() : '';
@@ -84,28 +107,21 @@ function buildMonogramIcon(appName: unknown): string | null {
   const fg = `hsl(${hue} 55% 32%)`;
   const fontSize = label.length > 1 ? 19 : 22;
 
-  return `data:image/svg+xml;utf8,${encodeURIComponent(
+  return encodeSvg(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
       <rect x="4" y="4" width="40" height="40" rx="12" fill="${bg}" />
       <text x="24" y="29" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="${fg}">${label}</text>
     </svg>`
-  )}`;
+  );
 }
 
 export function getFallbackAppIcon(appName: unknown): string | null {
   const normalized = normalizeName(appName);
   if (!normalized) return null;
 
-  if (fallbackIconMap.has(normalized)) {
-    return fallbackIconMap.get(normalized)!;
-  }
-
-  if (normalized.includes('work review') || normalized.includes('work-review') || normalized.includes('work_review')) {
-    return '/icons/256x256.png';
-  }
-
-  if (normalized.includes('electron')) {
-    return electronSvg;
+  for (const { kind, needle, icon } of FALLBACK_ICON_RULES) {
+    const hit = kind === 'exact' ? normalized === needle : normalized.includes(needle);
+    if (hit) return icon;
   }
 
   return buildMonogramIcon(appName);

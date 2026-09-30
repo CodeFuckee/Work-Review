@@ -20,7 +20,8 @@ type KnownProviderId =
   | 'xai'
   | 'mistral'
   | 'lmstudio'
-  | 'custom';
+  | 'custom'
+  | 'builtin';
 
 export const MODEL_PROVIDER_DISPLAY_NAMES = {
   ollama: {
@@ -54,6 +55,11 @@ export const MODEL_PROVIDER_DISPLAY_NAMES = {
     'zh-CN': 'LM Studio (本地)',
     en: 'LM Studio (Local)',
     'zh-TW': 'LM Studio（本機）',
+  },
+  builtin: {
+    'zh-CN': '内置模型',
+    en: 'Built-in Model',
+    'zh-TW': '內建模型',
   },
   custom: {
     'zh-CN': '自定义接口',

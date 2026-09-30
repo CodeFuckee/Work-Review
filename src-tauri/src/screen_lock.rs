@@ -1,22 +1,23 @@
 // 锁屏检测模块 (Windows / macOS)
 // 监听系统锁屏/解锁事件，用于控制录制状态
 
-#![allow(dead_code)]
-
+// Linux 探测链失效标记仍用原子布尔
+#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 /// 屏幕锁定状态
 pub struct ScreenLockMonitor {
-    /// 是否锁定
-    is_locked: Arc<AtomicBool>,
+    /// Linux 探测链整体失效时只告警一次的标记
+    #[cfg(target_os = "linux")]
+    probe_failure_warned: AtomicBool,
 }
 
 impl ScreenLockMonitor {
     /// 创建锁屏监控器
     pub fn new() -> Self {
         Self {
-            is_locked: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "linux")]
+            probe_failure_warned: AtomicBool::new(false),
         }
     }
 
@@ -80,6 +81,9 @@ impl ScreenLockMonitor {
             fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
         }
 
+        // SAFETY: CGSessionCopyCurrentDictionary 返回 +1 引用计数的 CFDictionary，
+        // null 提前返回不涉及资源；非空路径只有单一出口且末尾 CFRelease 恰好
+        // 释放一次，value_ref 以 get-rule 包装不取得所有权
         unsafe {
             let dict = CGSessionCopyCurrentDictionary();
             if dict.is_null() {
@@ -114,6 +118,11 @@ impl ScreenLockMonitor {
     pub fn is_locked(&self) -> bool {
         use std::process::Command;
 
+        // 任一探测工具成功启动过即视为探测链可用；全部启动失败（工具缺失等）
+        // 时锁屏检测实际失效且与"未锁屏"不可区分，记一次性告警供诊断。
+        // 本函数被采集循环高频轮询，告警绝不能逐次刷屏。
+        let mut any_probe_ran = false;
+
         // 方法1: 通过 loginctl 检查 session 是否 locked
         if let Ok(output) = Command::new("loginctl")
             .args([
@@ -124,6 +133,7 @@ impl ScreenLockMonitor {
             ])
             .output()
         {
+            any_probe_ran = true;
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.contains("LockedHint=yes") {
                 log::debug!("锁屏检测: loginctl 报告 session 已锁定");
@@ -140,6 +150,7 @@ impl ScreenLockMonitor {
             "swaylock",
         ] {
             if let Ok(output) = Command::new("pgrep").args(["-x", proc_name]).output() {
+                any_probe_ran = true;
                 if output.status.success() {
                     log::debug!("锁屏检测: 锁屏进程 {} 运行中", proc_name);
                     return true;
@@ -159,6 +170,7 @@ impl ScreenLockMonitor {
             ])
             .output()
         {
+            any_probe_ran = true;
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.contains("boolean true") {
                 log::debug!("锁屏检测: Cinnamon ScreenSaver 报告已激活");
@@ -166,6 +178,11 @@ impl ScreenLockMonitor {
             }
         }
 
+        if !any_probe_ran && !self.probe_failure_warned.swap(true, Ordering::Relaxed) {
+            log::warn!(
+                "锁屏检测: loginctl/pgrep/dbus-send 全部无法启动，锁屏检测失效，按未锁屏处理"
+            );
+        }
         false
     }
 
@@ -173,11 +190,6 @@ impl ScreenLockMonitor {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     pub fn is_locked(&self) -> bool {
         false
-    }
-
-    /// 设置锁定状态（用于手动更新）
-    pub fn set_locked(&self, locked: bool) {
-        self.is_locked.store(locked, Ordering::SeqCst);
     }
 }
 

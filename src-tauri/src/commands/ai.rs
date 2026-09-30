@@ -62,9 +62,34 @@ pub(crate) fn validate_model_endpoint(endpoint: &str) -> Result<(), AppError> {
     ))
 }
 
+/// 探测是否编译期注入了内置兜底模型（只返回布尔值，不暴露任何配置内容）
+#[tauri::command]
+pub fn has_builtin_model() -> bool {
+    work_review_core::config::builtin_text_model().is_some()
+}
+
+/// 测试目标解析：出厂默认配置（provider=ollama 默认端点/模型、无 key）且内置模型
+/// 可用时，实际测试的是内置模型——「内置模型」供应商的测试连接走这条路径。
+fn resolve_test_target_with(
+    model_config: ModelConfig,
+    builtin: Option<ModelConfig>,
+) -> ModelConfig {
+    if model_config.is_factory_default_text() {
+        if let Some(builtin) = builtin {
+            return builtin;
+        }
+    }
+    model_config
+}
+
+fn resolve_test_target(model_config: ModelConfig) -> ModelConfig {
+    resolve_test_target_with(model_config, work_review_core::config::builtin_text_model())
+}
+
 /// 测试模型连接（新版，使用 ModelConfig）
 #[tauri::command]
 pub async fn test_model(model_config: ModelConfig) -> Result<ModelTestResult, AppError> {
+    let model_config = resolve_test_target(model_config);
     validate_model_endpoint(&model_config.endpoint)?;
     let start = std::time::Instant::now();
 
@@ -818,9 +843,35 @@ pub async fn test_assistant_search(
     }))
 }
 
-#[tauri::command]
-pub async fn get_ai_providers() -> Result<Vec<serde_json::Value>, AppError> {
-    let mut providers = vec![
+/// 供应商列表纯函数：`has_builtin` 表示编译期是否注入了内置模型。
+/// 内置可用时在列表头部插入「内置模型」供应商（前端默认选中它）。
+fn provider_list_with(has_builtin: bool) -> Vec<serde_json::Value> {
+    let mut providers = Vec::new();
+    if has_builtin {
+        providers.push(serde_json::json!({
+            "id": "builtin",
+            "name": "内置模型",
+            "description": "软件内置的兜底大模型，无需任何配置",
+            "default_endpoint": "",
+            "default_model": "",
+            "requires_api_key": false,
+            "supports_vision": false,
+            "builtin": true,
+        }));
+    }
+    providers.extend(base_provider_list());
+    for provider in &mut providers {
+        let id = provider["id"].as_str().unwrap_or("custom").to_string();
+        let parsed = serde_json::from_value::<AiProvider>(serde_json::Value::String(id))
+            .unwrap_or(AiProvider::Custom);
+        provider["generation_capabilities"] =
+            work_review_core::generation_params::capabilities_for(parsed).to_json();
+    }
+    providers
+}
+
+fn base_provider_list() -> Vec<serde_json::Value> {
+    vec![
         serde_json::json!({
             "id": "ollama",
             "name": "Ollama (本地)",
@@ -974,15 +1025,14 @@ pub async fn get_ai_providers() -> Result<Vec<serde_json::Value>, AppError> {
             "requires_api_key": true,
             "supports_vision": false,
         }),
-    ];
-    for provider in &mut providers {
-        let id = provider["id"].as_str().unwrap_or("custom").to_string();
-        let parsed = serde_json::from_value::<AiProvider>(serde_json::Value::String(id))
-            .unwrap_or(AiProvider::Custom);
-        provider["generation_capabilities"] =
-            work_review_core::generation_params::capabilities_for(parsed).to_json();
-    }
-    Ok(providers)
+    ]
+}
+
+#[tauri::command]
+pub async fn get_ai_providers() -> Result<Vec<serde_json::Value>, AppError> {
+    Ok(provider_list_with(
+        work_review_core::config::builtin_text_model().is_some(),
+    ))
 }
 
 #[cfg(test)]
@@ -1154,5 +1204,61 @@ mod tests {
             Some(&embedding_show)
         ));
         assert!(!ollama_model_should_be_listed(&heuristic_only, None));
+    }
+
+    fn builtin_model_for_test() -> ModelConfig {
+        let mut m = ModelConfig::default_text();
+        m.provider = AiProvider::OpenAI;
+        m.endpoint = "https://laneai.dev/v1".to_string();
+        m.api_key = Some("sk-test".to_string());
+        m.model = "deepseek-v4-flash".to_string();
+        m
+    }
+
+    #[test]
+    fn 测试目标解析_出厂默认配置应替换为内置模型() {
+        let resolved =
+            resolve_test_target_with(ModelConfig::default_text(), Some(builtin_model_for_test()));
+        assert_eq!(resolved.endpoint, "https://laneai.dev/v1");
+        assert_eq!(resolved.model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn 测试目标解析_自定义配置不应替换() {
+        let mut custom = ModelConfig::default_text();
+        custom.provider = AiProvider::OpenAI;
+        custom.endpoint = "https://api.openai.com/v1".to_string();
+        custom.api_key = Some("sk-custom".to_string());
+        custom.model = "gpt-x".to_string();
+
+        let resolved = resolve_test_target_with(custom.clone(), Some(builtin_model_for_test()));
+        assert_eq!(resolved.endpoint, custom.endpoint);
+        assert_eq!(resolved.model, "gpt-x");
+    }
+
+    #[test]
+    fn 测试目标解析_无内置模型时保持原配置() {
+        let factory = ModelConfig::default_text();
+        let resolved = resolve_test_target_with(factory.clone(), None);
+        assert_eq!(resolved.provider, factory.provider);
+        assert_eq!(resolved.endpoint, factory.endpoint);
+    }
+
+    #[test]
+    fn 供应商列表_内置可用时应在头部插入内置条目() {
+        let list = provider_list_with(true);
+        assert_eq!(list[0]["id"], "builtin");
+        assert_eq!(list[0]["requires_api_key"], false);
+        assert_eq!(list[0]["builtin"], true);
+        assert!(list.len() >= 2, "builtin 之外还应包含常规供应商");
+    }
+
+    #[test]
+    fn 供应商列表_无内置时不应出现内置条目() {
+        let list = provider_list_with(false);
+        assert!(
+            list.iter().all(|p| p["id"] != "builtin"),
+            "无内置时不应出现 builtin 条目"
+        );
     }
 }

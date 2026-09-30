@@ -35,6 +35,18 @@
     getSemanticCategoryColor,
   } from './overviewDomainPresentation.ts';
   import { buildCategoryCompositionSummary } from './overviewCategoryPresentation.ts';
+  import {
+    buildGitlabProjectRows,
+    sumGitlabProjectRows,
+    type GitlabProjectStat,
+  } from './overviewGitlabPresentation.ts';
+  import { buildPlaneProjectOverview } from './overviewPlanePresentation.ts';
+
+  // GitLab 项目进度条配色（与 AppUsageChart 的柱色保持一致）
+  const GITLAB_BAR_COLORS = [
+    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+  ];
 
   interface AppUsage {
     app_name: string;
@@ -132,6 +144,82 @@
 
   interface WorkGoalConfig {
     daily_work_goal_minutes?: number | null;
+    gitlab?: {
+      url?: string | null;
+      token?: string | null;
+      project_filter?: string[] | null;
+      work_authors?: string[] | null;
+      report_enabled?: boolean;
+    };
+    file_monitor?: {
+      enabled?: boolean;
+      folders?: string[] | null;
+    };
+    plane?: {
+      enabled?: boolean;
+      url?: string | null;
+      api_key?: string | null;
+      workspace_slug?: string | null;
+    };
+  }
+
+  interface FileMonitorEvent {
+    path: string;
+    event_type: string;
+    size: number | null;
+    occurred_at: number;
+    date: string;
+  }
+
+  // Plane 工作项入库行（get_plane_work_items_for_date 返回，updated_at 倒序）
+  interface PlaneWorkItemRow {
+    plane_item_id: string;
+    project_name: string;
+    name: string;
+    state_name: string;
+    updated_at: number;
+    url: string | null;
+  }
+
+  // 事件类型徽标（文案 key 与配色）
+  const FILE_EVENT_BADGES: Record<string, { key: string; class: string }> = {
+    created: {
+      key: 'overview.fileEventCreated',
+      class: 'text-emerald-600 dark:text-emerald-400',
+    },
+    modified: {
+      key: 'overview.fileEventModified',
+      class: 'text-blue-600 dark:text-blue-400',
+    },
+    deleted: {
+      key: 'overview.fileEventDeleted',
+      class: 'text-rose-600 dark:text-rose-400',
+    },
+    renamed: {
+      key: 'overview.fileEventRenamed',
+      class: 'text-amber-600 dark:text-amber-400',
+    },
+  };
+
+  function fileEventBadge(eventType: string): { key: string; class: string } {
+    return FILE_EVENT_BADGES[eventType] ?? FILE_EVENT_BADGES.modified;
+  }
+
+  function fileEventName(path: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    const index = normalized.lastIndexOf('/');
+    return index < 0 ? normalized : normalized.slice(index + 1);
+  }
+
+  function fileEventDir(path: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    const index = normalized.lastIndexOf('/');
+    return index < 0 ? '' : normalized.slice(0, index);
+  }
+
+  interface GitlabAvatarEntry {
+    path: string;
+    data_url: string | null;
   }
 
   interface CategoryActiveRange {
@@ -267,6 +355,51 @@
   let overviewRefreshPromise: Promise<void> | null = null;
   let overviewRefreshKey = '';
   let overviewRequestId = 0;
+  // GitLab 提交统计（按项目聚合）：配置了 GitLab 才显示；今天每次会话后台补采一次
+  let gitlabConfigured = false;
+  let gitlabStats: GitlabProjectStat[] = [];
+  let gitlabStatsRequestId = 0;
+  let gitlabSyncedDates = new Set<string>();
+  // 文件活动（本地文件监控事件）
+  let fileMonitorConfigured = false;
+  let fileEventsTotal = 0;
+  let fileEvents: FileMonitorEvent[] = [];
+  let fileEventsRequestId = 0;
+  // Plane 项目概览（按日入库工作项聚合）：配置了 Plane 才显示；读本地库零 API 请求，
+  // 打开/切日期时每日期后台补采一次（口径与时间线页一致）
+  let planeConfigured = false;
+  let planeWorkItems: PlaneWorkItemRow[] = [];
+  let planeItemsRequestId = 0;
+  let planeSyncAttemptedDates = new Set<string>();
+
+  // 仓库头像（path -> data URL），随补采结果更新并落 localStorage 供下次秒出
+  const GITLAB_AVATARS_KEY = 'yue-review-gitlab-avatars';
+  let gitlabAvatars: Record<string, string> = readGitlabAvatarsCache();
+
+  function readGitlabAvatarsCache(): Record<string, string> {
+    try {
+      const raw = localStorage.getItem(GITLAB_AVATARS_KEY);
+      if (!raw) return {};
+      return JSON.parse(raw) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  }
+
+  function saveGitlabAvatarsCache(): void {
+    try {
+      localStorage.setItem(GITLAB_AVATARS_KEY, JSON.stringify(gitlabAvatars));
+    } catch {
+      // 忽略持久化失败（无痕模式等），仅影响下次启动的头像秒出
+    }
+  }
+
+  $: gitlabRows = buildGitlabProjectRows(gitlabStats);
+  $: gitlabTotals = sumGitlabProjectRows(gitlabRows);
+  // Plane 项目概览行：按项目聚合当日变动数 + 最近变动工作项
+  $: planeOverviewRows = buildPlaneProjectOverview(planeWorkItems);
+  // 进度条以变动数最多的项目为满格（与 GitLab 卡的柱宽口径一致）
+  $: planeBarMaxCount = Math.max(0, ...planeOverviewRows.map((row) => row.count));
   let lastCheckDate = currentTime.getDate();
   let appUsageViewMode: AppUsageViewMode = 'row';
   let domainUsageExpanded = false;
@@ -355,6 +488,39 @@
   }
   // 切换模式/日期时刷新按天投入
   $: { overviewMode; selectedDateFrom; selectedDateTo; loadRangeDailyTotals(); }
+
+  // 切换日期区间时刷新 GitLab 项目统计；配置就绪后顺带触发今天的后台补采
+  $: {
+    gitlabConfigured;
+    selectedDateFrom;
+    selectedDateTo;
+    if (gitlabConfigured) {
+      void refreshGitlabStats();
+      void syncTodayGitlabCommits();
+    }
+  }
+
+  // 切换日期区间时刷新文件活动
+  $: {
+    fileMonitorConfigured;
+    selectedDateFrom;
+    selectedDateTo;
+    if (fileMonitorConfigured) {
+      void refreshFileEvents();
+    }
+  }
+
+  // 切换日期区间时刷新 Plane 项目概览；就绪后对区间内每个日期触发一次后台补采
+  // （每日期每次会话只采一次，失败静默；定时/可见性刷新只读库不重复补采）
+  $: {
+    planeConfigured;
+    selectedDateFrom;
+    selectedDateTo;
+    if (planeConfigured) {
+      void refreshPlaneOverview();
+      void syncPlaneWorkItemsForSelection();
+    }
+  }
 
   // today 模式并行拉取「上周同日」基线；绕过 overview 缓存
   // （cache.setOverview 只保存一份"今天"快照，写入 date 模式数据会互相污染），
@@ -1247,6 +1413,149 @@
     return overviewRefreshPromise;
   }
 
+  // 读取指定日期区间的文件活动（监听器持续入库，区间联动 + 定时刷新）
+  async function refreshFileEvents(): Promise<void> {
+    if (!fileMonitorConfigured) return;
+    const requestId = ++fileEventsRequestId;
+    try {
+      const stats = await invoke<{ total: number; events: FileMonitorEvent[] }>(
+        'get_file_monitor_stats',
+        {
+          dateFrom: selectedDateFrom,
+          dateTo: selectedDateTo,
+          limit: 20,
+        },
+      );
+      if (requestId === fileEventsRequestId) {
+        fileEventsTotal = stats.total;
+        fileEvents = stats.events;
+      }
+    } catch (e) {
+      console.warn('读取文件活动失败:', e);
+    }
+  }
+
+  // 读取指定日期区间已入库的 Plane 工作项（只读本地 plane_work_items 表，零 Plane API
+  // 请求）。同步命令按单日入库，区间内逐日读取后按工作项去重（同一工作项跨日重复
+  // 变动只保留最新一条），单日场景与「当日变动」口径完全一致。
+  function getPlaneOverviewDates(): string[] {
+    const dates: string[] = [];
+    let cursor = selectedDateFrom;
+    while (cursor <= selectedDateTo && dates.length < 62) {
+      dates.push(cursor);
+      cursor = shiftIsoDate(cursor, 1);
+    }
+    return dates;
+  }
+
+  async function refreshPlaneOverview(): Promise<void> {
+    if (!planeConfigured) return;
+    const requestId = ++planeItemsRequestId;
+    try {
+      const perDate = await Promise.all(
+        getPlaneOverviewDates().map((date) =>
+          invoke<PlaneWorkItemRow[]>('get_plane_work_items_for_date', { date })
+            .catch(() => [] as PlaneWorkItemRow[]),
+        ),
+      );
+      if (requestId !== planeItemsRequestId) return;
+      const latestByItemId = new Map<string, PlaneWorkItemRow>();
+      for (const item of perDate.flat()) {
+        const existing = latestByItemId.get(item.plane_item_id);
+        if (!existing || item.updated_at > existing.updated_at) {
+          latestByItemId.set(item.plane_item_id, item);
+        }
+      }
+      planeWorkItems = [...latestByItemId.values()];
+    } catch (e) {
+      console.warn('读取 Plane 工作项失败:', e);
+    }
+  }
+
+  // 后台补采当前选择区间内的每个日期（配置读取在后端：未配置/未启用返回空成功
+  // 结果）。每日期每次会话只触发一次，避免反复切日期时反复打 Plane API；补采成功
+  // 后重读本地库刷新展示（不阻塞界面，失败静默，口径与时间线页一致）。
+  async function syncPlaneWorkItemsForSelection(): Promise<void> {
+    for (const date of getPlaneOverviewDates()) {
+      if (planeSyncAttemptedDates.has(date)) continue;
+      planeSyncAttemptedDates.add(date);
+      void (async () => {
+        try {
+          const result = await invoke<{ ok: boolean; synced: number; message: string | null }>(
+            'plane_sync_work_items_for_date',
+            { date },
+          );
+          if (!result.ok) {
+            console.warn('Plane 工作项补采失败:', result.message);
+            return;
+          }
+          void refreshPlaneOverview();
+        } catch (e) {
+          console.warn('Plane 工作项补采失败:', e);
+        }
+      })();
+    }
+  }
+
+  // 读取指定日期区间的 GitLab 项目统计（区间随概览日期选择联动）
+  async function refreshGitlabStats(): Promise<void> {
+    if (!gitlabConfigured) return;
+    const requestId = ++gitlabStatsRequestId;
+    try {
+      const rows = await invoke<GitlabProjectStat[]>('get_gitlab_project_stats', {
+        dateFrom: selectedDateFrom,
+        dateTo: selectedDateTo,
+      });
+      if (requestId === gitlabStatsRequestId) {
+        gitlabStats = rows;
+      }
+    } catch (e) {
+      console.warn('读取 GitLab 提交统计失败:', e);
+    }
+  }
+
+  // 今天每次会话后台补采一次（口径与时间线页一致），完成后刷新统计
+  async function syncTodayGitlabCommits(): Promise<void> {
+    const today = getLocalDateString();
+    if (gitlabSyncedDates.has(today)) return;
+    gitlabSyncedDates.add(today);
+    let syncOk = false;
+    try {
+      const cfg = await invoke<WorkGoalConfig>('get_config');
+      const gitlab = cfg.gitlab;
+      if (!gitlab?.report_enabled || !gitlab.url?.trim() || !gitlab.token?.trim()) return;
+      const result = await invoke<{ ok: boolean; message: string | null; avatars?: GitlabAvatarEntry[] }>(
+        'gitlab_sync_commits_for_date',
+        {
+          url: gitlab.url,
+          token: gitlab.token,
+          date: today,
+          projectFilter: gitlab.project_filter ?? [],
+          workAuthors: gitlab.work_authors ?? [],
+        },
+      );
+      syncOk = result.ok;
+      if (result.avatars?.length) {
+        let changed = false;
+        for (const entry of result.avatars) {
+          if (entry.data_url && gitlabAvatars[entry.path] !== entry.data_url) {
+            gitlabAvatars[entry.path] = entry.data_url;
+            changed = true;
+          }
+        }
+        if (changed) saveGitlabAvatarsCache();
+      }
+      if (!result.ok) {
+        console.warn('GitLab 提交补采失败:', result.message);
+      }
+    } catch (e) {
+      console.warn('GitLab 提交补采失败:', e);
+    }
+    if (syncOk) {
+      void refreshGitlabStats();
+    }
+  }
+
   async function loadStats(forceRefresh = false): Promise<void> {
     // today 模式并行补齐「上周同日」基线（有同日期基线时为空操作）
     ensureLastWeekBaseline();
@@ -1288,6 +1597,22 @@
     try {
       const cfg = await invoke<WorkGoalConfig>('get_config');
       workGoalMinutes = cfg.daily_work_goal_minutes ?? null;
+      gitlabConfigured = !!(
+        cfg.gitlab?.report_enabled
+        && cfg.gitlab.url?.trim()
+        && cfg.gitlab.token?.trim()
+      );
+      fileMonitorConfigured = !!(
+        cfg.file_monitor?.enabled
+        && (cfg.file_monitor.folders ?? []).some((folder) => folder.trim() !== '')
+      );
+      // 与后端 plane_configured 同口径：开关开启且 url/api_key/workspace_slug 均非空白
+      planeConfigured = !!(
+        cfg.plane?.enabled
+        && cfg.plane.url?.trim()
+        && cfg.plane.api_key?.trim()
+        && cfg.plane.workspace_slug?.trim()
+      );
     } catch (e) {
       workGoalMinutes = null;
     }
@@ -1313,6 +1638,12 @@
       refreshInterval = setInterval(() => {
         if (shouldAutoRefreshOverview()) {
           loadStats();
+        }
+        if (fileMonitorConfigured) {
+          void refreshFileEvents();
+        }
+        if (planeConfigured) {
+          void refreshPlaneOverview();
         }
       }, 30000);
     }
@@ -1343,6 +1674,12 @@
         refreshInterval = setInterval(() => {
           if (shouldAutoRefreshOverview()) {
             loadStats();
+          }
+          if (fileMonitorConfigured) {
+            void refreshFileEvents();
+          }
+          if (planeConfigured) {
+            void refreshPlaneOverview();
           }
         }, 30000);
         loadStats(true);
@@ -1862,6 +2199,156 @@
         </div>
       {/if}
     </section>
+
+    <!-- GitLab 提交统计：按项目聚合提交次数与代码行数变更（配置了 GitLab 才显示） -->
+    <!-- 文件活动：本地文件监控事件列表（配置了文件监控才显示） -->
+    {#if fileMonitorConfigured}
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle">
+        <div class="mb-3 flex items-baseline justify-between gap-3">
+          <h3 class="page-section-title !mb-0">{t('overview.fileEventsTitle')}</h3>
+          <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.fileEventsTotal', { count: fileEventsTotal })}</span>
+        </div>
+        {#if fileEvents.length === 0}
+          <div class="empty-state-compact">
+            <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+              <span class="text-xl">📁</span>
+            </div>
+            <p class="empty-state-copy">{t('overview.fileEventsEmpty')}</p>
+          </div>
+        {:else}
+          <div class="space-y-1">
+            {#each fileEvents as event (event.path + ':' + String(event.occurred_at))}
+              {@const badge = fileEventBadge(event.event_type)}
+              <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-2 py-2">
+                <span class="inline-flex min-w-[2.5rem] justify-center rounded-full border px-2 py-0.5 text-xs font-medium {badge.class}">
+                  {t(badge.key)}
+                </span>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium text-slate-700 dark:text-[#c9d1d9]" title={event.path}>
+                    {fileEventName(event.path)}
+                  </p>
+                  {#if fileEventDir(event.path)}
+                    <p class="truncate font-mono text-xs text-slate-400 dark:text-[#636c76]" title={event.path}>
+                      {fileEventDir(event.path)}
+                    </p>
+                  {/if}
+                </div>
+                <span class="whitespace-nowrap font-mono text-xs tabular-nums text-slate-500 dark:text-[#7d8590]">
+                  {formatLocalizedTime(new Date(event.occurred_at * 1000), { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {/if}
+    {#if gitlabConfigured}
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle">
+        <div class="mb-3 flex items-baseline justify-between gap-3">
+          <h3 class="page-section-title !mb-0">{t('overview.gitlabTitle')}</h3>
+          <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.gitlabByProject')}</span>
+        </div>
+        {#if gitlabRows.length === 0}
+          <div class="empty-state-compact">
+            <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+              <span class="text-xl">🦊</span>
+            </div>
+            <p class="empty-state-copy">{t('overview.gitlabNoCommits')}</p>
+          </div>
+        {:else}
+          <div class="app-usage-chart__rows">
+            {#each gitlabRows as row, i (row.project)}
+              <div class="app-usage-chart__row">
+                <span class="app-usage-chart__heading">
+                  <span class="app-usage-chart__icon">
+                    {#if gitlabAvatars[row.project]}
+                      <img src={gitlabAvatars[row.project]} alt="" class="h-5 w-5 rounded-md object-cover" />
+                    {:else}
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" />
+                      </svg>
+                    {/if}
+                  </span>
+                  <span class="app-usage-chart__copy">
+                    <span class="app-usage-chart__name" title={row.project}>{row.shortName}</span>
+                    <span class="app-usage-chart__meta">{t('overview.gitlabCommitsCount', { count: row.commits })}</span>
+                  </span>
+                </span>
+                <span class="app-usage-chart__track">
+                  <span
+                    class="app-usage-chart__bar"
+                    style="width: {row.barPercent}%; background-color: {GITLAB_BAR_COLORS[i % GITLAB_BAR_COLORS.length]}; opacity: 0.8"
+                  ></span>
+                </span>
+                <span class="app-usage-chart__duration">
+                  <span class="text-emerald-600 dark:text-emerald-400" title={t('overview.gitlabLinesAdded')}>+{row.additions.toLocaleString()}</span>
+                  <span class="text-rose-500 dark:text-rose-400" title={t('overview.gitlabLinesDeleted')}>−{row.deletions.toLocaleString()}</span>
+                </span>
+              </div>
+            {/each}
+          </div>
+          <div class="mt-2 flex items-center justify-between gap-3 border-t border-slate-200 px-2 pt-2.5 text-xs dark:border-[#30363d]">
+            <span class="font-medium text-slate-600 dark:text-[#8b949e]">{t('overview.gitlabTotal')}</span>
+            <div class="flex items-center gap-2">
+              <span class="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600 dark:bg-[#21262d] dark:text-[#8b949e]">
+                {t('overview.gitlabCommitsCount', { count: gitlabTotals.commits })}
+              </span>
+              <span class="font-mono font-medium text-emerald-600 dark:text-emerald-400">+{gitlabTotals.additions.toLocaleString()}</span>
+              <span class="font-mono font-medium text-rose-500 dark:text-rose-400">−{gitlabTotals.deletions.toLocaleString()}</span>
+            </div>
+          </div>
+        {/if}
+      </section>
+    {/if}
+
+    <!-- Plane 项目概览：当日变动按项目聚合（读按日入库数据，配置了 Plane 才显示） -->
+    {#if planeConfigured}
+      <section class="page-card overview-section-card overview-panel overview-panel-subtle col-span-full">
+        <div class="mb-3 flex items-baseline justify-between gap-3">
+          <h3 class="page-section-title !mb-0">{t('overview.planeTitle')}</h3>
+          <span class="text-xs text-slate-500 dark:text-[#7d8590]">{t('overview.planeItemCount', { count: planeWorkItems.length })}</span>
+        </div>
+        {#if planeOverviewRows.length === 0}
+          <div class="empty-state-compact">
+            <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+              <span class="text-xl">🛩</span>
+            </div>
+            <p class="empty-state-copy">{t('overview.planeEmpty')}</p>
+          </div>
+        {:else}
+          <div class="app-usage-chart__rows">
+            {#each planeOverviewRows as row (row.project)}
+              <div class="app-usage-chart__row">
+                <span class="app-usage-chart__heading">
+                  <span class="app-usage-chart__icon">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                    </svg>
+                  </span>
+                  <span class="app-usage-chart__copy">
+                    <span class="app-usage-chart__name" title={row.project}>{row.project}</span>
+                    <span class="app-usage-chart__meta">
+                      {row.latestName} · {row.latestState} · {formatLocalizedTime(new Date(row.latestUpdatedAt * 1000), { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </span>
+                </span>
+                <span class="app-usage-chart__track">
+                  <span
+                    class="app-usage-chart__bar"
+                    style="width: {planeBarMaxCount > 0 ? Math.max((row.count / planeBarMaxCount) * 100, 2) : 0}%; background-color: #0ea5e9; opacity: 0.8"
+                  ></span>
+                </span>
+                <span class="app-usage-chart__duration">
+                  {t('overview.planeItemCount', { count: row.count })}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {/if}
   </div>
   </div>
 </div>

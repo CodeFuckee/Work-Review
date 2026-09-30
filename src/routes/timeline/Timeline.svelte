@@ -36,17 +36,31 @@
   } from '$lib/utils/appDisplay.ts';
   import { resolveAppIconSrc } from '../../lib/utils/appVisuals.ts';
   import { formatBrowserUrlForDisplay } from '../../lib/utils/browserUrl.ts';
+  import {
+    diffFileState,
+    mergeTimelineRows,
+    parseDiffLines,
+    type DiffLine,
+    type FileEventRow,
+    type GitlabCommitRow,
+    type MergedTimelineRow,
+    type PlaneWorkItemRow,
+  } from './timelineGitlab.ts';
   import { getViewportPopoverPlacement } from '../../lib/utils/popoverPosition.ts';
   import {
+    getOcrDisplayText,
     isTimelineActivity,
     prepareTimelineActivities,
     upsertTimelineActivity,
     type TimelineActivity,
   } from './timelineData.ts';
   import { type HourlySummaryRecord } from './summaryPresentation.ts';
+  import { attachAttribution } from './timelineAttribution.ts';
+  import { shiftIsoDate } from '../report/reportDateNavigation.ts';
   import { timelineGateway } from './timelineGateway.ts';
   import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
   import HourlySummaryDrawer from './HourlySummaryDrawer.svelte';
+  import TimelineProjectsCard from './TimelineProjectsCard.svelte';
   import { confirm } from '../../lib/stores/confirm.ts';
 
   type PrivacyLevel = 'full' | 'anonymized' | 'ignored';
@@ -87,10 +101,30 @@
     privacy?: {
       app_rules?: PrivacyRule[];
     };
+    gitlab?: {
+      url?: string | null;
+      token?: string | null;
+      project_filter?: string[] | null;
+      work_authors?: string[] | null;
+      report_enabled?: boolean;
+    };
   }
 
   interface CleanupResult {
     deleted?: number;
+  }
+
+  // Plane 工作项归因（后端 plane_attributions_for_date 按日现算，不入库）
+  interface PlaneAttributionItem {
+    session_start: number;
+    session_end: number;
+    plane_item_id: string;
+    display_key: string;
+    project_name: string;
+    name: string;
+    score: number;
+    evidence: string;
+    source: 'deterministic' | 'ai';
   }
 
   const invokeAppIcon: AppIconInvoke = (command, args) =>
@@ -108,7 +142,109 @@
     return `${year}-${month}-${day}`;
   }
 
+  // 工具栏「昨天」快捷按钮的目标日期（复用日报的 ISO 平移纯函数）
+  function getTimelineYesterdayDateString(): string {
+    return shiftIsoDate(getLocalDateString(), -1);
+  }
+
   let activities: TimelineActivity[] = [];
+  let gitlabCommits: GitlabCommitRow[] = [];
+  let fileEvents: FileEventRow[] = [];
+  let planeWorkItems: PlaneWorkItemRow[] = [];
+  let planeAttributions: PlaneAttributionItem[] = [];
+  let gitlabSyncStartedDates = new Set<string>();
+  let planeSyncStartedDates = new Set<string>();
+
+  // 合并行时间戳统一提取（attachAttribution 回调用）
+  function timelineRowTimestamp(row: MergedTimelineRow<TimelineActivity>): number {
+    switch (row.kind) {
+      case 'commit':
+        return row.commit.committed_at;
+      case 'fileEvent':
+        return row.event.occurred_at;
+      case 'planeItem':
+        return row.item.updated_at;
+      default:
+        return row.activity.timestamp;
+    }
+  }
+
+  // 应用活动行 / GitLab 提交行 / 文件事件行 / Plane 工作项行合并后统一附加
+  // Plane 归因（行时间戳落入归因会话窗口 [start,end] 内即标注该工作项）。
+  // 归因 join 必须在这个派生层做（词法引用 planeAttributions）：归因按日现算、
+  // 晚于行渲染到达，若在模板行内调函数读归因列表，Svelte 追踪不到依赖，
+  // 归因到达后徽标不会出现（响应式缺失缺陷，2026-09-28）。
+  $: timelineRows = attachAttribution(
+    mergeTimelineRows(activities, gitlabCommits, fileEvents, planeWorkItems),
+    planeAttributions,
+    timelineRowTimestamp,
+  );
+
+  // Plane 工作项归因：时间线主数据加载完成后按日现算（随用随算不入库；
+  // 未配置 Plane 时后端返回空成功）。失败静默，不影响时间线首屏。
+  // 返回是否成功：自动链路忽略返回值（保持静默），手动链路用它驱动失败提示
+  async function loadPlaneAttributions(date: string): Promise<boolean> {
+    planeAttributions = [];
+    try {
+      const result = await invoke<{
+        ok: boolean;
+        attributions: PlaneAttributionItem[];
+        ai_used: boolean;
+        message: string | null;
+      }>('plane_attributions_for_date', { date });
+      if (date !== selectedDate) return false;
+      if (!result.ok) {
+        if (result.message) console.warn('Plane 工作项归因失败:', result.message);
+        return false;
+      }
+      planeAttributions = result.attributions;
+      return true;
+    } catch (e) {
+      console.warn('Plane 工作项归因失败:', e);
+      return false;
+    }
+  }
+
+  // 「今日项目」卡的手动归因入口：只重算当日归因（不重拉活动/不动图片缓存），
+  // spinner 与失败提示由卡内展示——用户主动点击必须知道结果。
+  let recomputeAttributionsLoading = false;
+  let recomputeAttributionsError = false;
+  async function manualRecomputeAttributions(): Promise<void> {
+    if (recomputeAttributionsLoading) return;
+    recomputeAttributionsLoading = true;
+    recomputeAttributionsError = false;
+    try {
+      recomputeAttributionsError = !(await loadPlaneAttributions(selectedDate));
+    } finally {
+      recomputeAttributionsLoading = false;
+    }
+  }
+
+  // 文件事件类型 → 徽标文案（复用概览页的 overview.fileEvent* 键）
+  function fileEventBadgeKey(eventType: string): string {
+    switch (eventType) {
+      case 'created':
+        return 'overview.fileEventCreated';
+      case 'deleted':
+        return 'overview.fileEventDeleted';
+      case 'renamed':
+        return 'overview.fileEventRenamed';
+      default:
+        return 'overview.fileEventModified';
+    }
+  }
+
+  function fileEventName(path: string): string {
+    const normalized = path.split('\\').join('/');
+    const fileName = normalized.split('/').pop() ?? path;
+    return fileName || path;
+  }
+
+  function fileEventSizeLabel(size: number): string {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
   let hourlySummaries: HourlySummaryRecord[] = [];
   let loading = true;
   let error: string | null = null;
@@ -121,6 +257,120 @@
   let summaryTrigger: HTMLButtonElement | null = null;
   let detailTrigger: HTMLButtonElement | null = null;
   let detailCloseButton: HTMLButtonElement | null = null;
+  // GitLab 提交详情抽屉（与应用活动抽屉同壳、互斥打开）
+  let selectedCommit: GitlabCommitRow | null = null;
+  let commitDetailTrigger: HTMLButtonElement | null = null;
+  let commitDetailCloseButton: HTMLButtonElement | null = null;
+
+  // 提交「修改文件」：点击时现拉 + 会话级缓存（sha → 结果），同 sha 不重复请求。
+  interface CommitDiffFile {
+    old_path: string;
+    new_path: string;
+    diff: string;
+    new_file: boolean;
+    renamed_file: boolean;
+    deleted_file: boolean;
+  }
+  interface CommitDiffCacheEntry {
+    ok: boolean;
+    files: CommitDiffFile[];
+    message?: string;
+  }
+  const COMMIT_DIFF_MAX_LINES = 400;
+  const commitDiffCache = new Map<string, CommitDiffCacheEntry>();
+  let commitDiffFiles: CommitDiffFile[] = [];
+  let commitDiffLoading = false;
+  let commitDiffError: string | null = null;
+  let commitDiffRequestId = 0;
+  let expandedDiffFiles = new Set<string>();
+  // 外跳按钮用的实例地址（抽屉打开时随配置读取）
+  let commitGitlabUrl = '';
+
+  // 外跳地址：实例 URL + 项目路径（URL 编码）+ commit/sha（GitLab Web 约定）
+  function commitWebUrl(commit: GitlabCommitRow): string {
+    const base = commitGitlabUrl.trim().replace(/\/+$/, '');
+    const encoded = commit.project.split('/').map(encodeURIComponent).join('/');
+    return `${base}/${encoded}/-/commit/${commit.sha}`;
+  }
+
+  function diffFileLabel(file: CommitDiffFile): string {
+    const state = diffFileState(file);
+    const key = `timeline.detail.commitFile${state.charAt(0).toUpperCase()}${state.slice(1)}`;
+    return t(key);
+  }
+
+  function diffFileStateClass(file: CommitDiffFile): string {
+    return `timeline-diff-state-${diffFileState(file)}`;
+  }
+
+  async function loadCommitDiff(commit: GitlabCommitRow): Promise<void> {
+    const requestId = ++commitDiffRequestId;
+    commitDiffLoading = !commitDiffCache.has(commit.sha);
+    commitDiffFiles = [];
+    commitDiffError = null;
+    expandedDiffFiles = new Set();
+    try {
+      // 配置无论如何都读一次：外跳按钮需要实例地址
+      const config = await invoke<TimelineConfig>('get_config');
+      const gitlab = config.gitlab;
+      commitGitlabUrl = gitlab?.url?.trim() ?? '';
+      const cached = commitDiffCache.get(commit.sha);
+      if (cached) {
+        commitDiffFiles = cached.files;
+        commitDiffError = cached.ok ? null : cached.message || t('timeline.detail.commitFilesFailed');
+        return;
+      }
+      if (!gitlab?.url?.trim() || !gitlab.token?.trim()) {
+        commitDiffError = t('timeline.detail.commitFilesFailed');
+        return;
+      }
+      const result = await invoke<{
+        ok: boolean;
+        files: CommitDiffFile[];
+        message: string | null;
+      }>('gitlab_commit_diff', {
+        url: gitlab.url,
+        token: gitlab.token,
+        project: commit.project,
+        sha: commit.sha,
+      });
+      commitDiffCache.set(commit.sha, {
+        ok: result.ok,
+        files: result.files,
+        message: result.message ?? undefined,
+      });
+      if (requestId !== commitDiffRequestId) return;
+      if (!result.ok) {
+        commitDiffError = result.message || t('timeline.detail.commitFilesFailed');
+        return;
+      }
+      commitDiffFiles = result.files;
+    } catch (e) {
+      if (requestId !== commitDiffRequestId) return;
+      commitDiffError = formatUserError(e, t('timeline.detail.commitFilesFailed'));
+    } finally {
+      if (requestId === commitDiffRequestId) {
+        commitDiffLoading = false;
+      }
+    }
+  }
+
+  function retryCommitDiff(): void {
+    if (selectedCommit) {
+      void loadCommitDiff(selectedCommit);
+    }
+  }
+
+  function toggleDiffFile(file: CommitDiffFile): void {
+    const key = file.new_path || file.old_path;
+    const next = new Set(expandedDiffFiles);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    expandedDiffFiles = next;
+  }
   let categoryTrigger: HTMLButtonElement | null = null;
   let categoryPopover: HTMLElement | null = null;
   let categoryPopoverStyle = '';
@@ -224,6 +474,7 @@
     }
 
     selectedActivity = null;
+    selectedCommit = null;
     if (selectedDate === nextDate) {
       loadTimeline();
       return;
@@ -806,13 +1057,23 @@
     clearImageCaches();
 
     try {
-      const [activitiesData, summariesData] = await Promise.all([
+      const [activitiesData, summariesData, commitsData, fileEventsData, planeItemsData] = await Promise.all([
         timelineGateway.getPage({
           date: requestDate,
           limit: PAGE_SIZE,
           offset: 0,
         }),
         timelineGateway.getHourlySummaries(requestDate),
+        invoke<GitlabCommitRow[]>('get_gitlab_commits_for_date', { date: requestDate }),
+        // 文件活动（未启用监控时后端返回空列表；失败不拖垮时间线首屏）
+        invoke<{ total: number; events: FileEventRow[] }>('get_file_monitor_stats', {
+          dateFrom: requestDate,
+          dateTo: requestDate,
+          limit: 50,
+        })
+          .then((stats) => stats.events)
+          .catch(() => [] as FileEventRow[]),
+        invoke<PlaneWorkItemRow[]>('get_plane_work_items_for_date', { date: requestDate }),
       ]);
 
       if (requestId !== loadTimelineRequestId || requestDate !== selectedDate) return;
@@ -822,6 +1083,9 @@
       if (requestId !== loadTimelineRequestId || requestDate !== selectedDate) return;
 
       activities = preparedActivities;
+      gitlabCommits = commitsData;
+      fileEvents = fileEventsData;
+      planeWorkItems = planeItemsData;
 
       hourlySummaries = summariesData;
       offset = activities.length;
@@ -854,6 +1118,70 @@
       if (requestId === loadTimelineRequestId && requestDate === selectedDate) {
         loading = false;
       }
+    }
+
+    // 后台补采：拉取该日 GitLab 提交入库后刷新（不阻塞首屏；失败静默）
+    void syncGitlabCommits(requestDate);
+    // 后台补采：拉取该日 Plane 工作项入库后刷新（同款模式；未配置时后端返回空结果）
+    void syncPlaneWorkItems(requestDate);
+    // 后台归因：把该日活动归因到 Plane 工作项供行内徽标标注（随用随算不入库；
+    // 未配置时后端返回空成功，失败静默）
+    void loadPlaneAttributions(requestDate);
+  }
+
+  // 拉取指定日期的 GitLab 提交入库（口径与日报一致），成功后刷新展示。
+  // 每个日期每次会话只补采一次，避免反复切日期时反复打 GitLab API。
+  async function syncGitlabCommits(date: string) {
+    if (gitlabSyncStartedDates.has(date)) return;
+    gitlabSyncStartedDates.add(date);
+    try {
+      const config = await invoke<TimelineConfig>('get_config');
+      const gitlab = config.gitlab;
+      if (!gitlab?.report_enabled || !gitlab.url?.trim() || !gitlab.token?.trim()) return;
+      const result = await invoke<{ ok: boolean; message: string | null }>(
+        'gitlab_sync_commits_for_date',
+        {
+          url: gitlab.url,
+          token: gitlab.token,
+          date,
+          projectFilter: gitlab.project_filter ?? [],
+          workAuthors: gitlab.work_authors ?? [],
+        },
+      );
+      if (!result.ok) {
+        console.warn('GitLab 提交补采失败:', result.message);
+        return;
+      }
+      const commits = await invoke<GitlabCommitRow[]>('get_gitlab_commits_for_date', { date });
+      if (date === selectedDate) {
+        gitlabCommits = commits;
+      }
+    } catch (e) {
+      console.warn('GitLab 提交补采失败:', e);
+    }
+  }
+
+  // 拉取指定日期的 Plane 工作项入库后刷新展示（配置读取在后端：未配置/未启用
+  // 返回空成功结果）。每个日期每次会话只补采一次，避免反复切日期时反复打
+  // Plane API；失败静默，不影响时间线首屏。
+  async function syncPlaneWorkItems(date: string) {
+    if (planeSyncStartedDates.has(date)) return;
+    planeSyncStartedDates.add(date);
+    try {
+      const result = await invoke<{ ok: boolean; synced: number; message: string | null }>(
+        'plane_sync_work_items_for_date',
+        { date },
+      );
+      if (!result.ok) {
+        console.warn('Plane 工作项补采失败:', result.message);
+        return;
+      }
+      const items = await invoke<PlaneWorkItemRow[]>('get_plane_work_items_for_date', { date });
+      if (date === selectedDate) {
+        planeWorkItems = items;
+      }
+    } catch (e) {
+      console.warn('Plane 工作项补采失败:', e);
     }
   }
 
@@ -1051,6 +1379,7 @@
     trigger: HTMLButtonElement | null = null,
   ): Promise<void> {
     await closeSummaryDrawer(false);
+    selectedCommit = null;
     detailTrigger = trigger;
     showCategoryPopover = false;
     const requestId = ++viewActivityRequestId;
@@ -1187,6 +1516,43 @@
       detailTrigger?.focus();
     }
     detailTrigger = null;
+  }
+
+  // 打开 GitLab 提交详情（行内已带全部字段，无需回库刷新；修改文件随打开现拉）
+  async function viewCommit(
+    commit: GitlabCommitRow,
+    trigger: HTMLButtonElement | null = null,
+  ): Promise<void> {
+    await closeSummaryDrawer(false);
+    selectedActivity = null;
+    commitDetailTrigger = trigger;
+    selectedCommit = commit;
+    await tick();
+    commitDetailCloseButton?.focus();
+    void loadCommitDiff(commit);
+  }
+
+  // 关闭提交详情并把焦点交还给打开详情的时间线记录。
+  async function closeCommitDetail(restoreFocus = true): Promise<void> {
+    selectedCommit = null;
+    commitDiffFiles = [];
+    commitDiffError = null;
+    expandedDiffFiles = new Set();
+    if (restoreFocus) {
+      await tick();
+      commitDetailTrigger?.focus();
+    }
+    commitDetailTrigger = null;
+  }
+
+  function handleCommitDetailDismiss(): void {
+    void closeCommitDetail();
+  }
+
+  function handleCommitDetailOverlayKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    handleCommitDetailDismiss();
   }
 
   // 删除单条活动记录（连带截图）
@@ -1460,6 +1826,25 @@
       </div>
     </div>
     <div class="page-toolbar">
+      <button
+        type="button"
+        class="page-control-btn"
+        on:click={() => (selectedDate = shiftIsoDate(selectedDate, -1))}
+      >
+        {t('report.previousDay')}
+      </button>
+      <button
+        class="page-control-btn {selectedDate === getLocalDateString() ? 'page-control-btn-active' : ''}"
+        on:click={() => (selectedDate = getLocalDateString())}
+      >
+        {t('report.today')}
+      </button>
+      <button
+        class="page-control-btn {selectedDate === getTimelineYesterdayDateString() ? 'page-control-btn-active' : ''}"
+        on:click={() => (selectedDate = getTimelineYesterdayDateString())}
+      >
+        {t('report.yesterday')}
+      </button>
       {#key `timeline-date-${currentLocale}`}
         <LocalizedDatePicker
           bind:value={selectedDate}
@@ -1498,6 +1883,14 @@
     </div>
   </div>
 
+  <TimelineProjectsCard
+      date={selectedDate}
+      attributions={planeAttributions}
+      recomputing={recomputeAttributionsLoading}
+      recomputeError={recomputeAttributionsError}
+      on:recompute={manualRecomputeAttributions}
+    />
+
   {#if loading}
     <div class="flex items-center justify-center h-64">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
@@ -1518,7 +1911,7 @@
       <p class="empty-state-copy">{t('timeline.empty')}</p>
     </div>
   {:else}
-    <div class="page-card timeline-editorial-board overflow-hidden p-0">
+      <div class="page-card timeline-editorial-board overflow-hidden p-0">
       <div class="timeline-summary-strip">
         <div class="timeline-summary-copy">
           <span>{t('timeline.recordSummary', { dateLabel: isToday ? t('timeline.todayLabel') : selectedDate, count: activities.length })}</span>
@@ -1550,7 +1943,99 @@
       <!-- 时间线列表 -->
       <div class="timeline-editorial-shell">
         <div class="timeline-rail" aria-hidden="true"></div>
-        {#each activities as activity, i}
+        {#each timelineRows as row, i}
+          {#if row.kind === 'commit'}
+            <button
+              class="timeline-entry timeline-entry-commit"
+              on:click={(event) => viewCommit(row.commit, event.currentTarget)}
+            >
+              <div class="timeline-entry-anchor">
+                <div class="timeline-entry-time">{new Date(row.commit.committed_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
+              </div>
+              <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
+                <div class="timeline-entry-app timeline-entry-app-compact">
+                  <div class="timeline-app-icon timeline-app-icon-gitlab" aria-hidden="true">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <circle cx="12" cy="12" r="4"></circle>
+                      <line x1="1.05" y1="12" x2="7" y2="12"></line>
+                      <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+                    </svg>
+                  </div>
+                  <div class="timeline-entry-heading">
+                    <span class="timeline-entry-app-name" title={row.commit.project}>{row.commit.project}</span>
+                    <span class="timeline-entry-category timeline-entry-category-pill">{t('overview.gitlabTitle')}</span>
+                  </div>
+                </div>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.commit.title}>
+                  {#if row.attribution}
+                    <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
+                  {/if}
+                  {row.commit.title}
+                </p>
+                <div class="timeline-entry-tail timeline-entry-tail-compact">
+                  <span class="timeline-commit-stats">{row.commit.additions !== null && row.commit.deletions !== null ? `+${row.commit.additions}/-${row.commit.deletions}` : ''}</span>
+                  <svg class="timeline-entry-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </div>
+            </button>
+          {:else if row.kind === 'fileEvent'}
+            <div class="timeline-entry timeline-entry-commit">
+              <div class="timeline-entry-anchor">
+                <div class="timeline-entry-time">{new Date(row.event.occurred_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
+              </div>
+              <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
+                <div class="timeline-entry-app timeline-entry-app-compact">
+                  <div class="timeline-app-icon timeline-app-icon-fileevent" aria-hidden="true">
+                    <span>📄</span>
+                  </div>
+                  <div class="timeline-entry-heading">
+                    <span class="timeline-entry-app-name" title={row.event.path}>{fileEventName(row.event.path)}</span>
+                    <span class="timeline-entry-category timeline-entry-category-pill">{t(fileEventBadgeKey(row.event.event_type))}</span>
+                  </div>
+                </div>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.event.path}>
+                  {#if row.attribution}
+                    <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
+                  {/if}
+                  {row.event.path}
+                </p>
+                <div class="timeline-entry-tail timeline-entry-tail-compact">
+                  {#if row.event.size !== null}
+                    <span class="timeline-commit-stats">{fileEventSizeLabel(row.event.size)}</span>
+                  {/if}
+                </div>
+              </div>
+            </div>
+          {:else if row.kind === 'planeItem'}
+            <div class="timeline-entry timeline-entry-commit">
+              <div class="timeline-entry-anchor">
+                <div class="timeline-entry-time">{new Date(row.item.updated_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <div class="timeline-entry-marker timeline-entry-marker-commit"></div>
+              </div>
+              <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
+                <div class="timeline-entry-app timeline-entry-app-compact">
+                  <div class="timeline-app-icon timeline-app-icon-plane" aria-hidden="true">
+                    <span>🛩</span>
+                  </div>
+                  <div class="timeline-entry-heading">
+                    <span class="timeline-entry-app-name" title={row.item.project_name}>{row.item.project_name}</span>
+                    <span class="timeline-entry-category timeline-entry-category-pill">{t('timeline.planeItemBadge')}</span>
+                  </div>
+                </div>
+                <p class="timeline-entry-title timeline-entry-title-compact" title={row.item.name}>{row.item.name}</p>
+                <div class="timeline-entry-tail timeline-entry-tail-compact">
+                  <span class="timeline-commit-stats">{row.item.state_name}</span>
+                </div>
+              </div>
+            </div>
+          {:else}
+          {@const activity = row.activity}
           {@const info = getCategoryMeta(activity.category)}
           {@const featured = activity.id !== null && featuredActivityIds.has(activity.id)}
           {@const timelineTitle = getTimelineTitle(activity)}
@@ -1601,6 +2086,10 @@
                     <div class="timeline-entry-duration-chip">{formatDuration(activity.duration)}</div>
                   </div>
                   <p class="timeline-entry-title timeline-entry-title-featured" title={activity.window_title}>
+                    {#if row.attribution}
+                      <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                      <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
+                    {/if}
                     {timelineTitle}
                   </p>
                   {#if activity.browser_url}
@@ -1629,6 +2118,10 @@
                   </div>
                 </div>
                 <p class="timeline-entry-title timeline-entry-title-compact" title={activity.window_title}>
+                  {#if row.attribution}
+                    <span class="timeline-plane-badge" title={row.attribution.project_name + ' · ' + row.attribution.name}>{row.attribution.display_key} {row.attribution.name}</span>
+                    <span class="timeline-project-badge" title={row.attribution.project_name}>{row.attribution.project_name}</span>
+                  {/if}
                   {timelineTitle}
                 </p>
                 <div class="timeline-entry-tail timeline-entry-tail-compact">
@@ -1640,6 +2133,7 @@
               </div>
             {/if}
           </button>
+          {/if}
         {/each}
       </div>
 
@@ -1684,6 +2178,7 @@
 <!-- 活动详情右侧抽屉 -->
 {#if selectedActivity}
   {@const info = getCategoryMeta(selectedActivity.category)}
+  {@const ocrDisplay = getOcrDisplayText(selectedActivity.ocr_text)}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
@@ -1780,6 +2275,19 @@
               </div>
             {/if}
           </div>
+        </section>
+
+        <section class="timeline-detail-ocr">
+          <div class="timeline-detail-section-heading">
+            <span>{t('timeline.detail.ocr')}</span>
+          </div>
+          {#if ocrDisplay}
+            <div class="timeline-detail-ocr-text">{ocrDisplay}</div>
+          {:else}
+            <div class="timeline-detail-preview-state text-slate-400 dark:text-[#7d8590]">
+              <span>{t('timeline.detail.ocrEmpty')}</span>
+            </div>
+          {/if}
         </section>
 
         <section class="timeline-detail-meta">
@@ -2000,6 +2508,156 @@
             }[(selectedActivity._privacyLevel || 'full')] || ''}
           </p>
         </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+{/if}
+
+<!-- GitLab 提交详情右侧抽屉 -->
+{#if selectedCommit}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="timeline-detail-overlay fixed inset-0 z-[140] bg-slate-950/52 backdrop-blur-md flex items-center justify-end p-4 animate-fadeIn"
+    role="presentation"
+    on:click|self={handleCommitDetailDismiss}
+    on:keydown={handleCommitDetailOverlayKeydown}
+  >
+    <aside
+      class="timeline-detail-drawer"
+      use:trapFocus
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="timeline-commit-detail-title"
+    >
+      <!-- 头部 -->
+      <div class="timeline-detail-header">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="timeline-app-icon timeline-app-icon-lg timeline-app-icon-gitlab" aria-hidden="true">
+              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="4"></circle>
+                <line x1="1.05" y1="12" x2="7" y2="12"></line>
+                <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+              </svg>
+            </div>
+            <div>
+              <h3 id="timeline-commit-detail-title" class="text-lg font-semibold text-slate-900 dark:text-[#e6edf3]" title={selectedCommit.project}>{selectedCommit.project}</h3>
+              <p class="text-sm text-slate-500 dark:text-[#7d8590]">{t('overview.gitlabTitle')}</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-1">
+            <button
+              class="btn btn-ghost text-indigo-500 hover:text-indigo-600 dark:text-indigo-400"
+              title={t('timeline.detail.openInGitlab')}
+              on:click={() => selectedCommit && openUrl(commitWebUrl(selectedCommit))}
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </button>
+            <button bind:this={commitDetailCloseButton} class="btn btn-ghost" aria-label={t('window.close')} on:click={() => closeCommitDetail()}>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 内容 -->
+      <div class="timeline-detail-body">
+        <section class="timeline-detail-hero" aria-label={t('timeline.detail.recordTime')}>
+          <div class="timeline-detail-hero-item">
+            <span>{t('timeline.detail.recordTime')}</span>
+            <strong>{formatTime(selectedCommit.committed_at)}</strong>
+          </div>
+          <span class="timeline-detail-hero-divider" aria-hidden="true"></span>
+          <div class="timeline-detail-hero-item">
+            <span>{t('timeline.detail.commitStats')}</span>
+            <strong>{selectedCommit.additions !== null && selectedCommit.deletions !== null ? `+${selectedCommit.additions}/-${selectedCommit.deletions}` : '--'}</strong>
+          </div>
+        </section>
+
+        <section class="timeline-detail-meta">
+          <div class="timeline-detail-meta-row">
+            <span>{t('timeline.detail.commitMessage')}</span>
+            <p>{selectedCommit.title}</p>
+          </div>
+          <div class="timeline-detail-meta-row">
+            <span>{t('timeline.detail.commitBranch')}</span>
+            <p>{selectedCommit.branch}</p>
+          </div>
+          <div class="timeline-detail-meta-row">
+            <span>{t('timeline.detail.commitHash')}</span>
+            <p>{selectedCommit.short_id}</p>
+          </div>
+          {#if selectedCommit.author_name}
+            <div class="timeline-detail-meta-row">
+              <span>{t('timeline.detail.commitAuthor')}</span>
+              <p>{selectedCommit.author_name}</p>
+            </div>
+          {/if}
+        </section>
+
+        <!-- 修改文件：点击时现拉 + 会话缓存，文件可展开查看染色 diff -->
+        <section class="timeline-detail-commit-files">
+          <div class="timeline-detail-section-heading">
+            <span>{t('timeline.detail.commitFiles')}</span>
+            {#if commitDiffFiles.length > 0}
+              <span class="timeline-detail-files-count">{commitDiffFiles.length}</span>
+            {/if}
+          </div>
+
+          {#if commitDiffLoading}
+            <div class="timeline-detail-files-state">
+              <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-500"></div>
+            </div>
+          {:else if commitDiffError}
+            <div class="timeline-detail-files-error">
+              <p>{commitDiffError}</p>
+              <button type="button" class="page-control-btn" on:click={retryCommitDiff}>{t('timeline.retry')}</button>
+            </div>
+          {:else if commitDiffFiles.length === 0}
+            <div class="timeline-detail-files-state text-slate-400 dark:text-[#7d8590]">
+              <span>{t('timeline.detail.commitFilesEmpty')}</span>
+            </div>
+          {:else}
+            <div class="timeline-diff-list">
+              {#each commitDiffFiles as file (file.new_path + ':' + file.old_path)}
+                {@const fileKey = file.new_path || file.old_path}
+                {@const expanded = expandedDiffFiles.has(fileKey)}
+                {@const parsed = expanded ? parseDiffLines(file.diff, COMMIT_DIFF_MAX_LINES) : null}
+                <div class="timeline-diff-item">
+                  <button
+                    type="button"
+                    class="timeline-diff-file"
+                    aria-expanded={expanded}
+                    on:click={() => toggleDiffFile(file)}
+                  >
+                    <svg class:timeline-diff-chevron-open={expanded} class="timeline-diff-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span class="timeline-diff-path" title={file.new_path === file.old_path ? file.new_path : `${file.old_path} → ${file.new_path}`}>
+                      {file.new_path === file.old_path ? file.new_path : `${file.old_path} → ${file.new_path}`}
+                    </span>
+                    <span class="timeline-diff-state {diffFileStateClass(file)}">{diffFileLabel(file)}</span>
+                  </button>
+                  {#if expanded && parsed}
+                    <div class="timeline-diff-body">
+                      {#each parsed.lines as line}
+                        <span class="timeline-diff-line timeline-diff-line-{line.kind}">{line.text || ' '}</span>
+                      {/each}
+                      {#if parsed.truncated > 0}
+                        <span class="timeline-diff-truncated">{t('timeline.detail.commitDiffTruncated', { count: COMMIT_DIFF_MAX_LINES })}</span>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
         </section>
       </div>
     </aside>
@@ -2647,6 +3305,318 @@
     align-self: end;
   }
 
+  /* GitLab/文件/Plane 外部行：与活动行同款紧凑栅格卡片 + 2.75rem 图标方块，
+     淡色底与内容色区分来源（提交橙 / 文件灰蓝 / Plane 靛） */
+  .timeline-app-icon-gitlab {
+    color: #ea580c;
+    background: rgba(251, 146, 60, 0.14);
+  }
+  .timeline-app-icon-fileevent {
+    color: #475569;
+    background: rgba(148, 163, 184, 0.18);
+  }
+  .timeline-app-icon-plane {
+    color: #4f46e5;
+    background: rgba(99, 102, 241, 0.14);
+  }
+  .timeline-entry-marker-commit {
+    background: rgb(251 146 60);
+  }
+  .timeline-commit-stats {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    color: rgb(100 116 139);
+  }
+  :global(.dark) .timeline-commit-stats {
+    color: rgb(125 133 144);
+  }
+  :global(.dark) .timeline-app-icon-gitlab {
+    color: #fb923c;
+  }
+  :global(.dark) .timeline-app-icon-fileevent {
+    color: #94a3b8;
+  }
+  :global(.dark) .timeline-app-icon-plane {
+    color: #818cf8;
+  }
+
+  /* 提交详情「修改文件」区块：文件行 + 可展开染色 diff */
+  .timeline-detail-files-count {
+    display: inline-flex;
+    align-items: center;
+    min-width: 1.35rem;
+    justify-content: center;
+    padding: 0.05rem 0.4rem;
+    border-radius: var(--radius-full);
+    background: rgba(99, 102, 241, 0.12);
+    color: #4f46e5;
+    font-size: 0.68rem;
+    font-weight: 700;
+  }
+
+  .timeline-detail-files-state {
+    min-height: 5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.84rem;
+  }
+
+  .timeline-detail-files-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid rgba(248, 113, 113, 0.24);
+    border-radius: var(--radius-md);
+    background: rgba(254, 242, 242, 0.7);
+    color: #b91c1c;
+    font-size: 0.8rem;
+  }
+
+  .timeline-detail-files-error p {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+
+  .timeline-diff-list {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .timeline-diff-item {
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.6);
+  }
+
+  .timeline-diff-file {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 0.65rem;
+    border: 0;
+    background: transparent;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .timeline-diff-file:focus-visible {
+    outline: 2px solid rgba(79, 70, 229, 0.55);
+    outline-offset: -2px;
+  }
+
+  .timeline-diff-chevron {
+    width: 0.9rem;
+    height: 0.9rem;
+    flex: 0 0 auto;
+    color: #a8a29e;
+    transition: transform 160ms ease;
+  }
+
+  .timeline-diff-chevron-open {
+    transform: rotate(180deg);
+  }
+
+  .timeline-diff-path {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem;
+    color: #292524;
+  }
+
+  .timeline-diff-state {
+    flex: 0 0 auto;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-full);
+    font-size: 0.66rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .timeline-diff-state-added {
+    color: #15803d;
+    background: rgba(34, 197, 94, 0.14);
+  }
+
+  .timeline-diff-state-deleted {
+    color: #b91c1c;
+    background: rgba(239, 68, 68, 0.14);
+  }
+
+  .timeline-diff-state-renamed {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.16);
+  }
+
+  .timeline-diff-state-modified {
+    color: #4f46e5;
+    background: rgba(99, 102, 241, 0.14);
+  }
+
+  .timeline-diff-body {
+    display: block;
+    max-height: 17rem;
+    overflow-y: auto;
+    padding: 0.5rem 0.65rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(248, 250, 252, 0.85);
+  }
+
+  .timeline-diff-line {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .timeline-diff-line-add {
+    color: #166534;
+    background: rgba(34, 197, 94, 0.14);
+  }
+
+  .timeline-diff-line-del {
+    color: #991b1b;
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .timeline-diff-line-hunk {
+    color: #7c3aed;
+  }
+
+  .timeline-diff-line-ctx {
+    color: #57534e;
+  }
+
+  .timeline-diff-line-meta {
+    color: #a8a29e;
+  }
+
+  .timeline-diff-truncated {
+    display: block;
+    margin-top: 0.4rem;
+    color: #a8a29e;
+    font-size: 0.7rem;
+  }
+
+  :global(.dark) .timeline-detail-files-count {
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.2);
+  }
+
+  :global(.dark) .timeline-detail-files-error {
+    border-color: rgba(248, 81, 73, 0.26);
+    background: rgba(63, 20, 20, 0.28);
+    color: #ff7b72;
+  }
+
+  :global(.dark) .timeline-diff-item {
+    border-color: var(--surface-border-subtle);
+    background: rgba(22, 27, 34, 0.6);
+  }
+
+  :global(.dark) .timeline-diff-path {
+    color: #e6edf3;
+  }
+
+  :global(.dark) .timeline-diff-body {
+    border-top-color: var(--surface-border-subtle);
+    background: rgba(13, 17, 23, 0.8);
+  }
+
+  :global(.dark) .timeline-diff-line-add {
+    color: #7ee787;
+    background: rgba(46, 160, 67, 0.18);
+  }
+
+  :global(.dark) .timeline-diff-line-del {
+    color: #ffa198;
+    background: rgba(248, 81, 73, 0.16);
+  }
+
+  :global(.dark) .timeline-diff-line-hunk {
+    color: #d2a8ff;
+  }
+
+  :global(.dark) .timeline-diff-line-ctx {
+    color: #adbac7;
+  }
+
+  :global(.dark) .timeline-diff-line-meta {
+    color: #6e7681;
+  }
+
+  :global(.dark) .timeline-diff-state-added {
+    color: #7ee787;
+    background: rgba(46, 160, 67, 0.2);
+  }
+
+  :global(.dark) .timeline-diff-state-deleted {
+    color: #ffa198;
+    background: rgba(248, 81, 73, 0.2);
+  }
+
+  :global(.dark) .timeline-diff-state-renamed {
+    color: #e3b341;
+    background: rgba(187, 128, 9, 0.2);
+  }
+
+  :global(.dark) .timeline-diff-state-modified {
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.2);
+  }
+
+  /* Plane 工作项归因徽标：轻量文字徽标，
+     紫色区分 GitLab 橙；文字 = {identifier}-{sequence_id}，title = 工作项名 */
+  .timeline-plane-badge {
+    display: inline-block;
+    margin-inline-end: 0.4rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--radius-md);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    vertical-align: middle;
+    color: rgb(139 92 246);
+    background: rgb(139 92 246 / 0.12);
+  }
+  :global(.dark) .timeline-plane-badge {
+    color: rgb(196 181 253);
+    background: rgb(139 92 246 / 0.2);
+  }
+
+  /* Plane 归因项目徽标（与工作项徽标并排）：蓝色区分紫色工作项，
+     文字 = 纯项目名（不带 ID），title = 项目名 */
+  .timeline-project-badge {
+    display: inline-block;
+    margin-inline-end: 0.4rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--radius-md);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    vertical-align: middle;
+    color: rgb(37 99 235);
+    background: rgb(37 99 235 / 0.12);
+  }
+  :global(.dark) .timeline-project-badge {
+    color: rgb(147 197 253);
+    background: rgb(37 99 235 / 0.2);
+  }
+
   .timeline-entry-duration {
     font-size: 0.85rem;
     font-weight: 500;
@@ -2801,6 +3771,22 @@
     width: 100%;
     max-height: 25rem;
     object-fit: contain;
+  }
+
+  .timeline-detail-ocr-text {
+    max-height: 14rem;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: var(--radius-md);
+    background: rgba(148, 163, 184, 0.08);
+    color: #292524;
+    font-size: 0.8rem;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
 
   .timeline-detail-preview-loading-indicator {
@@ -3276,6 +4262,12 @@
 
   :global(.dark) .timeline-detail-preview-frame {
     background: rgba(48, 54, 61, 0.38);
+  }
+
+  :global(.dark) .timeline-detail-ocr-text {
+    border-color: rgba(48, 54, 61, 0.8);
+    background: rgba(48, 54, 61, 0.38);
+    color: #e6edf3;
   }
 
   :global(.dark) .timeline-detail-preview-loading-indicator {

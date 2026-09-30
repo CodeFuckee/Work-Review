@@ -684,7 +684,12 @@ try {{
                     }))
                 } else {
                     if !stdout.trim().is_empty() {
-                        log::warn!("Windows OCR 输出无法解析为 JSON: {}", stdout.trim());
+                        // 只记长度不记原文：stdout 是识别出的屏幕文本 JSON（敏感），
+                        // 落日志前不过 filter_sensitive_text（同 privacy 日志脱敏口径）
+                        log::warn!(
+                            "Windows OCR 输出无法解析为 JSON（长度 {} 字节）",
+                            stdout.len()
+                        );
                     }
                     if !stderr.trim().is_empty() {
                         log::warn!("Windows OCR stderr: {}", stderr.trim());
@@ -695,11 +700,12 @@ try {{
             Ok(result) => {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 let stdout = String::from_utf8_lossy(&result.stdout);
+                // stdout 含识别出的屏幕文本（敏感），只记长度（同 privacy 日志脱敏口径）
                 log::warn!(
-                    "Windows OCR PowerShell 执行失败: status={:?}, stderr={}, stdout={}",
+                    "Windows OCR PowerShell 执行失败: status={:?}, stderr={}, stdout_len={}",
                     result.status.code(),
                     stderr.trim(),
-                    stdout.trim()
+                    stdout.len()
                 );
                 Ok(None)
             }
@@ -713,13 +719,19 @@ try {{
     /// 使用 macOS Vision 框架提取文字
     #[cfg(target_os = "macos")]
     fn extract_with_vision(&self, image_path: &Path) -> Result<Option<OcrResult>> {
+        // AppleScript 双引号字符串转义：路径含 `"` 或 `\`（macOS 文件名均合法）
+        // 时脚本编译失败、OCR 静默降级为 None——与 Windows 侧 PowerShell 转义同口径
+        let escaped_path = image_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
         let script = format!(
             r#"
 use framework "Vision"
 use framework "Foundation"
 use scripting additions
 
-set imagePath to "{}"
+set imagePath to "{escaped_path}"
 set theImage to current application's NSImage's alloc()'s initWithContentsOfFile:imagePath
 
 if theImage is missing value then
@@ -741,8 +753,7 @@ repeat with observation in theResults
 end repeat
 
 return outputText
-            "#,
-            image_path.to_string_lossy()
+            "#
         );
 
         let output = Self::run_command_with_timeout(
@@ -1534,9 +1545,31 @@ pub fn filter_sensitive_text(text: &str) -> String {
         result = re.replace_all(&result, "[邮箱]").to_string();
     }
 
-    // 过滤 IP 地址
-    if let Ok(re) = Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b") {
-        result = re.replace_all(&result, "[IP地址]").to_string();
+    // 过滤 IP 地址。regex 的 \b 是 Unicode 词边界：CJK 汉字属词字符，中文与 IP
+    // 直接相邻（OCR 中文输出极常见）时首数字前不构成边界、整条漏配——与上方
+    // 银行卡号同款，匹配后手动校验前后邻位不是数字
+    if let Ok(re) = Regex::new(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}") {
+        let mut filtered = String::with_capacity(result.len());
+        let mut last_end = 0;
+        for m in re.find_iter(&result) {
+            let prev_is_digit = result[..m.start()]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_digit());
+            let next_is_digit = result[m.end()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit());
+            if prev_is_digit || next_is_digit {
+                // 属于更长数字串的一部分（如版本号/流水号片段），不视为 IP
+                continue;
+            }
+            filtered.push_str(&result[last_end..m.start()]);
+            filtered.push_str("[IP地址]");
+            last_end = m.end();
+        }
+        filtered.push_str(&result[last_end..]);
+        result = filtered;
     }
 
     // 过滤密码相关
@@ -1589,6 +1622,23 @@ mod tests {
             longer.contains("6222-0202-0011-2233-4444"),
             "实际输出: {longer}"
         );
+    }
+
+    #[test]
+    fn ip地址应被过滤且中文相邻不漏配() {
+        // 回归：\b 是 Unicode 词边界，中文与 IP 相邻时整条漏配
+        let masked = super::filter_sensitive_text("服务器192.168.1.1已重启");
+        assert!(!masked.contains("192.168.1.1"), "实际输出: {masked}");
+        assert!(masked.contains("[IP地址]"), "实际输出: {masked}");
+
+        // 独立 IP 正常打码
+        let plain = super::filter_sensitive_text("host: 10.0.0.7 end");
+        assert!(!plain.contains("10.0.0.7"), "实际输出: {plain}");
+
+        // 更长数字串的一部分（前后邻位是数字）不误报
+        let longer = super::filter_sensitive_text("编号 9192.168.1.19 结束");
+        assert!(longer.contains("9192.168.1.19"), "实际输出: {longer}");
+        assert!(!longer.contains("[IP地址]"), "实际输出: {longer}");
     }
 
     fn create_test_image(width: u32, height: u32) -> std::path::PathBuf {

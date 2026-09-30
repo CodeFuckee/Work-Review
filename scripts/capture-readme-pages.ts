@@ -88,7 +88,6 @@ export const README_SCREENSHOT_LABELS = [
   '设置-通用',
   '设置-外观',
   '设置-AI模型',
-  '设置-桌面化身',
   '设置-隐私',
   '设置-存储',
   '接入管理',
@@ -378,15 +377,6 @@ const config = {
   auto_start_silent: true,
   hide_dock_icon: false,
   lightweight_mode: false,
-  break_reminder_enabled: true,
-  break_reminder_interval_minutes: 50,
-  avatar_enabled: true,
-  avatar_scale: 0.9,
-  avatar_opacity: 0.82,
-  avatar_preset: 'original-standard',
-  avatar_persona: 'assistant',
-  avatar_click_through: false,
-  avatar_proactive_ai_enabled: false,
   idle_threshold_minutes: 5,
   goal_notifications: true,
   memory_enabled: true,
@@ -449,9 +439,6 @@ const config = {
   localhost_api_enabled: true,
   localhost_api_port: 47831,
   localhost_api_host: '127.0.0.1',
-  telegram_bot_enabled: false,
-  telegram_bot_token: null,
-  telegram_bot_proxy: null,
   feishu_bot_enabled: false,
   feishu_app_id: null,
   feishu_app_secret: null,
@@ -609,8 +596,6 @@ async function installTauriMock(
             return { deviceId: 'work-review-demo', protocolVersion: '1.0', deviceName: 'Work Review Demo' };
           case 'get_localhost_api_status':
             return { enabled: true, baseUrl: 'http://127.0.0.1:47831', tokenPreview: 'wr_••••••••demo', lastError: null };
-          case 'get_telegram_bot_status':
-            return { running: false, starting: false, allowedChatIds: [], lastError: null };
           case 'get_wecom_bot_status':
             return { running: false, starting: false, lastError: null, longConnectionConfigured: false, callbackConfigured: false };
           case 'get_update_settings':
@@ -623,7 +608,6 @@ async function installTauriMock(
               accessibility: true,
               input_monitoring: true,
               screenshot_supported: true,
-              avatar_input_supported: true,
               all_granted: true,
             };
           case 'get_running_apps':
@@ -695,6 +679,14 @@ async function captureSettingsTab(
   tabIndex: number,
   outputPath: string
 ): Promise<void> {
+  // 漂移守卫：设置页页签增删（如桌宠移除）曾让数字索引整体错位且无报错，
+  // 截图整体拍错页签。索引越界时立刻失败并提示同步本文件的 settingsTabs
+  const tabCount = await page.locator('.settings-tab-rail-item').count();
+  if (tabIndex >= tabCount) {
+    throw new Error(
+      `设置页签索引 ${tabIndex} 超出实际页签数 ${tabCount}——Settings.svelte 的 tabs 已变更，请同步本文件的 settingsTabs 列表`
+    );
+  }
   const tab = page.locator('.settings-tab-rail-item').nth(tabIndex);
   await tab.click();
   await page.waitForFunction(
@@ -833,13 +825,15 @@ async function main(): Promise<void> {
 
       console.log(`[${item.locale}] 截取设置页`);
       await capturePage(page, '/#/settings', '.settings-stage-shell .settings-card', outputPath('设置-通用'));
+      // 索引对应 Settings.svelte tabs 数组（0=general 已随 /#/settings 首屏拍过）：
+      // 1=appearance, 2=ai, 3=privacy, 4=storage, 5=node；桌宠移除后 6=gitlab、
+      // 7=plane（2026-09 新增）、8=filemonitor 暂不进 README
       const settingsTabs: readonly (readonly [number, string])[] = [
         [1, '设置-外观'],
         [2, '设置-AI模型'],
-        [3, '设置-桌面化身'],
-        [4, '设置-隐私'],
-        [5, '设置-存储'],
-        [6, '接入管理'],
+        [3, '设置-隐私'],
+        [4, '设置-存储'],
+        [5, '接入管理'],
       ];
       for (const [tabIndex, label] of settingsTabs) {
         await captureSettingsTab(page, tabIndex, outputPath(label));

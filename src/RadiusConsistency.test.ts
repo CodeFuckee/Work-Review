@@ -167,7 +167,6 @@ test('干净设置组件中的内层分组应扁平化为共享 subsection', asy
     './routes/settings/components/nodeGateway/DeviceIdentityPanel.svelte',
     './routes/settings/components/nodeGateway/McpServerPanel.svelte',
     './routes/settings/components/nodeGateway/BotCredentialsPanel.svelte',
-    './routes/settings/components/nodeGateway/TelegramBotPanel.svelte',
     './routes/settings/components/nodeGateway/LocalApiPanel.svelte',
   ];
 

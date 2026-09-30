@@ -314,6 +314,8 @@ function resolveMessageValue(key: string): TranslationValue | undefined {
 }
 
 function interpolate(template: string, params: InterpolationParams): string {
+  // 注意：这里的"二次替换"是有测试固化的预期语义（参数值中的 {占位符}
+  // 会被后续参数继续展开），不要改成单趟替换，除非先更新对应契约测试
   return Object.entries(params).reduce(
     (output, [paramKey, paramValue]) => output.replaceAll(`{${paramKey}}`, String(paramValue)),
     template,
@@ -367,7 +369,7 @@ export function formatLocalizedTime(
   date: Date | number,
   options?: Intl.DateTimeFormatOptions,
 ): string {
-  return new Intl.DateTimeFormat(get(locale), options).format(date);
+  return formatLocalizedDate(date, options);
 }
 
 export function formatDurationLocalized(
@@ -398,9 +400,9 @@ export function formatDurationLocalized(
       return compact ? (minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`) : (minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`);
     }
     if (minutes > 0) {
-      return compact ? `${minutes}m` : `${minutes}m`;
+      return `${minutes}m`;
     }
-    return compact ? `${secs}s` : `${secs}s`;
+    return `${secs}s`;
   }
   
   if (currentLocale === 'ar') {

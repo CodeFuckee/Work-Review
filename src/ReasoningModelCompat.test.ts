@@ -8,10 +8,10 @@ test('流式装配器应解析思考型模型的 reasoning_content 增量', asyn
     'utf8'
   );
 
-  // 正文帧缺失/为空时回落到思维链增量
+  // 思维链增量单独累积（不与正文拼接），正文帧缺失/为空时输出思考增量
   assert.match(
     source,
-    /\.or_else\(\|\| delta\["reasoning_content"\]\.as_str\(\)\)\?/
+    /if let Some\(r\) = delta\["reasoning_content"\][\s\S]{0,120}\.filter\(\|s\| !s\.is_empty\(\)\)[\s\S]{0,120}self\.reasoning\.push_str\(r\)/
   );
 });
 

@@ -1,5 +1,6 @@
 use crate::analysis::report_blocks::{
     apply_preferences, assemble_with_section_count, default_local_order, format_section_heading,
+    place_file_events_after_gitlab, place_gitlab_before_hourly,
 };
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
@@ -71,11 +72,12 @@ impl LocalAnalyzer {
         locale: AppLocale,
         pinned_blocks: Vec<String>,
     ) -> Self {
+        // 构建失败不得回退为无超时 Client（会把快速失败变成永久挂起）
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .expect("reqwest Client 初始化失败（TLS 后端不可用）");
 
         Self {
             host: host.to_string(),
@@ -87,7 +89,13 @@ impl LocalAnalyzer {
         }
     }
 
-    fn generation_prompt(&self, date: &str, stats: &DailyStats, activities: &[Activity]) -> String {
+    fn generation_prompt(
+        &self,
+        date: &str,
+        stats: &DailyStats,
+        activities: &[Activity],
+        semantic_name_overrides: &HashMap<String, String>,
+    ) -> String {
         let apps_list = join_list(
             self.locale,
             stats
@@ -110,7 +118,7 @@ impl LocalAnalyzer {
                 .domain_usage
                 .iter()
                 .take(3)
-                .map(|domain| format_domain_label(domain, self.locale, &HashMap::new()))
+                .map(|domain| format_domain_label(domain, self.locale, semantic_name_overrides))
                 .collect(),
         );
 
@@ -129,7 +137,7 @@ impl LocalAnalyzer {
             .take(20)
             .collect::<Vec<_>>();
 
-        let timeline = generate_activity_timeline(activities, self.locale);
+        let timeline = generate_activity_timeline(activities, &[], self.locale);
 
         let base_prompt = match self.locale {
             AppLocale::ZhCn => format!(
@@ -318,8 +326,9 @@ Do not add any extra preface or explanation."#,
         date: &str,
         stats: &DailyStats,
         activities: &[Activity],
+        semantic_name_overrides: &HashMap<String, String>,
     ) -> Result<String> {
-        let prompt = self.generation_prompt(date, stats, activities);
+        let prompt = self.generation_prompt(date, stats, activities, semantic_name_overrides);
 
         let response = self
             .client
@@ -365,6 +374,7 @@ impl Analyzer for LocalAnalyzer {
         locale: AppLocale,
         category_name_overrides: HashMap<String, String>,
         semantic_name_overrides: HashMap<String, String>,
+        gitlab: &crate::gitlab::GitlabReportSupplement,
     ) -> Result<GeneratedReport> {
         log::info!("生成本地日报（尝试调用 Ollama）");
 
@@ -378,15 +388,26 @@ impl Analyzer for LocalAnalyzer {
         let mut fallback_reason = None;
 
         let (stats_sections, mut section_count) = assemble_with_section_count(
-            &apply_preferences(default_local_order(), &self.pinned_blocks),
+            &place_file_events_after_gitlab(
+                place_gitlab_before_hourly(
+                    apply_preferences(default_local_order(), &self.pinned_blocks),
+                    &self.pinned_blocks,
+                ),
+                &self.pinned_blocks,
+            ),
             stats,
             locale,
             &category_name_overrides,
             &semantic_name_overrides,
+            &gitlab.local_section,
+            &gitlab.file_events.local_section,
         );
         report.push_str(&stats_sections);
 
-        match self.generate_with_ollama(date, stats, activities).await {
+        match self
+            .generate_with_ollama(date, stats, activities, &semantic_name_overrides)
+            .await
+        {
             Ok(ai_content) => {
                 report.push('\n');
                 report.push_str(&ai_content);
@@ -553,7 +574,7 @@ impl Analyzer for LocalAnalyzer {
         }
 
         // 活动时间线放在最底部
-        let timeline = generate_activity_timeline(activities, locale);
+        let timeline = generate_activity_timeline(activities, &gitlab.entries, locale);
         if !timeline.is_empty() {
             report.push_str("\n\n");
             report.push_str(&timeline);

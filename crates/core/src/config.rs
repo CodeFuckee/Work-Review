@@ -67,6 +67,9 @@ pub enum AiProvider {
     /// 自定义 OpenAI 兼容接口
     #[serde(rename = "custom")]
     Custom,
+    /// 软件内置的兜底大模型（编译期注入，无需任何配置）
+    #[serde(rename = "builtin")]
+    Builtin,
 }
 
 impl AiProvider {
@@ -96,6 +99,7 @@ impl AiProvider {
             AiProvider::Mistral => "Mistral",
             AiProvider::LmStudio => "LM Studio (本地)",
             AiProvider::Custom => "自定义接口",
+            AiProvider::Builtin => "内置模型",
         }
     }
 
@@ -119,6 +123,7 @@ impl AiProvider {
             AiProvider::Mistral => "https://api.mistral.ai/v1",
             AiProvider::LmStudio => "http://localhost:1234/v1",
             AiProvider::Custom => "",
+            AiProvider::Builtin => "",
         }
     }
 
@@ -142,6 +147,7 @@ impl AiProvider {
             AiProvider::Mistral => "mistral-small-latest",
             AiProvider::LmStudio => "local-model",
             AiProvider::Custom => "",
+            AiProvider::Builtin => "",
         }
     }
 
@@ -163,6 +169,7 @@ impl AiProvider {
                 | AiProvider::Mistral
                 | AiProvider::LmStudio
                 | AiProvider::Custom
+                | AiProvider::Builtin
         )
     }
 }
@@ -230,6 +237,71 @@ impl ModelConfig {
             max_output_tokens: None,
         }
     }
+
+    /// 出厂默认判定：从未被用户修改过的文本模型配置视为「未配置」。
+    ///
+    /// 覆盖两种形态：
+    /// 1. `default_text()` 原样（Ollama 本地端点 + 空 Key + 空模型名）；
+    /// 2. 旧版迁移/前端默认值产生的幽灵配置——模型名恰为 Ollama 默认模型
+    ///    （`migrate_legacy_config` 会把旧版 `ai_provider` 的 qwen3 迁入空的
+    ///    `text_model`，且随后保存落盘，从未配置过的用户磁盘上即是此形态）。
+    ///
+    /// 真实配置过的用户要么换过端点/填了 Key，要么从模型列表选过具体名字
+    /// （如 `qwen3:8b`），不会被误判。
+    pub fn is_factory_default_text(&self) -> bool {
+        // 内置模型供应商：等价于「使用内置」，无论端点/模型字段为何
+        if self.provider == AiProvider::Builtin {
+            return true;
+        }
+        if self.provider != AiProvider::Ollama
+            || self.endpoint.trim() != AiProvider::Ollama.default_endpoint()
+            || !self
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            return false;
+        }
+        let model = self.model.trim();
+        model.is_empty() || model == AiProvider::Ollama.default_model()
+    }
+}
+
+/// 内置兜底模型（编译期注入，不写入源码、不落入配置文件）。
+///
+/// API Key 通过编译期环境变量 `WORK_REVIEW_BUILTIN_MODEL_API_KEY` 注入（CI 变量）；
+/// 本地开发未设置该变量时返回 `None`，所有调用点的行为与未引入兜底机制前完全一致。
+pub fn builtin_text_model() -> Option<ModelConfig> {
+    builtin_text_model_with(option_env!("WORK_REVIEW_BUILTIN_MODEL_API_KEY"))
+}
+
+fn builtin_text_model_with(api_key: Option<&'static str>) -> Option<ModelConfig> {
+    let api_key = api_key.map(str::trim).filter(|key| !key.is_empty())?;
+    Some(ModelConfig {
+        provider: AiProvider::OpenAI,
+        endpoint: "https://laneai.dev/v1".to_string(),
+        api_key: Some(api_key.to_string()),
+        model: "deepseek-v4-flash".to_string(),
+        enable_thinking: None,
+        thinking_budget: None,
+        max_output_tokens: None,
+    })
+}
+
+/// 文本模型兜底解析：用户已配置 → 原样返回；出厂默认（未配置）且编译期注入了内置模型 → 内置模型。
+pub fn effective_text_model(config: &ModelConfig) -> ModelConfig {
+    effective_text_model_with(builtin_text_model().as_ref(), config)
+}
+
+fn effective_text_model_with(builtin: Option<&ModelConfig>, config: &ModelConfig) -> ModelConfig {
+    if config.is_factory_default_text() {
+        if let Some(builtin) = builtin {
+            return builtin.clone();
+        }
+    }
+    config.clone()
 }
 
 /// 可保存的文本模型档案
@@ -250,24 +322,6 @@ pub struct TextModelProfile {
     /// 最近一次测试结果描述
     #[serde(default)]
     pub last_test_message: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AvatarFollowupItem {
-    pub id: String,
-    pub title: String,
-    pub date: String,
-    pub source_app: String,
-    pub source_title: String,
-    pub project_key: String,
-    pub created_at: i64,
-    #[serde(default = "default_avatar_followup_status")]
-    pub status: String,
-}
-
-fn default_avatar_followup_status() -> String {
-    "open".to_string()
 }
 
 /// AI 提供商配置（旧版，保留用于向后兼容）
@@ -322,7 +376,7 @@ pub struct AppPrivacyRule {
 }
 
 /// 应用分类规则
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AppCategoryRule {
     /// 应用名称
     pub app_name: String,
@@ -331,7 +385,7 @@ pub struct AppCategoryRule {
 }
 
 /// 用户自定义分类
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash)]
 pub struct CustomCategory {
     /// 唯一标识（slug 格式，如 "project-mgmt"）
     pub key: String,
@@ -493,7 +547,8 @@ impl PrivacyConfig {
             .collect();
         let mut migrated = false;
         for app in self.excluded_apps.drain(..) {
-            if !existing_names.contains(&app.to_lowercase()) {
+            // 空条目迁移成空规则名会命中一切应用，跳过
+            if !app.trim().is_empty() && !existing_names.contains(&app.to_lowercase()) {
                 self.app_rules.push(AppPrivacyRule {
                     app_name: app,
                     level: PrivacyLevel::Ignored,
@@ -661,6 +716,85 @@ pub struct RemoteStorageConfig {
     pub sync_app_config: bool,
 }
 
+/// 本地文件监控配置
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FileMonitorConfig {
+    /// 是否启用文件监控
+    pub enabled: bool,
+    /// 监听的工作文件夹列表（递归监听）
+    pub folders: Vec<String>,
+    /// 排除规则：目录段名或 `*` 通配文件名（如 .git、node_modules、*.log）
+    pub excludes: Vec<String>,
+}
+
+impl Default for FileMonitorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            folders: Vec::new(),
+            excludes: vec![
+                ".git".to_string(),
+                "node_modules".to_string(),
+                "target".to_string(),
+                "dist".to_string(),
+                "build".to_string(),
+                "__pycache__".to_string(),
+                "*.tmp".to_string(),
+                "~$*".to_string(),
+            ],
+        }
+    }
+}
+
+/// 私有化 GitLab 集成配置（日报补充今日提交）
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct GitlabConfig {
+    /// GitLab 私有化部署地址（如 https://git.example.com）
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 个人访问令牌（明文，与 AI api_key 相同的存储策略；仅存本机配置）
+    #[serde(default)]
+    pub token: Option<String>,
+    /// 项目允许列表（path_with_namespace，一行一个；空 = 全部有权限项目）
+    #[serde(default)]
+    pub project_filter: Vec<String>,
+    /// 纳入日报的作者名单（姓名或邮箱，忽略大小写与提交的 author_email/
+    /// author_name 精确比对；与 token 账号取并集；空 = 仅当前账号）
+    #[serde(default)]
+    pub work_authors: Vec<String>,
+    /// 日报生成时是否注入 GitLab 今日提交（快速开关；需已配置 url+token）
+    #[serde(default = "default_true")]
+    pub report_enabled: bool,
+}
+
+/// 私有化 Plane 集成配置（一期：连接测试 + 工作项预览；时间线/日报联动下一期）
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct PlaneConfig {
+    /// 是否启用 Plane 集成（默认关闭）
+    #[serde(default)]
+    pub enabled: bool,
+    /// Plane 私有化部署地址（如 https://plane.example.com）
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 个人访问令牌（Plane 的 Profile Settings → Personal Access Tokens 生成；
+    /// 明文，与 GitlabConfig.token 相同的存储策略：仅存本机配置文件）
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// 工作区 slug（工作区 URL 中的标识，如 https://plane.example.com/my-team/ 中的 my-team）
+    #[serde(default)]
+    pub workspace_slug: Option<String>,
+    /// 项目名允许列表（一行一个；空 = 全部项目）。匹配忽略大小写、**仅精确
+    /// 相等**（用户裁决：不做前缀命中，避免「API」误纳「API-docs」）；
+    /// 匹配语义见同步命令实现。
+    #[serde(default)]
+    pub project_filter: Vec<String>,
+    /// 允许不安全协议（HTTP）。默认 false：实例地址必须以 https:// 开头——
+    /// API Key 随请求头明文出网，仅限可信内网环境在设置页显式勾选放行
+    #[serde(default)]
+    pub allow_insecure_http: bool,
+}
+
 pub const DEFAULT_LOCALHOST_API_PORT: u16 = 47_831;
 
 fn default_localhost_api_port() -> u16 {
@@ -695,6 +829,19 @@ impl ConfigLoadStatus {
     pub fn requires_fail_safe(self) -> bool {
         matches!(self, Self::Corrupted)
     }
+}
+
+/// Plane 集成配置是否等于「从未配置」的默认空值（同步合并的防覆盖判据）。
+pub fn is_plane_config_blank(plane: &PlaneConfig) -> bool {
+    !plane.enabled
+        && plane.url.is_none()
+        && plane.api_key.is_none()
+        && plane.workspace_slug.is_none()
+}
+
+/// GitLab 集成配置是否等于「从未配置」的默认空值（同步合并的防覆盖判据）。
+pub fn is_gitlab_config_blank(gitlab: &GitlabConfig) -> bool {
+    gitlab.url.is_none() && gitlab.token.is_none() && !gitlab.report_enabled
 }
 
 /// 返回在完整配置文件名后追加 `.bak` 的备份路径。
@@ -995,24 +1142,6 @@ pub struct AppConfig {
     /// 本地 localhost API 端口
     #[serde(default = "default_localhost_api_port")]
     pub localhost_api_port: u16,
-    /// 是否启用 Telegram Bot
-    #[serde(default)]
-    pub telegram_bot_enabled: bool,
-    /// Telegram Bot Token
-    #[serde(default)]
-    pub telegram_bot_token: Option<String>,
-    /// Telegram Bot 代理地址 (e.g. http://127.0.0.1:7890, socks5://127.0.0.1:1080)
-    #[serde(default)]
-    pub telegram_bot_proxy: Option<String>,
-    /// Telegram Bot 允许的 chat_id 白名单；为空时仅允许 /start 和 /bind
-    #[serde(default)]
-    pub telegram_bot_allowed_chat_ids: Vec<i64>,
-    /// Telegram Bot 一次性绑定码；通过 /bind <code> 授权当前 chat_id 后失效
-    #[serde(default)]
-    pub telegram_bot_bind_code: Option<String>,
-    /// Telegram Bot 一次性绑定码过期时间（Unix 秒）
-    #[serde(default)]
-    pub telegram_bot_bind_code_expires_at: Option<i64>,
     /// 是否启用飞书 Bot
     #[serde(default)]
     pub feishu_bot_enabled: bool,
@@ -1118,12 +1247,6 @@ pub struct AppConfig {
     /// 轻量模式：关闭主界面时释放主 Webview，仅保留后台录制与托盘
     #[serde(default)]
     pub lightweight_mode: bool,
-    /// 是否启用休息提醒
-    #[serde(default)]
-    pub break_reminder_enabled: bool,
-    /// 连续活跃多久后提醒（分钟）
-    #[serde(default = "default_break_reminder_interval_minutes")]
-    pub break_reminder_interval_minutes: u64,
     /// 每日工作时长目标（分钟），None = 不设目标
     #[serde(default)]
     pub daily_work_goal_minutes: Option<u32>,
@@ -1164,39 +1287,6 @@ pub struct AppConfig {
     /// 嵌入服务 API Key（Ollama 不需要）
     #[serde(default)]
     pub embedding_api_key: Option<String>,
-    /// 是否启用桌面化身窗口
-    #[serde(default)]
-    pub avatar_enabled: bool,
-    /// 隐藏桌宠本体（仅保留通知气泡与卡片），窗口收缩到仅容纳通知区（#137 诉求二）
-    #[serde(default)]
-    pub avatar_body_hidden: bool,
-    /// 桌宠缩放比例（0.7 - 1.3）
-    #[serde(default = "default_avatar_scale")]
-    pub avatar_scale: f64,
-    /// 桌宠猫体透明度（0.45 - 1.0）
-    #[serde(default = "default_avatar_opacity")]
-    pub avatar_opacity: f64,
-    /// 桌宠官方预设
-    #[serde(default = "default_avatar_preset")]
-    pub avatar_preset: String,
-    /// 桌宠互动风格
-    #[serde(default = "default_avatar_persona")]
-    pub avatar_persona: String,
-    /// 桌宠是否允许调用文本模型生成不定时提醒
-    #[serde(default)]
-    pub avatar_proactive_ai_enabled: bool,
-    /// 桌宠鼠标穿透（点击事件穿透到下层窗口）
-    #[serde(default)]
-    pub avatar_click_through: bool,
-    /// 通过桌宠手动记下的待跟进项
-    #[serde(default)]
-    pub avatar_followups: Vec<AvatarFollowupItem>,
-    /// 桌宠窗口横向位置
-    #[serde(default)]
-    pub avatar_x: Option<i32>,
-    /// 桌宠窗口纵向位置
-    #[serde(default)]
-    pub avatar_y: Option<i32>,
     /// 隐藏系统标题栏装饰
     #[serde(default)]
     pub hide_decorations: bool,
@@ -1209,6 +1299,15 @@ pub struct AppConfig {
     /// 背景图片模糊程度 (0 = 清晰, 1 = 轻微, 2 = 中等)
     #[serde(default = "default_bg_blur")]
     pub background_blur: u8,
+    /// GitLab 私有化集成配置（日报补充今日提交）
+    #[serde(default)]
+    pub gitlab: GitlabConfig,
+    /// Plane 私有化集成配置（连接测试 + 工作项预览）
+    #[serde(default)]
+    pub plane: PlaneConfig,
+    /// 本地文件监控配置（工作文件夹监听，概览页展示）
+    #[serde(default)]
+    pub file_monitor: FileMonitorConfig,
 }
 
 /// 配置加载结果，保留恢复状态和主备文件错误信息。
@@ -1239,12 +1338,6 @@ fn default_bg_opacity() -> f32 {
 fn default_bg_blur() -> u8 {
     1
 }
-fn default_break_reminder_interval_minutes() -> u64 {
-    50
-}
-fn default_avatar_scale() -> f64 {
-    0.9
-}
 fn default_assistant_search_provider() -> String {
     "tavily".to_string()
 }
@@ -1259,15 +1352,6 @@ fn default_embedding_model() -> String {
 }
 fn default_standard_work_hours() -> f64 {
     8.0
-}
-fn default_avatar_opacity() -> f64 {
-    0.82
-}
-fn default_avatar_preset() -> String {
-    "original-standard".to_string()
-}
-fn default_avatar_persona() -> String {
-    "assistant".to_string()
 }
 fn default_ui_visual_style() -> String {
     "c".to_string()
@@ -1286,6 +1370,22 @@ fn normalize_report_generation_timeout_secs(value: u64) -> u64 {
 }
 fn normalize_positive_token(value: Option<u32>) -> Option<u32> {
     value.filter(|n| *n > 0)
+}
+
+/// 名单类字段规范化：去首尾空白、剔空条目、按忽略大小写去重（保留首次写法）。
+fn normalize_string_list(items: &[String]) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for item in items {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_lowercase()) {
+            result.push(trimmed.to_string());
+        }
+    }
+    result
 }
 
 impl Default for AppConfig {
@@ -1311,6 +1411,9 @@ impl Default for AppConfig {
             storage: StorageConfig::default(),
             remote_storage: RemoteStorageConfig::default(),
             config_synced_at: 0,
+            gitlab: GitlabConfig::default(),
+            plane: PlaneConfig::default(),
+            file_monitor: FileMonitorConfig::default(),
             daily_report_custom_prompt: String::new(),
             daily_report_prompt_presets: Vec::new(),
             daily_report_system_prompt_override: None,
@@ -1323,12 +1426,6 @@ impl Default for AppConfig {
             localhost_api_enabled: false,
             localhost_api_host: None,
             localhost_api_port: DEFAULT_LOCALHOST_API_PORT,
-            telegram_bot_enabled: false,
-            telegram_bot_token: None,
-            telegram_bot_proxy: None,
-            telegram_bot_allowed_chat_ids: Vec::new(),
-            telegram_bot_bind_code: None,
-            telegram_bot_bind_code_expires_at: None,
             feishu_bot_enabled: false,
             feishu_app_id: None,
             feishu_app_secret: None,
@@ -1379,8 +1476,6 @@ impl Default for AppConfig {
             openai_model: "gpt-5.4".to_string(),
             hide_dock_icon: false,
             lightweight_mode: false,
-            break_reminder_enabled: false,
-            break_reminder_interval_minutes: default_break_reminder_interval_minutes(),
             daily_work_goal_minutes: None,
             goal_notifications: false,
             memory_enabled: false,
@@ -1394,17 +1489,6 @@ impl Default for AppConfig {
             embedding_endpoint: default_embedding_endpoint(),
             embedding_model: default_embedding_model(),
             embedding_api_key: None,
-            avatar_enabled: false,
-            avatar_body_hidden: false,
-            avatar_scale: default_avatar_scale(),
-            avatar_opacity: default_avatar_opacity(),
-            avatar_preset: default_avatar_preset(),
-            avatar_persona: default_avatar_persona(),
-            avatar_proactive_ai_enabled: false,
-            avatar_click_through: false,
-            avatar_followups: Vec::new(),
-            avatar_x: None,
-            avatar_y: None,
             hide_decorations: false,
             background_image: None,
             background_opacity: 0.25,
@@ -1426,11 +1510,12 @@ impl AppConfig {
         let last_app_version = self.last_app_version.clone();
         let daily_report_export_dir = self.daily_report_export_dir.clone();
         let node_gateway = self.node_gateway.clone();
-        let avatar_x = self.avatar_x;
-        let avatar_y = self.avatar_y;
-        let telegram_bot_bind_code = self.telegram_bot_bind_code.clone();
-        let telegram_bot_bind_code_expires_at = self.telegram_bot_bind_code_expires_at;
         let background_image = self.background_image.clone();
+        let local_plane = self.plane.clone();
+        let local_gitlab = self.gitlab.clone();
+
+        let remote_plane_blank = is_plane_config_blank(&remote.plane);
+        let remote_gitlab_blank = is_gitlab_config_blank(&remote.gitlab);
 
         *self = remote;
 
@@ -1443,16 +1528,37 @@ impl AppConfig {
         self.last_app_version = last_app_version;
         self.daily_report_export_dir = daily_report_export_dir;
         self.node_gateway = node_gateway;
-        self.avatar_x = avatar_x;
-        self.avatar_y = avatar_y;
-        self.telegram_bot_bind_code = telegram_bot_bind_code;
-        self.telegram_bot_bind_code_expires_at = telegram_bot_bind_code_expires_at;
         self.background_image = background_image;
+        // 集成配置防覆盖（2026-09-28 事故回归）：远端快照为「默认空值」视为
+        // 陈旧快照未携带该块配置（如只在单机配置过 Plane，远端从未更新），
+        // 不得把本地非空配置抹成默认值；远端已有配置时仍按最后写入获胜覆盖。
+        // 用户主动清空走 save_config（本地即为空、打同步戳上传），不受影响。
+        if remote_plane_blank {
+            self.plane = local_plane;
+        }
+        if remote_gitlab_blank {
+            self.gitlab = local_gitlab;
+        }
     }
 
     /// 规范化配置，兼容旧字段并补齐助手可用的文本模型档案
     pub fn normalize(&mut self) {
         self.migrate_legacy_config();
+        // 空白规则名/空关键词会以子串 contains("") 恒真命中一切：
+        // 空规则名静默停掉全部记录、空关键词让所有窗口永久触发脱敏，
+        // 在规范化阶段直接剔除
+        self.privacy
+            .app_rules
+            .retain(|rule| !rule.app_name.trim().is_empty());
+        self.privacy
+            .excluded_keywords
+            .retain(|k| !k.trim().is_empty());
+        self.gitlab.work_authors = normalize_string_list(&self.gitlab.work_authors);
+        // 实例地址去首尾空白与结尾斜杠（用户粘贴带 `/` 的地址时避免拼出 `//api/v1`）
+        self.plane.url = normalize_base_url(self.plane.url.take());
+        self.plane.workspace_slug = normalize_optional_string(self.plane.workspace_slug.take());
+        self.plane.api_key = normalize_optional_string(self.plane.api_key.take());
+        self.plane.project_filter = normalize_string_list(&self.plane.project_filter);
         normalize_custom_categories(&mut self.custom_categories);
         normalize_app_category_rules(&mut self.app_category_rules, &self.custom_categories);
         // Seed defaults BEFORE rule validation so built-in categories are present
@@ -1471,14 +1577,15 @@ impl AppConfig {
         );
         self.screenshot_interval = normalize_screenshot_interval(self.screenshot_interval);
         self.idle_threshold_minutes = normalize_idle_threshold_minutes(self.idle_threshold_minutes);
+        // storage_limit_mb=0 会让周期清理把上限算成 0 字节，"删到低于上限"的循环
+        // 永不满足而逐个删光全部截图目录；与设置页下限(256)对齐做后端钳制，
+        // 挡住配置同步/手改配置文件直通入库的 0 值
+        self.storage.storage_limit_mb = self.storage.storage_limit_mb.max(256);
+        // 保留天数无上限时，清理路径 `date_naive() - Duration::days(n)` 会越过
+        // NaiveDate::MIN 直接 panic（配置同步/手改配置可写入 u32 任意值）；
+        // 0 = 永久保留语义保留，非 0 钳到 10 年（与 parse_temporal_range 同族的兜底钳制）
+        self.storage.screenshot_retention_days = self.storage.screenshot_retention_days.min(3650);
         self.ui_visual_style = normalize_ui_visual_style(&self.ui_visual_style);
-        self.avatar_scale = normalize_avatar_scale(self.avatar_scale);
-        self.avatar_opacity = normalize_avatar_opacity(self.avatar_opacity);
-        self.avatar_preset = normalize_avatar_preset(&self.avatar_preset);
-        self.avatar_persona = normalize_avatar_persona(&self.avatar_persona);
-        normalize_avatar_followups(&mut self.avatar_followups);
-        self.break_reminder_interval_minutes =
-            normalize_break_reminder_interval_minutes(self.break_reminder_interval_minutes);
         self.standard_work_hours = self.standard_work_hours.clamp(1.0, 24.0);
         self.assistant_timeout_secs = normalize_assistant_timeout_secs(self.assistant_timeout_secs);
         self.report_generation_timeout_secs =
@@ -1486,11 +1593,6 @@ impl AppConfig {
         self.text_model.thinking_budget = normalize_positive_token(self.text_model.thinking_budget);
         self.text_model.max_output_tokens =
             normalize_positive_token(self.text_model.max_output_tokens);
-        if self.text_model.enable_thinking == Some(true)
-            && self.text_model.thinking_budget == Some(0)
-        {
-            self.text_model.thinking_budget = None;
-        }
         self.daily_report_custom_prompt = self.daily_report_custom_prompt.trim().to_string();
         normalize_prompt_presets(&mut self.daily_report_prompt_presets);
         self.daily_report_export_dir =
@@ -1499,11 +1601,6 @@ impl AppConfig {
         self.localhost_api_host = normalize_optional_string(self.localhost_api_host.take());
         self.wecom_bot_id = normalize_optional_string(self.wecom_bot_id.take());
         self.wecom_bot_secret = normalize_optional_string(self.wecom_bot_secret.take());
-        self.telegram_bot_bind_code = normalize_optional_string(self.telegram_bot_bind_code.take())
-            .map(|code| code.to_ascii_uppercase());
-        if self.telegram_bot_bind_code.is_none() {
-            self.telegram_bot_bind_code_expires_at = None;
-        }
         self.remote_storage.s3.public_url_base =
             normalize_optional_string(self.remote_storage.s3.public_url_base.take());
         self.remote_storage.webdav.public_url_base =
@@ -1617,7 +1714,6 @@ impl AppConfig {
         let mut config = Self::default();
         config.storage.screenshots_enabled = false;
         config.localhost_api_enabled = false;
-        config.telegram_bot_enabled = false;
         config.feishu_bot_enabled = false;
         config.wecom_bot_enabled = false;
         config.dingtalk_bot_enabled = false;
@@ -1655,8 +1751,24 @@ impl AppConfig {
                 end_minute: self.work_end_minute,
             }];
         }
-        // 如果新配置为空但旧配置有值，则迁移
-        if self.text_model.model.is_empty() && !self.ai_provider.model.is_empty() {
+        // 如果新配置为空但旧配置有值，则迁移。
+        // 例外：旧字段本身是应用的幽灵默认值（Ollama 默认端点 + 无 Key + 默认模型名
+        // qwen3）时不迁移——它不是用户的选择，迁入会把「未配置」永久污染成
+        // 「已配置 qwen3」，导致内置兜底模型永远无法生效。
+        let legacy_ai_is_ghost_default = self.ai_provider.provider == AiProvider::Ollama
+            && self.ai_provider.endpoint.trim() == AiProvider::Ollama.default_endpoint()
+            && self
+                .ai_provider
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && self.ai_provider.model.trim() == AiProvider::Ollama.default_model();
+        if self.text_model.model.is_empty()
+            && !self.ai_provider.model.is_empty()
+            && !legacy_ai_is_ghost_default
+        {
             self.text_model = ModelConfig {
                 provider: self.ai_provider.provider,
                 endpoint: self.ai_provider.endpoint.clone(),
@@ -2029,82 +2141,10 @@ fn normalize_prompt_presets(presets: &mut Vec<PromptPreset>) {
     presets.retain(|p| !p.name.is_empty() && !p.prompt.is_empty());
 }
 
-fn normalize_avatar_scale(value: f64) -> f64 {
-    if !value.is_finite() {
-        return default_avatar_scale();
-    }
-
-    value.clamp(0.4, 1.3)
-}
-
-fn normalize_avatar_opacity(value: f64) -> f64 {
-    if !value.is_finite() {
-        return default_avatar_opacity();
-    }
-
-    value.clamp(0.45, 1.0)
-}
-
-fn normalize_avatar_preset(value: &str) -> String {
-    match value.trim() {
-        "original-standard" | "keyboard-focus" | "minimal-office" => value.trim().to_string(),
-        _ => default_avatar_preset(),
-    }
-}
-
-fn normalize_avatar_persona(value: &str) -> String {
-    match value.trim() {
-        "companion" | "assistant" | "coach" => value.trim().to_string(),
-        _ => default_avatar_persona(),
-    }
-}
-
 fn normalize_ui_visual_style(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
         "a" | "b" | "c" => value.trim().to_ascii_lowercase(),
         _ => default_ui_visual_style(),
-    }
-}
-
-fn normalize_avatar_followups(items: &mut Vec<AvatarFollowupItem>) {
-    let mut seen = std::collections::HashSet::new();
-    items.retain_mut(|item| {
-        item.id = item.id.trim().to_string();
-        item.title = item.title.trim().to_string();
-        item.date = item.date.trim().to_string();
-        item.source_app = item.source_app.trim().to_string();
-        item.source_title = item.source_title.trim().to_string();
-        item.project_key = item.project_key.trim().to_string();
-        item.status = match item.status.trim() {
-            "done" => "done".to_string(),
-            _ => default_avatar_followup_status(),
-        };
-
-        if item.title.is_empty() || item.project_key.is_empty() || item.date.is_empty() {
-            return false;
-        }
-
-        let dedupe_key = format!(
-            "{}::{}::{}",
-            item.project_key.to_lowercase(),
-            item.title.to_lowercase(),
-            item.status
-        );
-        seen.insert(dedupe_key)
-    });
-
-    items.sort_by(|a, b| {
-        b.created_at
-            .cmp(&a.created_at)
-            .then_with(|| a.title.cmp(&b.title))
-    });
-    items.truncate(200);
-}
-
-fn normalize_break_reminder_interval_minutes(value: u64) -> u64 {
-    match value {
-        30 | 45 | 50 | 60 | 90 | 120 => value,
-        _ => default_break_reminder_interval_minutes(),
     }
 }
 
@@ -2132,27 +2172,226 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     })
 }
 
+/// 实例地址规范化：去首尾空白与全部结尾斜杠（`https://host///` → `https://host`）。
+fn normalize_base_url(value: Option<String>) -> Option<String> {
+    normalize_optional_string(value).map(|trimmed| trimmed.trim_end_matches('/').to_string())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::field_reassign_with_default)]
 
     use super::{
-        commit_pending_config, config_backup_path, default_avatar_opacity, default_avatar_persona,
-        default_avatar_preset, default_avatar_scale, default_ui_visual_style,
-        normalize_app_category_rules, normalize_avatar_followups, normalize_avatar_opacity,
-        normalize_avatar_persona, normalize_avatar_preset, normalize_avatar_scale,
-        normalize_ui_visual_style, update_config_backup_with_sync, AiProvider, AppCategoryRule,
-        AppConfig, AvatarFollowupItem, ConfigLoadStatus, PendingConfigFile, RemoteStorageProvider,
-        ScreenshotDisplayMode, WebsiteSemanticRule, DEFAULT_LOCALHOST_API_PORT,
+        commit_pending_config, config_backup_path, default_ui_visual_style,
+        normalize_app_category_rules, normalize_string_list, normalize_ui_visual_style,
+        update_config_backup_with_sync, AiProvider, AppCategoryRule, AppConfig, ConfigLoadStatus,
+        PendingConfigFile, PlaneConfig, RemoteStorageProvider, ScreenshotDisplayMode,
+        WebsiteSemanticRule, DEFAULT_LOCALHOST_API_PORT,
     };
     use std::io::{self, Write};
     use std::path::PathBuf;
+
+    #[test]
+    fn 纳入作者名单规范化应去空白去空并按大小写去重() {
+        let input = vec![
+            "  李四 ".to_string(),
+            "LISI@corp.com".to_string(),
+            "lisi@CORP.com".to_string(),
+            String::new(),
+            "   ".to_string(),
+            "王五".to_string(),
+        ];
+        assert_eq!(
+            normalize_string_list(&input),
+            vec![
+                "李四".to_string(),
+                "LISI@corp.com".to_string(),
+                "王五".to_string()
+            ],
+            "去首尾空白、剔空条目、忽略大小写去重并保留首次写法"
+        );
+        assert!(normalize_string_list(&[]).is_empty());
+    }
+
+    #[test]
+    fn 配置规范化应处理纳入作者名单() {
+        let mut config = AppConfig::default();
+        config.gitlab.work_authors = vec![
+            " a@x.com ".to_string(),
+            "A@X.COM".to_string(),
+            String::new(),
+        ];
+        config.normalize();
+        assert_eq!(config.gitlab.work_authors, vec!["a@x.com".to_string()]);
+    }
+
+    #[test]
+    fn 配置规范化应去除plane实例地址空白与结尾斜杠() {
+        let mut config = AppConfig::default();
+        config.plane.url = Some(" https://plane.example.com/// ".to_string());
+        config.plane.workspace_slug = Some(" my-team ".to_string());
+        config.plane.api_key = Some(" plane_api_abc ".to_string());
+        config.normalize();
+        assert_eq!(
+            config.plane.url.as_deref(),
+            Some("https://plane.example.com"),
+            "去首尾空白与全部结尾斜杠"
+        );
+        assert_eq!(config.plane.workspace_slug.as_deref(), Some("my-team"));
+        assert_eq!(config.plane.api_key.as_deref(), Some("plane_api_abc"));
+
+        // 空白地址应清空为 None，而不是留下空串让请求拼出畸形 URL
+        config.plane.url = Some("   ".to_string());
+        config.normalize();
+        assert_eq!(config.plane.url, None);
+
+        // 项目允许列表与名单类字段走同一规范化：去空白、剔空条目、忽略大小写去重
+        config.plane.project_filter = vec![
+            " Alpha ".to_string(),
+            "ALPHA".to_string(),
+            String::new(),
+            "Beta".to_string(),
+        ];
+        config.normalize();
+        assert_eq!(
+            config.plane.project_filter,
+            vec!["Alpha".to_string(), "Beta".to_string()]
+        );
+
+        // 默认配置不动：enabled=false 且各可选字段为空
+        let default = AppConfig::default();
+        assert!(!default.plane.enabled);
+        assert_eq!(default.plane.url, None);
+        assert_eq!(default.plane.api_key, None);
+        assert_eq!(default.plane.workspace_slug, None);
+        assert!(default.plane.project_filter.is_empty());
+    }
+
+    #[test]
+    fn 配置规范化应把存储上限钳到安全下限() {
+        // 0 会让周期清理把上限算成 0 字节而删光全部截图目录（配置同步/手改
+        // 配置可绕过 UI 下限直通入库），normalize 必须兜底钳到 256
+        let mut config = AppConfig::default();
+        config.storage.storage_limit_mb = 0;
+        config.normalize();
+        assert_eq!(config.storage.storage_limit_mb, 256);
+
+        config.storage.storage_limit_mb = 1;
+        config.normalize();
+        assert_eq!(config.storage.storage_limit_mb, 256);
+
+        // 合法值不动
+        config.storage.storage_limit_mb = 2048;
+        config.normalize();
+        assert_eq!(config.storage.storage_limit_mb, 2048);
+    }
+
+    #[test]
+    fn 配置规范化应把截图保留天数钳到安全上限() {
+        // 超大值会让清理路径 `date_naive() - Duration::days(n)` 越过 NaiveDate::MIN
+        // panic（配置同步/手改配置可写入 u32 任意值），normalize 必须兜底钳制；
+        // 0 = 永久保留，必须保留原语义
+        let mut config = AppConfig::default();
+        config.storage.screenshot_retention_days = 0;
+        config.normalize();
+        assert_eq!(config.storage.screenshot_retention_days, 0);
+
+        config.storage.screenshot_retention_days = 99999999;
+        config.normalize();
+        assert_eq!(config.storage.screenshot_retention_days, 3650);
+
+        // 合法值不动
+        config.storage.screenshot_retention_days = 7;
+        config.normalize();
+        assert_eq!(config.storage.screenshot_retention_days, 7);
+    }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "work-review-config-{name}-{}",
             uuid::Uuid::new_v4()
         ))
+    }
+
+    #[test]
+    fn 出厂默认判定应识别未修改的文本模型配置() {
+        assert!(super::ModelConfig::default_text().is_factory_default_text());
+
+        // 旧版迁移产生的幽灵默认（模型名恰为 Ollama 默认模型）同样视为未配置
+        assert!(super::ModelConfig {
+            model: AiProvider::Ollama.default_model().to_string(),
+            ..super::ModelConfig::default_text()
+        }
+        .is_factory_default_text());
+
+        // 用户改了任意一项（模型名 / 端点 / Key / 提供商）都视为已配置
+        let cases = [
+            super::ModelConfig {
+                model: "qwen2.5".to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                model: "qwen3:8b".to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                endpoint: "http://192.168.1.8:11434".to_string(),
+                model: AiProvider::Ollama.default_model().to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                api_key: Some("sk-user".to_string()),
+                model: AiProvider::Ollama.default_model().to_string(),
+                ..super::ModelConfig::default_text()
+            },
+            super::ModelConfig {
+                provider: AiProvider::OpenAI,
+                ..super::ModelConfig::default_text()
+            },
+        ];
+        for case in &cases {
+            assert!(
+                !case.is_factory_default_text(),
+                "带用户修改的配置不应被判为出厂默认: {case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 空白内置密钥不应生成内置模型() {
+        assert!(super::builtin_text_model_with(None).is_none());
+        assert!(super::builtin_text_model_with(Some("")).is_none());
+        assert!(super::builtin_text_model_with(Some("   ")).is_none());
+
+        let builtin = super::builtin_text_model_with(Some(" sk-builtin ")).expect("应生成内置模型");
+        assert_eq!(builtin.api_key.as_deref(), Some("sk-builtin"));
+        assert_eq!(builtin.endpoint, "https://laneai.dev/v1");
+        assert_eq!(builtin.model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn 兜底解析应仅在未配置时替换为内置模型() {
+        let builtin = super::builtin_text_model_with(Some("sk-builtin")).unwrap();
+
+        // 出厂默认 → 内置模型
+        let resolved =
+            super::effective_text_model_with(Some(&builtin), &super::ModelConfig::default_text());
+        assert_eq!(resolved.model, "deepseek-v4-flash");
+        assert_eq!(resolved.api_key.as_deref(), Some("sk-builtin"));
+
+        // 用户已配置 → 原样保留
+        let configured = super::ModelConfig {
+            model: "my-model".to_string(),
+            ..super::ModelConfig::default_text()
+        };
+        let resolved = super::effective_text_model_with(Some(&builtin), &configured);
+        assert_eq!(resolved.model, "my-model");
+        assert!(resolved.api_key.is_none());
+
+        // 无内置模型（未编译期注入）→ 原样保留出厂默认，行为与旧版一致
+        let resolved = super::effective_text_model_with(None, &super::ModelConfig::default_text());
+        assert_eq!(resolved.model, "");
+        assert!(resolved.api_key.is_none());
     }
 
     #[test]
@@ -2205,18 +2444,78 @@ mod tests {
     fn 应用远端同步快照时应保留本机端口与窗口位置() {
         let mut local = AppConfig::default();
         local.localhost_api_port = 12345;
-        local.avatar_x = Some(40);
         local.locale = "zh-CN".to_string();
         let mut remote = AppConfig::default();
         remote.localhost_api_port = 47831;
-        remote.avatar_x = Some(9);
         remote.locale = "en".to_string();
         remote.assistant_timeout_secs = 180;
         local.apply_synced_remote(remote);
         assert_eq!(local.localhost_api_port, 12345);
-        assert_eq!(local.avatar_x, Some(40));
         assert_eq!(local.locale, "en");
         assert_eq!(local.assistant_timeout_secs, 180);
+    }
+
+    // 2026-09-28 事故回归：远端快照陈旧（未配置 Plane）且 synced_at 较新时，
+    // 启动拉取整包覆盖把本机已配置的 Plane 集成抹成默认值。
+    // 修复语义：远端「集成配置为默认空值」视为"该快照没带这个字段"，
+    // 不得覆盖本地的非空配置（用户主动清空走 save_config，本地即为空，不受影响）。
+    #[test]
+    fn 远端集成配置为默认空值时不应抹掉本地已配置的plane() {
+        let mut local = AppConfig::default();
+        local.plane = PlaneConfig {
+            enabled: true,
+            url: Some("https://plane.example.com".to_string()),
+            api_key: Some("pat-123".to_string()),
+            workspace_slug: Some("my-team".to_string()),
+            project_filter: vec!["proj-a".to_string()],
+            ..PlaneConfig::default()
+        };
+        let remote = AppConfig::default();
+        local.apply_synced_remote(remote);
+
+        assert!(local.plane.enabled, "Plane 启用状态应保留本地值");
+        assert_eq!(
+            local.plane.url.as_deref(),
+            Some("https://plane.example.com")
+        );
+        assert_eq!(local.plane.api_key.as_deref(), Some("pat-123"));
+        assert_eq!(local.plane.workspace_slug.as_deref(), Some("my-team"));
+        assert_eq!(local.plane.project_filter, vec!["proj-a".to_string()]);
+    }
+
+    #[test]
+    fn 远端plane已配置时应正常覆盖本地() {
+        let mut local = AppConfig::default();
+        let mut remote = AppConfig::default();
+        remote.plane = PlaneConfig {
+            enabled: true,
+            url: Some("https://remote.example.com".to_string()),
+            api_key: Some("remote-key".to_string()),
+            workspace_slug: Some("remote-team".to_string()),
+            ..PlaneConfig::default()
+        };
+        local.apply_synced_remote(remote);
+
+        assert!(local.plane.enabled);
+        assert_eq!(
+            local.plane.url.as_deref(),
+            Some("https://remote.example.com")
+        );
+        assert_eq!(local.plane.api_key.as_deref(), Some("remote-key"));
+    }
+
+    #[test]
+    fn 远端gitlab为默认空值时不应抹掉本地已配置的gitlab() {
+        let mut local = AppConfig::default();
+        local.gitlab.url = Some("https://git.example.com".to_string());
+        local.gitlab.token = Some("glpat-x".to_string());
+        local.gitlab.report_enabled = true;
+        let remote = AppConfig::default();
+        local.apply_synced_remote(remote);
+
+        assert_eq!(local.gitlab.url.as_deref(), Some("https://git.example.com"));
+        assert_eq!(local.gitlab.token.as_deref(), Some("glpat-x"));
+        assert!(local.gitlab.report_enabled);
     }
 
     #[test]
@@ -2451,7 +2750,6 @@ mod tests {
         assert!(result.backup_error.is_some());
         assert!(!result.config.storage.screenshots_enabled);
         assert!(!result.config.localhost_api_enabled);
-        assert!(!result.config.telegram_bot_enabled);
         assert!(!result.config.feishu_bot_enabled);
         assert!(!result.config.wecom_bot_enabled);
         assert!(!result.config.dingtalk_bot_enabled);
@@ -2677,45 +2975,6 @@ mod tests {
     }
 
     #[test]
-    fn 桌宠缩放默认值应为百分之九十() {
-        let config = AppConfig::default();
-
-        assert_eq!(config.avatar_scale, default_avatar_scale());
-        assert_eq!(config.avatar_scale, 0.9);
-    }
-
-    #[test]
-    fn 桌宠透明度默认值应为百分之八十二() {
-        let config = AppConfig::default();
-
-        assert_eq!(config.avatar_opacity, default_avatar_opacity());
-        assert_eq!(config.avatar_opacity, 0.82);
-    }
-
-    #[test]
-    fn 桌宠官方预设默认应为原版标准模式() {
-        let config = AppConfig::default();
-
-        assert_eq!(config.avatar_preset, default_avatar_preset());
-        assert_eq!(config.avatar_preset, "original-standard");
-    }
-
-    #[test]
-    fn 桌宠互动风格默认应为助手型() {
-        let config = AppConfig::default();
-
-        assert_eq!(config.avatar_persona, default_avatar_persona());
-        assert_eq!(config.avatar_persona, "assistant");
-    }
-
-    #[test]
-    fn 桌宠模型生成提醒默认应关闭() {
-        let config = AppConfig::default();
-
-        assert!(!config.avatar_proactive_ai_enabled);
-    }
-
-    #[test]
     fn 界面风格默认应保持当前柔和层次且只允许三套方案() {
         let config = AppConfig::default();
 
@@ -2725,14 +2984,6 @@ mod tests {
         assert_eq!(normalize_ui_visual_style("B"), "b");
         assert_eq!(normalize_ui_visual_style("c"), "c");
         assert_eq!(normalize_ui_visual_style("unknown"), "c");
-    }
-
-    #[test]
-    fn 桌宠默认位置应为空以便首次按锚点吸附() {
-        let config = AppConfig::default();
-
-        assert_eq!(config.avatar_x, None);
-        assert_eq!(config.avatar_y, None);
     }
 
     #[test]
@@ -2775,14 +3026,6 @@ mod tests {
     }
 
     #[test]
-    fn 休息提醒默认应关闭且间隔为五十分钟() {
-        let config = AppConfig::default();
-
-        assert!(!config.break_reminder_enabled);
-        assert_eq!(config.break_reminder_interval_minutes, 50);
-    }
-
-    #[test]
     fn 开机自启动默认应显示主界面() {
         let config = AppConfig::default();
 
@@ -2804,80 +3047,6 @@ mod tests {
             "https://api.minimaxi.com/v1"
         );
         assert_eq!(AiProvider::MiniMax.default_model(), "MiniMax-M2.5");
-    }
-
-    #[test]
-    fn 桌宠缩放应被钳制在允许范围内() {
-        assert_eq!(normalize_avatar_scale(0.2), 0.4);
-        assert_eq!(normalize_avatar_scale(2.0), 1.3);
-        assert_eq!(normalize_avatar_scale(f64::NAN), 0.9);
-    }
-
-    #[test]
-    fn 桌宠透明度应被钳制在允许范围内() {
-        assert_eq!(normalize_avatar_opacity(0.1), 0.45);
-        assert_eq!(normalize_avatar_opacity(1.5), 1.0);
-        assert_eq!(normalize_avatar_opacity(f64::NAN), 0.82);
-    }
-
-    #[test]
-    fn 桌宠预设应被规范到官方预设集合内() {
-        assert_eq!(normalize_avatar_preset("keyboard-focus"), "keyboard-focus");
-        assert_eq!(
-            normalize_avatar_preset(" minimal-office "),
-            "minimal-office"
-        );
-        assert_eq!(normalize_avatar_preset("wild-theme"), "original-standard");
-        assert_eq!(normalize_avatar_preset(""), "original-standard");
-    }
-
-    #[test]
-    fn 桌宠互动风格应被规范到允许集合内() {
-        assert_eq!(normalize_avatar_persona("companion"), "companion");
-        assert_eq!(normalize_avatar_persona(" coach "), "coach");
-        assert_eq!(normalize_avatar_persona("other"), "assistant");
-    }
-
-    #[test]
-    fn 桌宠手动待跟进应去重并清理非法项() {
-        let mut items = vec![
-            AvatarFollowupItem {
-                id: " 1 ".to_string(),
-                title: " 修复支付页回调 ".to_string(),
-                date: "2026-04-18".to_string(),
-                source_app: "Cursor".to_string(),
-                source_title: "payments.ts".to_string(),
-                project_key: "payments".to_string(),
-                created_at: 20,
-                status: "open".to_string(),
-            },
-            AvatarFollowupItem {
-                id: "2".to_string(),
-                title: "修复支付页回调".to_string(),
-                date: "2026-04-18".to_string(),
-                source_app: "Cursor".to_string(),
-                source_title: "payments.ts".to_string(),
-                project_key: "payments".to_string(),
-                created_at: 10,
-                status: "open".to_string(),
-            },
-            AvatarFollowupItem {
-                id: "3".to_string(),
-                title: "   ".to_string(),
-                date: "2026-04-18".to_string(),
-                source_app: "Cursor".to_string(),
-                source_title: "payments.ts".to_string(),
-                project_key: "payments".to_string(),
-                created_at: 30,
-                status: "open".to_string(),
-            },
-        ];
-
-        normalize_avatar_followups(&mut items);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, "1");
-        assert_eq!(items[0].title, "修复支付页回调");
     }
 
     #[test]

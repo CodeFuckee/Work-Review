@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+# npm cache directory (GitLab CI NPM_CONFIG_CACHE)
+.npm/
 
 # Build output
 dist/
@@ -82,3 +84,8 @@ src-tauri/icons.backup/
 /plan.md
 .claude/
 .zcode/
+
+# 内置兜底模型的本地 API Key（编译期注入用，绝不入库）
+/src-tauri/.builtin-model-key.local
+/tests/e2e/ui/reports/artifacts/
+/tests/e2e/ui/reports/html/

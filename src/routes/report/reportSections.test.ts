@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   extractReportBlockName,
   getVisibleReportSections,
@@ -119,4 +121,28 @@ test('段落存储应把块标记保留在标题前并支持解析往返', () =>
 
   assert.equal(stored, source);
   assert.deepEqual(parseReportSections(stored), [section]);
+});
+
+test('四个语言的段落名都应包含 GITLAB_TODAY 标签', () => {
+  const localesDir = fileURLToPath(new URL('../../lib/i18n/locales', import.meta.url));
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ar']) {
+    const file = readFileSync(`${localesDir}/${locale}.ts`, 'utf8');
+    assert.match(
+      file,
+      /GITLAB_TODAY: '/,
+      `locale ${locale} missing report.blockNames.GITLAB_TODAY`,
+    );
+  }
+});
+
+test('四个语言的段落名都应包含 FILE_EVENTS_TODAY 标签（文件修改小节）', () => {
+  const localesDir = fileURLToPath(new URL('../../lib/i18n/locales', import.meta.url));
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ar']) {
+    const file = readFileSync(`${localesDir}/${locale}.ts`, 'utf8');
+    assert.match(
+      file,
+      /FILE_EVENTS_TODAY: '/,
+      `locale ${locale} missing report.blockNames.FILE_EVENTS_TODAY`,
+    );
+  }
 });

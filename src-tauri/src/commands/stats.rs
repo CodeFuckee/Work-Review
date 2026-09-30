@@ -853,6 +853,10 @@ fn get_running_apps_impl() -> Result<Vec<String>, AppError> {
 
     let mut apps = HashSet::new();
 
+    // SAFETY: PROCESSENTRY32W 按 Win32 约定先置零并写入 dwSize 后才传入
+    // Process32FirstW/NextW；szExeFile 是固定长度 [u16; 260] 的 UTF-16 缓冲，
+    // 手动找 NUL 终止符再切片不会越界。snapshot 句柄在块尾 CloseHandle 释放，
+    // 所有提前 return 都发生在快照创建失败（句柄为空）之后，不会泄漏。
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot.is_null() {
@@ -1227,7 +1231,15 @@ fn remove_screenshot_files(data_dir: &std::path::Path, paths: Vec<String>) -> us
         if p.is_empty() {
             continue;
         }
-        let path = data_dir.join(&p);
+        // 与截图读取路径同款校验：DB 内路径被污染（../、绝对路径）时不得越出
+        // data_dir 删除文件
+        let path = match super::shared::validated_join(data_dir, &p) {
+            Ok(path) => path,
+            Err(e) => {
+                log::warn!("跳过非法截图路径 {p:?}: {e}");
+                continue;
+            }
+        };
         if path.exists() {
             match std::fs::remove_file(&path) {
                 Ok(_) => removed += 1,
@@ -1321,6 +1333,31 @@ mod tests {
             "work-review-clear-old-activities-{label}-{}",
             uuid::Uuid::new_v4()
         ))
+    }
+
+    #[test]
+    fn 删除截图路径越出数据目录时应被拒绝不删除() {
+        // DB 内 screenshot_path 被污染（../ 或绝对路径）时不得越出 data_dir
+        // 删除任意文件（与截图读取路径的 validated_join 同款护栏）
+        let data_dir = clear_old_activities_test_dir("validated-delete");
+        std::fs::create_dir_all(&data_dir).expect("创建 data_dir 失败");
+        let victim =
+            std::env::temp_dir().join(format!("work-review-victim-{}.txt", uuid::Uuid::new_v4()));
+        std::fs::write(&victim, b"do not delete").expect("写入受害者文件失败");
+
+        let removed = remove_screenshot_files(
+            &data_dir,
+            vec![
+                format!("..\\{}", victim.file_name().unwrap().to_string_lossy()),
+                victim.to_string_lossy().to_string(),
+                String::new(),
+            ],
+        );
+
+        assert_eq!(removed, 0, "非法路径一个都不应删除");
+        assert!(victim.exists(), "data_dir 之外的文件必须原样保留");
+        let _ = std::fs::remove_file(&victim);
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 
     #[test]

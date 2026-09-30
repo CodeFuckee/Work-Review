@@ -126,11 +126,12 @@ pub(crate) fn generate_weekly_review_inner(
     state: &Arc<Mutex<AppState>>,
 ) -> Result<WeeklyReviewResult, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+    // 上限钳制（同 localhost /v1/activities 的 .min(10_000) 先例）：查询参数不直通全表载入
     let activities = load_filtered_activities_in_range(
         &state,
         date_from.as_deref(),
         date_to.as_deref(),
-        limit.unwrap_or(5000) as usize,
+        limit.map_or(5000, |v| v.min(10_000)) as usize,
     )?;
 
     Ok(build_weekly_review(

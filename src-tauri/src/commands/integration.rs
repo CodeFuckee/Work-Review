@@ -5,8 +5,6 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 use work_review_core::error::AppError;
 
-use super::shared::persist_app_config;
-
 #[tauri::command]
 pub async fn get_localhost_api_status(
     state: State<'_, Arc<Mutex<AppState>>>,
@@ -22,23 +20,6 @@ pub async fn get_node_gateway_status(
 }
 
 #[tauri::command]
-pub async fn get_telegram_bot_status(
-    state: State<'_, Arc<Mutex<AppState>>>,
-) -> Result<serde_json::Value, AppError> {
-    let s = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    let now_ts = chrono::Local::now().timestamp();
-    Ok(serde_json::json!({
-        "running": s.telegram_bot_runtime.is_running(),
-        "starting": s.telegram_bot_runtime.is_starting(),
-        "lastError": s.telegram_bot_runtime.last_error(),
-        "allowedChatIds": s.config.telegram_bot_allowed_chat_ids.clone(),
-        "bindCode": s.config.telegram_bot_bind_code.clone(),
-        "bindCodeExpiresAt": s.config.telegram_bot_bind_code_expires_at,
-        "bindCodeExpired": s.config.telegram_bot_bind_code_expires_at.map(|expires_at| expires_at < now_ts).unwrap_or(false),
-    }))
-}
-
-#[tauri::command]
 pub async fn get_wecom_bot_status(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<serde_json::Value, AppError> {
@@ -49,32 +30,6 @@ pub async fn get_wecom_bot_status(
         "lastError": s.wecom_bot_runtime.last_error(),
         "longConnectionConfigured": crate::wecom_aibot::long_connection_configured(&s.config),
         "callbackConfigured": crate::wecom_aibot::callback_configured(&s.config),
-    }))
-}
-
-#[tauri::command]
-pub async fn generate_telegram_bot_bind_code(
-    app: AppHandle,
-    state: State<'_, Arc<Mutex<AppState>>>,
-) -> Result<serde_json::Value, AppError> {
-    const TELEGRAM_BIND_CODE_TTL_SECONDS: i64 = 10 * 60;
-
-    let raw = uuid::Uuid::new_v4().simple().to_string();
-    let code = format!("WR-{}", raw[..6].to_ascii_uppercase());
-    let expires_at = chrono::Local::now().timestamp() + TELEGRAM_BIND_CODE_TTL_SECONDS;
-    let next_config = {
-        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-        let mut config = state.config.clone();
-        config.telegram_bot_bind_code = Some(code.clone());
-        config.telegram_bot_bind_code_expires_at = Some(expires_at);
-        config
-    };
-
-    persist_app_config(next_config, app, state.inner())?;
-
-    Ok(serde_json::json!({
-        "code": code,
-        "expiresAt": expires_at,
     }))
 }
 

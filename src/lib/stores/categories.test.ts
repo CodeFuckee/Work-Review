@@ -51,8 +51,9 @@ test('分类 Store 应保留刷新容错、同步快照读取和颜色回退行�
 
   assert.match(source, /try\s*{[\s\S]*invoke<CategoryInfo\[]>\('get_categories'\)[\s\S]*}\s*catch\s*\(e\)/);
   assert.match(source, /try\s*{[\s\S]*invoke<SemanticCategoryInfo\[]>\('get_semantic_categories'\)[\s\S]*}\s*catch\s*\(e\)/);
-  assert.equal((source.match(/const unsub = subscribe\(/g) || []).length, 4);
-  assert.equal((source.match(/unsub\(\);/g) || []).length, 4);
+  // 同步快照读取统一走 snapshotStore 助手：两个 store ×（条目查询 + 全量列表）= 4 处
+  assert.equal((source.match(/snapshotStore\(subscribe\)/g) || []).length, 4);
+  assert.match(source, /function snapshotStore<T>\(subscribe: Readable<T>\['subscribe'\]\): T/);
   assert.match(
     source,
     /if \(!hex \|\| !hex\.startsWith\('#'\) \|\| hex\.length < 7\) return `rgba\(100, 116, 139, \$\{alpha\}\)`;/

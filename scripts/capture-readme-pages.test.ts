@@ -26,6 +26,8 @@ test('截图上下文应固定上海时区与媒体规格所需视口', () => {
 });
 
 test('截图脚本应覆盖 README 引用的全部页面，并用核心流程生成 GIF', () => {
+  // 与 Settings.svelte tabs（general/appearance/ai/privacy/storage/node/gitlab/
+  // filemonitor）保持同步：桌宠移除后 README 不再引用「设置-桌面化身」
   assert.deepEqual(README_SCREENSHOT_LABELS, [
     '概览',
     '时间线',
@@ -36,7 +38,6 @@ test('截图脚本应覆盖 README 引用的全部页面，并用核心流程生
     '设置-通用',
     '设置-外观',
     '设置-AI模型',
-    '设置-桌面化身',
     '设置-隐私',
     '设置-存储',
     '接入管理',

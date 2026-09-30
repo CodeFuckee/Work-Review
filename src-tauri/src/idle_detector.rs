@@ -25,11 +25,10 @@ impl IdleDetector {
         }
     }
 
-    /// 第一阶段：检查键鼠是否超时
-    /// 返回 true 表示键鼠超时（可能空闲），需要进一步用截图哈希确认
-    pub fn is_input_idle(&self) -> bool {
-        let idle_secs = get_idle_seconds();
-        idle_secs >= self.idle_timeout_secs
+    /// 更新空闲阈值（分钟）。用户在设置里调整阈值后，采集循环据此热更新，
+    /// 无需重启应用
+    pub fn set_idle_timeout_minutes(&mut self, minutes: u64) {
+        self.idle_timeout_secs = minutes.max(1) * 60;
     }
 
     /// 第二阶段：用截图哈希判断屏幕是否长时间无变化。
@@ -112,6 +111,8 @@ fn get_idle_seconds() -> u64 {
     use winapi::um::sysinfoapi::GetTickCount;
     use winapi::um::winuser::{GetLastInputInfo, LASTINPUTINFO};
 
+    // SAFETY: GetLastInputInfo 只写入栈上 LASTINPUTINFO（cbSize 已按类型大小
+    // 初始化），GetTickCount 为纯查询，无资源产出
     unsafe {
         let mut lii = LASTINPUTINFO {
             cbSize: size_of::<LASTINPUTINFO>() as u32,

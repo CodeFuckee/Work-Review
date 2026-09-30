@@ -259,6 +259,8 @@ async fn chat_openai_compatible(
     let response = send_with_retry(request, deadline).await?;
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
+        // 网关错误页可能是整页 HTML，截断防其全量进错误串与日志（同 Gemini 口径）
+        let error_text = error_text.chars().take(300).collect::<String>();
         return Err(AppError::Analysis(format!("LLM 调用失败: {error_text}")));
     }
 
@@ -302,8 +304,57 @@ async fn chat_ollama(
     }
 
     let result: Value = response.json().await?;
-    // Ollama 的响应格式和 OpenAI 类似
-    parse_openai_response(&result)
+    // 原生 /api/chat 响应顶层是 message（无 choices），必须按原生格式解析，
+    // 不能套用 OpenAI 解析器（流式装配器读的也是 message.content，两路径口径一致）
+    Ok(parse_ollama_response(&result))
+}
+
+/// 解析 Ollama 原生 /api/chat 非流式响应。
+/// tool_calls 的 arguments 是 object（容错字符串形式），与流式装配器口径一致。
+fn parse_ollama_response(result: &Value) -> LlmResponse {
+    let message = &result["message"];
+    let mut calls = Vec::new();
+    if let Some(tcs) = message["tool_calls"].as_array() {
+        for (i, tc) in tcs.iter().enumerate() {
+            let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let arguments = if tc["function"]["arguments"].is_object() {
+                tc["function"]["arguments"].clone()
+            } else {
+                tc["function"]["arguments"]
+                    .as_str()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or(json!({}))
+            };
+            calls.push(ToolCall {
+                id: tc["id"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("ollama_call_{}", i)),
+                name,
+                arguments,
+            });
+        }
+    }
+    let tool_calls = if calls.is_empty() { None } else { Some(calls) };
+    let stop_reason = if tool_calls.is_some() {
+        StopReason::ToolCall
+    } else if result["done_reason"].as_str() == Some("length") {
+        StopReason::MaxTokens
+    } else {
+        StopReason::Stop
+    };
+    let content = message["content"]
+        .as_str()
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty());
+    LlmResponse {
+        content,
+        tool_calls,
+        stop_reason,
+    }
 }
 
 /// Claude 请求格式转换：统一 messages → (claude_messages, system, claude_tools)。
@@ -427,6 +478,8 @@ async fn chat_claude(
 
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
+        // 同上：截断防整页错误 HTML 进错误串与日志
+        let error_text = error_text.chars().take(300).collect::<String>();
         return Err(AppError::Analysis(format!("Claude 调用失败: {error_text}")));
     }
 
@@ -578,7 +631,7 @@ async fn chat_gemini(
 // 第四部分：响应解析 — 各家格式 → 统一格式
 // ══════════════════════════════════════════════════════════
 
-/// 解析 OpenAI 格式的响应（Ollama 也用这个）
+/// 解析 OpenAI 格式的响应（Ollama 原生格式走 parse_ollama_response）
 fn parse_openai_response(result: &Value) -> Result<LlmResponse, AppError> {
     let choice = &result["choices"][0];
     let msg = &choice["message"];
@@ -894,15 +947,26 @@ async fn drive_stream(
 }
 
 /// 校验流式响应状态码，非 2xx 时读取 body 报错（触发上层回退）。
+/// body 读取受 deadline 剩余时间约束（另设 10s 上限）：半死端点慢速滴漏错误 body
+/// 不能拖垮整个请求。
 async fn ensure_stream_status(
     response: reqwest::Response,
     provider_label: &str,
+    deadline: Deadline,
 ) -> Result<reqwest::Response, AppError> {
     if response.status().is_success() {
         return Ok(response);
     }
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let idle = deadline.cap(Duration::from_secs(10));
+    let body = if idle.is_zero() {
+        String::new()
+    } else {
+        match tokio::time::timeout(idle, response.text()).await {
+            Ok(Ok(text)) => text,
+            _ => String::new(),
+        }
+    };
     Err(AppError::Analysis(format!(
         "{provider_label} 流式调用失败 ({status}): {}",
         body.chars().take(300).collect::<String>()
@@ -916,6 +980,9 @@ async fn ensure_stream_status(
 #[derive(Default)]
 struct OpenAiStreamAssembler {
     content: String,
+    /// 思维链增量单独累积，不与正文拼接；finish 时仅当正文为空才兜底，
+    /// 与 parse_openai_response 的非流式语义对齐。
+    reasoning: String,
     finish_reason: Option<String>,
     /// index 对齐的 (id, name, arguments_json 分片累积)
     partial_calls: Vec<(String, String, String)>,
@@ -939,11 +1006,19 @@ impl OpenAiStreamAssembler {
                         .push((String::new(), String::new(), String::new()));
                 }
                 let slot = &mut self.partial_calls[idx];
+                // id/name 仅在 slot 为空时写入：官方 OpenAI 只在首个分片携带，此后为 null；
+                // vLLM 等自托管兼容端点每个分片重复完整 id/name——按 openai-python 官方
+                // 流式累积语义「首次非空生效」，否则重复值会拼成 "call_xxxcall_xxx" 并被
+                // trusted_event_tool_metadata 精确匹配拒绝。arguments 保持逐片拼接。
                 if let Some(id) = tc["id"].as_str() {
-                    slot.0.push_str(id);
+                    if slot.0.is_empty() {
+                        slot.0 = id.to_string();
+                    }
                 }
                 if let Some(name) = tc["function"]["name"].as_str() {
-                    slot.1.push_str(name);
+                    if slot.1.is_empty() {
+                        slot.1 = name.to_string();
+                    }
                 }
                 if let Some(args) = tc["function"]["arguments"].as_str() {
                     slot.2.push_str(args);
@@ -952,15 +1027,19 @@ impl OpenAiStreamAssembler {
         }
         // 思考型模型（DeepSeek V4/R1、Qwen3 等）的思维链增量走 reasoning_content，
         // 与 content 同级；正文帧缺失/为空时输出思考增量，避免助手全程无输出。
-        let text = delta["content"]
+        // 增量照发保持打字观感，但两类增量分开累积：正文已开始后迟到的思维链丢弃。
+        if let Some(c) = delta["content"].as_str().filter(|s| !s.is_empty()) {
+            self.content.push_str(c);
+            return Some(c.to_string());
+        }
+        if let Some(r) = delta["reasoning_content"]
             .as_str()
             .filter(|s| !s.is_empty())
-            .or_else(|| delta["reasoning_content"].as_str())?;
-        if text.is_empty() {
-            return None;
+        {
+            self.reasoning.push_str(r);
+            return Some(r.to_string());
         }
-        self.content.push_str(text);
-        Some(text.to_string())
+        None
     }
 
     fn finish(self) -> LlmResponse {
@@ -998,8 +1077,14 @@ impl OpenAiStreamAssembler {
         };
 
         LlmResponse {
+            // 正文为空时兜底思维链（全程只有思考的模型也应有内容可展示）；
+            // 正文非空时绝不拼接思维链，与 parse_openai_response 语义一致。
             content: if self.content.is_empty() {
-                None
+                if self.reasoning.is_empty() {
+                    None
+                } else {
+                    Some(self.reasoning)
+                }
             } else {
                 Some(self.content)
             },
@@ -1042,7 +1127,8 @@ async fn chat_openai_compatible_streaming(
         }
     }
 
-    let response = ensure_stream_status(send_until(request, deadline).await?, "LLM").await?;
+    let response =
+        ensure_stream_status(send_until(request, deadline).await?, "LLM", deadline).await?;
 
     let mut assembler = OpenAiStreamAssembler::default();
     drive_stream(response, deadline, |line| {
@@ -1166,6 +1252,7 @@ async fn chat_ollama_streaming(
     let response = ensure_stream_status(
         send_until(client.post(&url).json(&body), deadline).await?,
         "Ollama",
+        deadline,
     )
     .await?;
 
@@ -1338,6 +1425,7 @@ async fn chat_claude_streaming(
         )
         .await?,
         "Claude",
+        deadline,
     )
     .await?;
 
@@ -1468,6 +1556,7 @@ async fn chat_gemini_streaming(
         )
         .await?,
         "Gemini",
+        deadline,
     )
     .await?;
 
@@ -1559,12 +1648,58 @@ mod tests {
             Some("今日工作总结如下".to_string())
         );
 
-        // 全程只有思维链（额度耗尽）时，finish 结果仍应包含思考文本
+        // 思维链不与正文拼接：finish 内容只有正文（与 parse_openai_response 语义对齐）
+        // 全程只有思维链（额度耗尽）时，finish 才兜底思考文本
         let finished = assembler.finish();
+        assert_eq!(finished.content.as_deref(), Some("今日工作总结如下"));
+
+        let mut only_thinking = OpenAiStreamAssembler::default();
+        only_thinking.ingest(&thinking_frame);
+        let finished = only_thinking.finish();
         assert!(finished
             .content
             .as_deref()
             .is_some_and(|s| s.contains("先查数据库…")));
+    }
+
+    #[test]
+    fn ollama非流式响应应按原生message格式解析() {
+        // 原生 /api/chat 响应顶层是 message（无 choices）；
+        // 套用 OpenAI 解析器会恒得空答案，此用例防回归
+        let native = json!({
+            "model": "qwen3:8b",
+            "message": {
+                "role": "assistant",
+                "content": "今日完成了评审流程梳理",
+                "tool_calls": [{
+                    "function": {
+                        "name": "get_timeline",
+                        "arguments": { "date": "2026-09-20" }
+                    }
+                }]
+            },
+            "done": true,
+            "done_reason": "stop"
+        });
+        let parsed = parse_ollama_response(&native);
+        assert_eq!(parsed.content.as_deref(), Some("今日完成了评审流程梳理"));
+        assert_eq!(parsed.stop_reason, StopReason::ToolCall);
+        let calls = parsed.tool_calls.expect("应解析出原生 tool_calls");
+        assert_eq!(calls[0].name, "get_timeline");
+        assert_eq!(calls[0].arguments["date"], "2026-09-20");
+
+        // 文本 + 长度截断 → MaxTokens
+        let truncated = json!({
+            "message": { "role": "assistant", "content": "只写到一半" },
+            "done_reason": "length"
+        });
+        let parsed = parse_ollama_response(&truncated);
+        assert_eq!(parsed.stop_reason, StopReason::MaxTokens);
+        assert_eq!(parsed.content.as_deref(), Some("只写到一半"));
+
+        // 空正文 → None（与 OpenAI 非流式口径一致）
+        let empty = json!({ "message": { "role": "assistant", "content": "" } });
+        assert!(parse_ollama_response(&empty).content.is_none());
     }
 
     #[test]

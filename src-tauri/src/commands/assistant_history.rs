@@ -17,8 +17,10 @@ pub async fn list_assistant_conversations(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<AssistantConversation>, AppError> {
     let s = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+    // 防御性钳制：对齐 user_memory（1..500）与 file_monitor（1..200）的分页口径，
+    // IPC 传参不直通 SQL LIMIT
     s.database
-        .list_assistant_conversations(limit.unwrap_or(50) as usize)
+        .list_assistant_conversations(limit.unwrap_or(50).clamp(1, 200) as usize)
 }
 
 /// 新建会话，返回会话 id。

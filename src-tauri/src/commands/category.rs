@@ -100,8 +100,12 @@ pub(crate) fn reclassify_app_history_in_state(
                 activity.browser_url.as_deref(),
                 &target_category,
             );
+        // DB 主键恒非 NULL；防御性跳过而非 panic（理论不可达分支）
+        let Some(activity_id) = activity.id else {
+            continue;
+        };
         state.database.update_activity_classification(
-            activity.id.expect("活动记录应包含主键"),
+            activity_id,
             &classification.base_category,
             Some(&classification.semantic_category),
             Some(i32::from(classification.confidence)),
@@ -146,8 +150,12 @@ fn reclassify_domain_history_in_state(
             semantic_category,
             &activity.category,
         );
+        // DB 主键恒非 NULL；防御性跳过而非 panic（理论不可达分支）
+        let Some(activity_id) = activity.id else {
+            continue;
+        };
         state.database.update_activity_classification(
-            activity.id.expect("活动记录应包含主键"),
+            activity_id,
             &next_base_category,
             Some(semantic_category),
             Some(100),
@@ -288,7 +296,7 @@ pub async fn delete_custom_category(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<usize, AppError> {
     let key = key.trim().to_lowercase();
-    let fallback = reassign_to.unwrap_or_else(|| "other".to_string());
+    let requested_fallback = reassign_to.unwrap_or_else(|| "other".to_string());
 
     if key == "other" {
         return Err(AppError::Unknown("不能删除默认分类「其他」".to_string()));
@@ -305,7 +313,7 @@ pub async fn delete_custom_category(
             .count()
     };
 
-    let next_config = {
+    let (next_config, fallback) = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         let mut next_config = state.config.clone();
 
@@ -319,6 +327,24 @@ pub async fn delete_custom_category(
             next_config.deleted_default_categories.push(key.clone());
         }
 
+        // 校验重定向目标：必须存在于内置/自定义分类且 ≠ 被删 key，否则回退 "other"，
+        // 避免规则与全部历史活动被批量重定向到不存在的分类
+        let fallback = if requested_fallback != key
+            && (work_review_core::config::DEFAULT_CATEGORY_KEYS
+                .contains(&requested_fallback.as_str())
+                || next_config
+                    .custom_categories
+                    .iter()
+                    .any(|c| c.key == requested_fallback))
+        {
+            requested_fallback
+        } else {
+            if requested_fallback != "other" {
+                log::warn!("删除分类 {key}: reassign_to '{requested_fallback}' 无效，回退 'other'");
+            }
+            "other".to_string()
+        };
+
         // 重定向引用该分类的规则
         for rule in &mut next_config.app_category_rules {
             if rule.category == key {
@@ -326,7 +352,7 @@ pub async fn delete_custom_category(
             }
         }
 
-        next_config
+        (next_config, fallback)
     };
 
     persist_app_config(next_config, app, state.inner())?;

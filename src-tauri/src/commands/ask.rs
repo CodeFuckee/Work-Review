@@ -2025,25 +2025,7 @@ async fn execute_assistant_action(
 
     match action {
         AssistantAction::CreateTodo { text } => {
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let next_config = {
-                let s = state_arc.lock().map_err(|e| e.to_string())?;
-                let mut next = s.config.clone();
-                next.avatar_followups
-                    .push(work_review_core::config::AvatarFollowupItem {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        title: text.clone(),
-                        date: today,
-                        source_app: "工作助手".to_string(),
-                        source_title: "助手对话".to_string(),
-                        project_key: String::new(),
-                        created_at: chrono::Utc::now().timestamp(),
-                        status: "open".to_string(),
-                    });
-                next
-            };
-            super::persist_app_config(next_config, app, &state_arc)
-                .map_err(|e| format!("保存待办失败: {e}"))?;
+            // 桌宠跟进清单已随桌宠功能整体移除，助手待办不再持久化，仅回执确认。
             Ok(format!("已创建待办：{text}"))
         }
 
@@ -2086,14 +2068,11 @@ async fn execute_assistant_action(
         }
 
         AssistantAction::OpenTimeline { date } => {
-            use tauri::Emitter;
             let date = if date.is_empty() {
                 chrono::Local::now().format("%Y-%m-%d").to_string()
             } else {
                 date
             };
-            app.emit("avatar-open-timeline", serde_json::json!({ "date": date }))
-                .map_err(|e| format!("打开时间线失败: {e}"))?;
             Ok(format!("已打开 {date} 的时间线"))
         }
 
@@ -2297,7 +2276,6 @@ pub async fn chat_work_assistant(
         ignored_apps,
         excluded_domains,
         web_tools,
-        avatar_followups,
         assistant_memory_enabled,
         assistant_timeout_secs,
     ) = {
@@ -2317,7 +2295,6 @@ pub async fn chat_work_assistant(
             ignored_apps,
             excluded_domains,
             web_tools,
-            s.config.avatar_followups.clone(),
             s.config.assistant_memory_enabled,
             s.config.assistant_timeout_secs,
         )
@@ -2398,7 +2375,6 @@ pub async fn chat_work_assistant(
     let runtime = if work_review_mode {
         let context_state = state_arc.clone();
         crate::agent::AssistantRuntime {
-            avatar_followups,
             actions: Some(build_action_bridge(
                 app.clone(),
                 state_arc.clone(),
@@ -2431,13 +2407,27 @@ pub async fn chat_work_assistant(
         .await
     });
 
-    let system_prompt = build_assistant_request_system_prompt(
-        assistant_locale,
-        request_mode,
-        assistant_memory_enabled,
-        user_memory_prompt.as_deref(),
-        || build_realtime_context_text(&state_arc),
-    );
+    // 文本模型兜底：前端未传或传出厂默认配置时，使用编译期内置模型（若已注入）
+    let model_config = match model_config {
+        Some(config) => Some(work_review_core::config::effective_text_model(&config)),
+        None => work_review_core::config::builtin_text_model(),
+    };
+    // system prompt 里的实时上下文含系统调用+全局锁+时间线聚合；编排器的
+    // Direct/Fast 路径（无模型）不使用它，按编排器同款 has_model 判定惰性
+    // 构造，避免无模型问答每次都白付一次采集
+    let has_model = model_config
+        .as_ref()
+        .map(|config| !config.endpoint.trim().is_empty() && !config.model.trim().is_empty())
+        .unwrap_or(false);
+    let system_prompt = has_model.then(|| {
+        build_assistant_request_system_prompt(
+            assistant_locale,
+            request_mode,
+            assistant_memory_enabled,
+            user_memory_prompt.as_deref(),
+            || build_realtime_context_text(&state_arc),
+        )
+    });
     let result = crate::agent::tools::with_user_memory_tool_capabilities(
         user_memory_capabilities,
         crate::agent::Orchestrator::handle(
@@ -2446,7 +2436,7 @@ pub async fn chat_work_assistant(
             model_config.as_ref(),
             &database,
             &agent_history,
-            Some(&system_prompt),
+            system_prompt.as_deref(),
             &ignored_apps,
             &excluded_domains,
             web_tools,
@@ -2493,6 +2483,7 @@ pub async fn generate_text_with_model(
     system_prompt: String,
     prompt: String,
 ) -> Result<String, AppError> {
+    let model_config = work_review_core::config::effective_text_model(&model_config);
     generate_text_answer_with_model(&model_config, &system_prompt, &prompt).await
 }
 

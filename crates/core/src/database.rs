@@ -61,19 +61,9 @@ fn category_counts_toward_work_time(category: &str) -> bool {
 }
 
 fn matches_ignored_app_for_stats(app_name: &str, ignored_apps: &[String]) -> bool {
-    let app_lower = crate::categorize::normalize_display_app_name(app_name)
-        .to_lowercase()
-        .trim()
-        .to_string();
-    if app_lower.is_empty() {
-        return false;
-    }
-
-    // 单向小写子串匹配，与 privacy::matches_ignored_app 保持一致：
-    // 不做反向包含，避免忽略 "Google Chrome Canary" 时误伤 "Google Chrome"。
-    ignored_apps
-        .iter()
-        .any(|ignored| !ignored.is_empty() && app_lower.contains(ignored))
+    // 直接委托 privacy 版本：单向小写子串匹配的口径由一处定义，
+    // 避免 stats 侧与隐私过滤侧漂移（历史上两份逐字重复实现）。
+    crate::privacy::matches_ignored_app(app_name, ignored_apps)
 }
 
 fn merged_domain_matches_excluded(domain: &str, excluded_domain: &str) -> bool {
@@ -172,8 +162,69 @@ pub struct DailyReport {
     pub created_at: i64,
 }
 
+/// 一条 GitLab 提交的时间线记录（gitlab_commits 表）。
+/// `date` 为本机时区日期（YYYY-MM-DD），`committed_at` 为 UTC unix 秒。
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabCommitRow {
+    pub sha: String,
+    pub date: String,
+    pub committed_at: i64,
+    pub project: String,
+    pub branch: String,
+    pub short_id: String,
+    pub title: String,
+    pub additions: Option<i64>,
+    pub deletions: Option<i64>,
+    #[serde(default)]
+    pub author_name: String,
+    #[serde(default)]
+    pub author_email: String,
+}
+
 fn default_report_locale() -> String {
     "zh-CN".to_string()
+}
+
+/// 概览页 GitLab 提交统计：按项目聚合的提交次数与代码行数变更。
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabProjectStatRow {
+    pub project: String,
+    pub commits: i64,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+/// 一条 Plane 工作项的时间线记录（plane_work_items 表）。
+/// 同一工作项可出现在多个同步日（按 `plane_item_id` + `synced_date` 幂等），
+/// `updated_at` 为 UTC unix 秒，`synced_date` 为本机时区日期（YYYY-MM-DD）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaneWorkItemRow {
+    pub plane_item_id: String,
+    pub project_name: String,
+    pub name: String,
+    pub state_name: String,
+    pub updated_at: i64,
+    pub url: Option<String>,
+}
+
+/// 概览页文件活动：一条文件监控事件
+#[derive(Debug, Clone, Serialize)]
+pub struct FileEventRow {
+    pub path: String,
+    /// created / modified / deleted / renamed
+    pub event_type: String,
+    pub size: Option<i64>,
+    /// UTC unix 秒
+    pub occurred_at: i64,
+    pub date: String,
+}
+
+/// 时间线「今日项目」卡的人工调整项：removed=true 表示当日屏蔽（归因聚合出的
+/// 项目被删除后不再复活，次日自然重置）；false 表示手动添加。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DailyProjectAdjustment {
+    pub project_name: String,
+    pub removed: bool,
 }
 
 /// 应用使用统计
@@ -435,8 +486,10 @@ pub fn encode_embedding(vector: &[f32]) -> Vec<u8> {
 
 /// BLOB → f32 向量（长度非 4 的倍数时丢弃尾部残字节）。
 pub fn decode_embedding(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    blob.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
         .collect()
 }
 
@@ -757,6 +810,21 @@ impl Database {
         Ok(())
     }
 
+    /// 兼容旧数据库的加列迁移：列已存在（duplicate column）时静默跳过，
+    /// 其余错误（磁盘满/只读库/库损坏）照常传播——不能整条吞掉，否则列静默缺失，
+    /// 后续对这些列的 INSERT/SELECT 以晦涩错误失败且启动日志零痕迹。
+    fn add_column_if_missing(conn: &Connection, sql: &str) -> Result<()> {
+        match conn.execute(sql, []) {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(_, Some(msg)))
+                if msg.contains("duplicate column name") =>
+            {
+                Ok(())
+            }
+            Err(e) => Err(AppError::Database(e)),
+        }
+    }
+
     /// 初始化数据库表
     fn init_tables(&self) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| {
@@ -821,14 +889,14 @@ impl Database {
             [],
         )?;
 
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE daily_reports ADD COLUMN fallback_reason TEXT",
-            [],
-        );
-        let _ = conn.execute(
+        )?;
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE daily_reports_localized ADD COLUMN fallback_reason TEXT",
-            [],
-        );
+        )?;
 
         conn.execute(
             "INSERT OR IGNORE INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at)
@@ -860,21 +928,27 @@ impl Database {
         )?;
 
         // 迁移：添加 browser_url 列（如果不存在）
-        let _ = conn.execute("ALTER TABLE activities ADD COLUMN browser_url TEXT", []);
+        Self::add_column_if_missing(&conn, "ALTER TABLE activities ADD COLUMN browser_url TEXT")?;
         // 迁移：添加 executable_path 列（如果不存在）
-        let _ = conn.execute("ALTER TABLE activities ADD COLUMN executable_path TEXT", []);
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN executable_path TEXT",
+        )?;
         // 迁移：添加 semantic_category 列（如果不存在）
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE activities ADD COLUMN semantic_category TEXT",
-            [],
-        );
+        )?;
         // 迁移：添加 semantic_confidence 列（如果不存在）
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE activities ADD COLUMN semantic_confidence INTEGER",
-            [],
-        );
+        )?;
         // 迁移：添加 screenshot_url 列（远程存储 URL）
-        let _ = conn.execute("ALTER TABLE activities ADD COLUMN screenshot_url TEXT", []);
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN screenshot_url TEXT",
+        )?;
 
         // AI 实体分类缓存：后台任务对未知应用/域名做一次性归类,此后采集直接查表,
         // 无需用户手动加规则。entity_key 形如 "app:xxx" / "domain:yyy"。
@@ -971,10 +1045,10 @@ impl Database {
             [],
         )?;
         // 兼容旧数据库：首次升级时补充重建代际列；重复执行时忽略 duplicate column。
-        let _ = conn.execute(
+        Self::add_column_if_missing(
+            &conn,
             "ALTER TABLE semantic_memory_state ADD COLUMN build_id TEXT NOT NULL DEFAULT ''",
-            [],
-        );
+        )?;
         conn.execute(
             "INSERT OR IGNORE INTO semantic_memory_state (singleton_id, updated_at) VALUES (1, ?1)",
             params![chrono::Utc::now().timestamp()],
@@ -1002,6 +1076,85 @@ impl Database {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_assistant_user_memories_policy_updated
              ON assistant_user_memories (recall_policy, updated_at DESC)",
+            [],
+        )?;
+
+        // GitLab 提交（供时间线页面/日报时间线展示；sha 唯一，重复拉取幂等覆盖）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gitlab_commits (
+                sha TEXT PRIMARY KEY,
+                date TEXT NOT NULL,
+                committed_at INTEGER NOT NULL,
+                project TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                short_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                additions INTEGER,
+                deletions INTEGER,
+                author_name TEXT NOT NULL DEFAULT '',
+                author_email TEXT NOT NULL DEFAULT '',
+                fetched_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gitlab_commits_date_time
+             ON gitlab_commits (date, committed_at)",
+            [],
+        )?;
+
+        // Plane 工作项（供时间线页面/日报展示；同一工作项同一天重复拉取幂等覆盖）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plane_work_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plane_item_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                name TEXT NOT NULL,
+                state_name TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                url TEXT,
+                synced_date TEXT NOT NULL,
+                UNIQUE(plane_item_id, synced_date)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_plane_work_items_date_time
+             ON plane_work_items (synced_date, updated_at)",
+            [],
+        )?;
+
+        // === 文件监控事件（概览页「文件活动」卡片） ===
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                size INTEGER,
+                occurred_at INTEGER NOT NULL,
+                date TEXT NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_events_date_time
+             ON file_events (date, occurred_at)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS daily_project_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                removed INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                UNIQUE(date, project_name)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_daily_project_adjustments_date
+             ON daily_project_adjustments (date)",
             [],
         )?;
 
@@ -1144,7 +1297,7 @@ impl Database {
              SET rebuild_required = CASE WHEN status = 'ready' THEN 1 ELSE rebuild_required END,
                  status = CASE WHEN status = 'ready' THEN 'idle' ELSE status END,
                  build_id = CASE WHEN status = 'ready' THEN '' ELSE build_id END,
-                 total_activities = (SELECT COUNT(*) FROM activities),
+                 total_activities = total_activities + 1,
                  updated_at = ?1
              WHERE singleton_id = 1",
             params![chrono::Utc::now().timestamp()],
@@ -1154,25 +1307,38 @@ impl Database {
         Ok(activity_id)
     }
 
-    /// 获取指定应用最近24小时内的最新一条活动记录
-    pub fn get_last_activity_by_app(&self, app_name: &str) -> Result<Option<Activity>> {
+    /// 当天 00:00:00 的本地时间戳（合并判断的默认回溯起点）
+    fn today_start_ts() -> i64 {
+        let now = chrono::Local::now();
+        let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+        safe_local_timestamp(ndt)
+    }
+
+    /// 「按合并键查最近一条活动」共享实现：四类查询仅 WHERE 过滤列与回溯起点不同。
+    /// where_clause 内的占位符从 ?1 编号，start_ts 恒为最后一个参数。
+    fn latest_activity_by_filter(
+        &self,
+        where_clause: &str,
+        start_ts: i64,
+        filter_params: &[&dyn rusqlite::ToSql],
+    ) -> Result<Option<Activity>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
-        // 回溯24小时
-        let start_ts = chrono::Local::now().timestamp() - 86400;
-
         let sql = format!(
             "SELECT {ACTIVITY_SELECT_COLUMNS}
              FROM activities
-             WHERE app_name = ?1 AND timestamp >= ?2
+             WHERE {where_clause} AND timestamp >= ?{start_idx}
              ORDER BY id DESC
-             LIMIT 1"
+             LIMIT 1",
+            start_idx = filter_params.len() + 1,
         );
         let mut stmt = conn.prepare(&sql)?;
 
-        let mut rows = stmt.query(params![app_name, start_ts])?;
+        let mut all_params: Vec<&dyn rusqlite::ToSql> = filter_params.to_vec();
+        all_params.push(&start_ts);
+        let mut rows = stmt.query(all_params.as_slice())?;
         if let Some(row) = rows.next()? {
             Ok(Some(activity_from_row(row)?))
         } else {
@@ -1180,34 +1346,17 @@ impl Database {
         }
     }
 
+    /// 获取指定应用最近24小时内的最新一条活动记录
+    pub fn get_last_activity_by_app(&self, app_name: &str) -> Result<Option<Activity>> {
+        // 回溯24小时
+        let start_ts = chrono::Local::now().timestamp() - 86400;
+        self.latest_activity_by_filter("app_name = ?1", start_ts, &[&app_name])
+    }
+
     /// 获取指定应用今天的最近一条活动记录（用于合并判断）
     pub fn get_latest_activity_by_app(&self, app_name: &str) -> Result<Option<Activity>> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
-
-        // 获取今天的开始时间戳（当天 00:00:00）
-        let today_start = {
-            let now = chrono::Local::now();
-            let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            safe_local_timestamp(ndt)
-        };
-
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE app_name = ?1 AND timestamp >= ?2
-             ORDER BY id DESC
-             LIMIT 1"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![app_name, today_start])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(activity_from_row(row)?))
-        } else {
-            Ok(None)
-        }
+        let today_start = Self::today_start_ts();
+        self.latest_activity_by_filter("app_name = ?1", today_start, &[&app_name])
     }
 
     /// 获取指定应用 + 窗口标题今天的最近一条活动记录
@@ -1217,66 +1366,29 @@ impl Database {
         app_name: &str,
         window_title: &str,
     ) -> Result<Option<Activity>> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
-
-        let today_start = {
-            let now = chrono::Local::now();
-            let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            safe_local_timestamp(ndt)
-        };
-
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE app_name = ?1 AND window_title = ?2 AND timestamp >= ?3
-             ORDER BY id DESC
-             LIMIT 1"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![app_name, window_title, today_start])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(activity_from_row(row)?))
-        } else {
-            Ok(None)
-        }
+        let today_start = Self::today_start_ts();
+        self.latest_activity_by_filter(
+            "app_name = ?1 AND window_title = ?2",
+            today_start,
+            &[&app_name, &window_title],
+        )
     }
 
     /// 按 URL 获取今天的活动记录（用于浏览器 URL 合并）
     /// 使用规范化 URL 进行匹配，解决末尾斜杠差异问题
     pub fn get_latest_activity_by_url(&self, browser_url: &str) -> Result<Option<Activity>> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
-
-        let today_start = {
-            let now = chrono::Local::now();
-            let ndt = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            safe_local_timestamp(ndt)
-        };
+        let today_start = Self::today_start_ts();
 
         // 规范化输入 URL
         let normalized_url = normalize_url(browser_url);
         log::debug!("URL 合并查询: 原始='{browser_url}', 规范化='{normalized_url}'");
 
         // 使用 RTRIM 规范化数据库中的 URL 进行比较
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE RTRIM(browser_url, '/') = ?1 AND timestamp >= ?2
-             ORDER BY id DESC
-             LIMIT 1"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![normalized_url, today_start])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(activity_from_row(row)?))
-        } else {
-            Ok(None)
-        }
+        self.latest_activity_by_filter(
+            "RTRIM(browser_url, '/') = ?1",
+            today_start,
+            &[&normalized_url],
+        )
     }
 
     /// 根据 ID 获取单个活动
@@ -1310,14 +1422,17 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
-        // 获取现有的 OCR 内容
-        let existing_ocr: Option<String> = conn
-            .query_row(
-                "SELECT ocr_text FROM activities WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .ok();
+        // 获取现有的 OCR 内容；行不存在按无 OCR 处理，其余错误必须向上传播，
+        // 否则读失败后仍继续 UPDATE，merged_ocr 只剩新内容、历史 OCR 被覆盖丢失
+        let existing_ocr: Option<String> = match conn.query_row(
+            "SELECT ocr_text FROM activities WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(AppError::Database(e)),
+        };
 
         // 合并 OCR：追加新内容
         let merged_ocr = match (existing_ocr, new_ocr) {
@@ -1925,6 +2040,9 @@ impl Database {
 
         let activity_rows: Vec<_> = activity_rows.collect::<std::result::Result<Vec<_>, _>>()?;
         drop(stmt);
+        // 数据已全部物化，聚合是纯内存计算——立即释放连接锁，
+        // 不让逐活动的小时桶切分阻塞采集热路径的 insert_activity
+        drop(conn);
 
         for (
             timestamp,
@@ -2113,8 +2231,6 @@ impl Database {
                 }
             }
         }
-
-        drop(conn);
 
         let mut app_usage: Vec<AppUsage> = app_usage_map
             .into_iter()
@@ -2479,6 +2595,11 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
 
+        // 行已全部物化，后续分段构建与逐小时聚合是纯内存计算——
+        // 立即释放连接锁，多日大区间时不阻塞采集热路径
+        drop(stmt);
+        drop(conn);
+
         #[derive(Clone)]
         struct HourlySegment {
             hour: i32,
@@ -2709,17 +2830,36 @@ impl Database {
         let limit = limit.clamp(1, 10_000) as i64;
         let (start_ts, end_ts) = parse_date_bounds(date_from, date_to);
 
-        let mut stmt = conn.prepare(
+        // WHERE (?1 IS NULL OR timestamp >= ?1) 让 SQLite 无法把参数下推为
+        // 索引范围约束，每次调用退化为全表扫描+排序；按实参拼出确定性条件
+        // 保持同结果的同时让 timestamp 索引可走范围扫描
+        let mut conditions: Vec<&'static str> = Vec::with_capacity(2);
+        let mut args: Vec<i64> = Vec::with_capacity(3);
+        if let Some(start) = start_ts {
+            conditions.push("timestamp >= ?");
+            args.push(start);
+        }
+        if let Some(end) = end_ts {
+            conditions.push("timestamp < ?");
+            args.push(end);
+        }
+        args.push(limit);
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
             "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url
              FROM activities
-             WHERE (?1 IS NULL OR timestamp >= ?1)
-               AND (?2 IS NULL OR timestamp < ?2)
+             {where_clause}
              ORDER BY timestamp ASC, id ASC
-             LIMIT ?3",
-        )?;
+             LIMIT ?"
+        );
+        let mut stmt = conn.prepare(&sql)?;
 
         let activities = stmt
-            .query_map(params![start_ts, end_ts, limit], |row| {
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok(Activity {
                     id: Some(row.get(0)?),
                     timestamp: row.get(1)?,
@@ -2742,15 +2882,324 @@ impl Database {
         Ok(activities)
     }
 
+    /// 批量写入 GitLab 提交（按 sha 幂等覆盖；供日报生成与时间线页补采调用）。
+    /// 整批包在一个事务里原子提交：任一条失败即整体回滚，调用方收到错误。
+    pub fn upsert_gitlab_commits(&self, commits: &[GitlabCommitRow]) -> Result<usize> {
+        if commits.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let tx = conn.unchecked_transaction()?;
+        let now = chrono::Utc::now().timestamp();
+        for commit in commits {
+            tx.execute(
+                "INSERT INTO gitlab_commits (sha, date, committed_at, project, branch, short_id, title, additions, deletions, author_name, author_email, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 ON CONFLICT(sha) DO UPDATE SET
+                    date = excluded.date,
+                    committed_at = excluded.committed_at,
+                    project = excluded.project,
+                    branch = excluded.branch,
+                    short_id = excluded.short_id,
+                    title = excluded.title,
+                    additions = excluded.additions,
+                    deletions = excluded.deletions,
+                    author_name = excluded.author_name,
+                    author_email = excluded.author_email,
+                    fetched_at = excluded.fetched_at",
+                params![
+                    commit.sha,
+                    commit.date,
+                    commit.committed_at,
+                    commit.project,
+                    commit.branch,
+                    commit.short_id,
+                    commit.title,
+                    commit.additions,
+                    commit.deletions,
+                    commit.author_name,
+                    commit.author_email,
+                    now,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(commits.len())
+    }
+
+    /// 按本地日期（YYYY-MM-DD）取 GitLab 提交，按提交时间升序。
+    pub fn get_gitlab_commits_by_date(&self, date: &str) -> Result<Vec<GitlabCommitRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT sha, date, committed_at, project, branch, short_id, title, additions, deletions, author_name, author_email
+             FROM gitlab_commits
+             WHERE date = ?1
+             ORDER BY committed_at ASC, sha ASC",
+        )?;
+        let rows = stmt.query_map(params![date], |row| {
+            Ok(GitlabCommitRow {
+                sha: row.get(0)?,
+                date: row.get(1)?,
+                committed_at: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                short_id: row.get(5)?,
+                title: row.get(6)?,
+                additions: row.get(7)?,
+                deletions: row.get(8)?,
+                author_name: row.get(9)?,
+                author_email: row.get(10)?,
+            })
+        })?;
+        let mut commits = Vec::new();
+        for row in rows {
+            commits.push(row?);
+        }
+        Ok(commits)
+    }
+
+    /// 按本地日期区间（YYYY-MM-DD，含两端）聚合 GitLab 提交：
+    /// 每个项目一行（提交次数、新增/删除行数合计），提交次数倒序、项目路径升序。
+    /// additions/deletions 为 NULL（API 未返回统计）的提交按 0 计入。
+    pub fn get_gitlab_project_stats(
+        &self,
+        date_from: &str,
+        date_to: &str,
+    ) -> Result<Vec<GitlabProjectStatRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT project,
+                    COUNT(*) AS commits,
+                    COALESCE(SUM(additions), 0) AS additions,
+                    COALESCE(SUM(deletions), 0) AS deletions
+             FROM gitlab_commits
+             WHERE date >= ?1 AND date <= ?2
+             GROUP BY project
+             ORDER BY commits DESC, project ASC",
+        )?;
+        let rows = stmt.query_map(params![date_from, date_to], |row| {
+            Ok(GitlabProjectStatRow {
+                project: row.get(0)?,
+                commits: row.get(1)?,
+                additions: row.get(2)?,
+                deletions: row.get(3)?,
+            })
+        })?;
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push(row?);
+        }
+        Ok(stats)
+    }
+
+    /// 批量写入 Plane 工作项（按 工作项ID+同步日期 幂等覆盖；供时间线页补采调用）。
+    /// 整批包在一个事务里原子提交：任一条失败即整体回滚，调用方收到错误。
+    pub fn upsert_plane_work_items(
+        &self,
+        synced_date: &str,
+        items: &[PlaneWorkItemRow],
+    ) -> Result<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let tx = conn.unchecked_transaction()?;
+        for item in items {
+            tx.execute(
+                "INSERT INTO plane_work_items (plane_item_id, project_name, name, state_name, updated_at, url, synced_date)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(plane_item_id, synced_date) DO UPDATE SET
+                    project_name = excluded.project_name,
+                    name = excluded.name,
+                    state_name = excluded.state_name,
+                    updated_at = excluded.updated_at,
+                    url = excluded.url",
+                params![
+                    item.plane_item_id,
+                    item.project_name,
+                    item.name,
+                    item.state_name,
+                    item.updated_at,
+                    item.url,
+                    synced_date,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(items.len())
+    }
+
+    /// 按本地日期（YYYY-MM-DD）取 Plane 工作项，按更新时间倒序（最新在前）。
+    pub fn get_plane_work_items_for_date(&self, date: &str) -> Result<Vec<PlaneWorkItemRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT plane_item_id, project_name, name, state_name, updated_at, url
+             FROM plane_work_items
+             WHERE synced_date = ?1
+             ORDER BY updated_at DESC, plane_item_id ASC",
+        )?;
+        let rows = stmt.query_map(params![date], |row| {
+            Ok(PlaneWorkItemRow {
+                plane_item_id: row.get(0)?,
+                project_name: row.get(1)?,
+                name: row.get(2)?,
+                state_name: row.get(3)?,
+                updated_at: row.get(4)?,
+                url: row.get(5)?,
+            })
+        })?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
+    /// 批量写入文件监控事件（防抖后的一批，按时间升序）
+    /// 当日项目清单的人工调整 upsert：同 (date, project_name) 覆盖（增删状态翻转）
+    pub fn upsert_daily_project_adjustment(
+        &self,
+        date: &str,
+        project_name: &str,
+        removed: bool,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        conn.execute(
+            "INSERT INTO daily_project_adjustments (date, project_name, removed, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(date, project_name)
+             DO UPDATE SET removed = excluded.removed",
+            params![
+                date,
+                project_name,
+                removed as i64,
+                chrono::Utc::now().timestamp()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 取某日的人工调整项（只含该日；按项目名排序保证展示稳定）
+    pub fn get_daily_project_adjustments(&self, date: &str) -> Result<Vec<DailyProjectAdjustment>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT project_name, removed FROM daily_project_adjustments
+             WHERE date = ?1 ORDER BY project_name",
+        )?;
+        let rows = stmt
+            .query_map(params![date], |row| {
+                Ok(DailyProjectAdjustment {
+                    project_name: row.get(0)?,
+                    removed: row.get::<_, i64>(1)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn insert_file_events(&self, events: &[FileEventRow]) -> Result<usize> {
+        if events.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let tx = conn.unchecked_transaction()?;
+        for event in events {
+            tx.execute(
+                "INSERT INTO file_events (path, event_type, size, occurred_at, date)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event.path,
+                    event.event_type,
+                    event.size,
+                    event.occurred_at,
+                    event.date
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(events.len())
+    }
+
+    /// 按本地日期区间取最近的文件事件（含两端），按发生时间倒序，最多 limit 条
+    pub fn get_recent_file_events(
+        &self,
+        date_from: &str,
+        date_to: &str,
+        limit: i64,
+    ) -> Result<Vec<FileEventRow>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT path, event_type, size, occurred_at, date
+             FROM file_events
+             WHERE date >= ?1 AND date <= ?2
+             ORDER BY occurred_at DESC, id DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![date_from, date_to, limit], |row| {
+            Ok(FileEventRow {
+                path: row.get(0)?,
+                event_type: row.get(1)?,
+                size: row.get(2)?,
+                occurred_at: row.get(3)?,
+                date: row.get(4)?,
+            })
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+        Ok(events)
+    }
+
+    /// 按本地日期区间统计文件事件总数（含两端）
+    pub fn count_file_events(&self, date_from: &str, date_to: &str) -> Result<i64> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM file_events WHERE date >= ?1 AND date <= ?2",
+            params![date_from, date_to],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.into())
+    }
+
     /// 保存每日报告
     pub fn save_report(&self, report: &DailyReport) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
+        // 用 upsert 而非 INSERT OR REPLACE：REPLACE 触发的隐式删除在默认配置
+        // （recursive_triggers 关闭）下不会触发 AFTER DELETE 触发器，FTS 会残留
+        // 旧词条；DO UPDATE 会正常走 AFTER UPDATE 触发器的 delete+insert 维护
         conn.execute(
-            "INSERT OR REPLACE INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(date, locale) DO UPDATE SET
+                content = excluded.content,
+                ai_mode = excluded.ai_mode,
+                model_name = excluded.model_name,
+                fallback_reason = excluded.fallback_reason,
+                created_at = excluded.created_at",
             params![
                 report.date,
                 report.locale,
@@ -2852,16 +3301,28 @@ impl Database {
         Ok(reports)
     }
 
-    /// 保存小时摘要
-    pub fn save_hourly_summary(&self, summary: &HourlySummary) -> Result<i64> {
+    /// 保存小时摘要。不返回 rowid：UPSERT 走 DO UPDATE 分支时 SQLite 规定
+    /// last_insert_rowid() 未定义（实为上一次其它 INSERT 的陈旧值），返回即陷阱；
+    /// 需要定位行时按 (date, hour) 唯一键反查。
+    pub fn save_hourly_summary(&self, summary: &HourlySummary) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
+        // 用 upsert 而非 INSERT OR REPLACE：REPLACE 的隐式删除不触发 AFTER DELETE
+        // 触发器，hourly_summaries_fts 会残留旧词条且 rowid 持续膨胀；DO UPDATE
+        // 走 AFTER UPDATE 触发器正确维护 FTS，并保持原 rowid 稳定
         conn.execute(
-            "INSERT OR REPLACE INTO hourly_summaries 
+            "INSERT INTO hourly_summaries
              (date, hour, summary, main_apps, activity_count, total_duration, representative_screenshots, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(date, hour) DO UPDATE SET
+                summary = excluded.summary,
+                main_apps = excluded.main_apps,
+                activity_count = excluded.activity_count,
+                total_duration = excluded.total_duration,
+                representative_screenshots = excluded.representative_screenshots,
+                created_at = excluded.created_at",
             params![
                 summary.date,
                 summary.hour,
@@ -2874,7 +3335,7 @@ impl Database {
             ],
         )?;
 
-        Ok(conn.last_insert_rowid())
+        Ok(())
     }
 
     /// 获取指定日期的所有小时摘要
@@ -2918,7 +3379,9 @@ impl Database {
 
         let date_parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .map_err(|e| AppError::Config(e.to_string()))?;
-        let h = (hour as u32).min(23);
+        // 先 clamp 再 cast：`(hour as u32).min(23)` 会把负数回绕成巨大 u32 后收成 23
+        // （hour=-1 查的是 23 点），与 local_hour_end_timestamp 的钳制口径一致
+        let h = hour.clamp(0, 23) as u32;
         let (start_ts, end_ts) = local_hour_bounds(date_parsed, h)?;
 
         let sql = format!(
@@ -3196,6 +3659,10 @@ impl Database {
         Ok(overview)
     }
 
+    /// 按归一化应用名取全部活动（分类修正 UI 用）。
+    /// 两段式取数：先只取 (id, app_name) 轻量列做精确筛选，再按 id 分块取全列——
+    /// 此前一条无 LIMIT 全列查询会把全历史（含可能多 KB 的 ocr_text）一次性
+    /// 载入内存；结果集与旧实现一致
     pub fn get_activities_by_normalized_app_name(&self, app_name: &str) -> Result<Vec<Activity>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
@@ -3204,26 +3671,25 @@ impl Database {
         let target = crate::categorize::normalize_display_app_name(app_name).to_lowercase();
         // 用 LIKE 做初步过滤，减少加载量；精确匹配仍在 Rust 侧完成
         let like_pattern = format!("%{app_name}%");
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE app_name LIKE ?1
-             ORDER BY timestamp ASC, id ASC"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let activities = stmt
-            .query_map([&like_pattern], activity_from_row)?
+        let mut stmt = conn.prepare(
+            "SELECT id, app_name FROM activities WHERE app_name LIKE ?1 ORDER BY id ASC",
+        )?;
+        let matching_ids: Vec<i64> = stmt
+            .query_map([&like_pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
             .filter_map(|row| row.ok())
-            .filter(|activity| {
-                crate::categorize::normalize_display_app_name(&activity.app_name).to_lowercase()
-                    == target
+            .filter(|(_, name)| {
+                crate::categorize::normalize_display_app_name(name).to_lowercase() == target
             })
+            .map(|(id, _)| id)
             .collect();
 
-        Ok(activities)
+        self.load_activities_by_ids(&conn, &matching_ids)
     }
 
+    /// 按域名取全部带 URL 活动（分类修正 UI 用）。两段式取数，同
+    /// get_activities_by_normalized_app_name
     pub fn get_activities_by_domain(&self, domain: &str) -> Result<Vec<Activity>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
@@ -3233,28 +3699,50 @@ impl Database {
             return Ok(Vec::new());
         };
 
-        let sql = format!(
-            "SELECT {ACTIVITY_SELECT_COLUMNS}
-             FROM activities
-             WHERE browser_url IS NOT NULL AND browser_url != '' AND browser_url LIKE ?1
-             ORDER BY timestamp ASC, id ASC"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
         let like_pattern = format!("%{}%", target);
-        let activities = stmt
-            .query_map([&like_pattern], activity_from_row)?
+        let mut stmt = conn.prepare(
+            "SELECT id, browser_url FROM activities
+             WHERE browser_url IS NOT NULL AND browser_url != '' AND browser_url LIKE ?1
+             ORDER BY id ASC",
+        )?;
+        let matching_ids: Vec<i64> = stmt
+            .query_map([&like_pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
             .filter_map(|row| row.ok())
-            .filter(|activity| {
-                activity
-                    .browser_url
-                    .as_deref()
-                    .and_then(crate::categorize::normalize_domain_rule)
-                    .as_deref()
+            .filter(|(_, url)| {
+                crate::categorize::normalize_domain_rule(url.as_str()).as_deref()
                     == Some(target.as_str())
             })
+            .map(|(id, _)| id)
             .collect();
 
+        self.load_activities_by_ids(&conn, &matching_ids)
+    }
+
+    /// 按 id 集合分块载入完整活动行，id 升序；供上面两段式取数共用
+    fn load_activities_by_ids(
+        &self,
+        conn: &std::sync::MutexGuard<'_, Connection>,
+        ids: &[i64],
+    ) -> Result<Vec<Activity>> {
+        const CHUNK_SIZE: usize = 500;
+        let mut activities = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(CHUNK_SIZE) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT {ACTIVITY_SELECT_COLUMNS} FROM activities
+                 WHERE id IN ({placeholders})
+                 ORDER BY id ASC"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let chunk_params: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt.query_map(chunk_params.as_slice(), activity_from_row)?;
+            for row in rows {
+                activities.push(row?);
+            }
+        }
         Ok(activities)
     }
 
@@ -3292,7 +3780,7 @@ impl Database {
         let tokens: Vec<String> = query
             .split_whitespace()
             .map(|t| t.trim().trim_matches(is_punct))
-            .filter(|t| !t.is_empty() && !t.is_empty())
+            .filter(|t| !t.is_empty())
             .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
             .collect();
 
@@ -3319,7 +3807,7 @@ impl Database {
             Option<String>,
             Option<String>,
             i64,
-            i64,
+            f64,
         )>,
     > {
         let conn = self.conn.lock().map_err(|e| {
@@ -3347,7 +3835,9 @@ impl Database {
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, i64>(6)?,
-                    row.get::<_, i64>(7)?,
+                    // FTS5 rank 是 REAL（bm25 分数）；按 i64 读取遇小数即失败，
+                    // filter_map 会静默丢光全部命中行
+                    row.get::<_, f64>(7)?,
                 ))
             })?
             .filter_map(|row| row.ok())
@@ -3363,7 +3853,7 @@ impl Database {
         date_from: Option<&str>,
         date_to: Option<&str>,
         limit: i64,
-    ) -> Result<Vec<(i64, String, i32, String, String, i64, i64, i64)>> {
+    ) -> Result<Vec<(i64, String, i32, String, String, i64, i64, f64)>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
@@ -3389,7 +3879,9 @@ impl Database {
                     row.get::<_, String>(4)?,
                     row.get::<_, i64>(5)?,
                     row.get::<_, i64>(6)?,
-                    row.get::<_, i64>(7)?,
+                    // FTS5 rank 是 REAL（bm25 分数）；按 i64 读取遇小数即失败，
+                    // filter_map 会静默丢光全部命中行
+                    row.get::<_, f64>(7)?,
                 ))
             })?
             .filter_map(|row| row.ok())
@@ -3405,13 +3897,17 @@ impl Database {
         date_from: Option<&str>,
         date_to: Option<&str>,
         limit: i64,
-    ) -> Result<Vec<(String, String, String, Option<String>, i64, i64)>> {
+    ) -> Result<Vec<(String, String, String, Option<String>, i64, f64)>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
         let mut stmt = conn.prepare(
-            "SELECT d.date, d.content, d.ai_mode, d.model_name, d.created_at, fts.rank
+            // GROUP BY d.date 的裸列（content/ai_mode/rank 等）本属未定义取值；
+            // 附加唯一的 MIN(d.created_at) 聚合后，SQLite 保证全部裸列取自
+            // created_at 最小的那一行（同日多语言日报时结果确定而非随机）
+            "SELECT d.date, d.content, d.ai_mode, d.model_name, d.created_at, fts.rank,
+                    MIN(d.created_at)
              FROM daily_reports_fts fts
              JOIN daily_reports_localized d ON d.rowid = fts.rowid
              WHERE daily_reports_fts MATCH ?1
@@ -3430,7 +3926,9 @@ impl Database {
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
+                    // FTS5 rank 是 REAL（bm25 分数）；按 i64 读取遇小数即失败，
+                    // filter_map 会静默丢光全部命中行
+                    row.get::<_, f64>(5)?,
                 ))
             })?
             .filter_map(|row| row.ok())
@@ -3439,9 +3937,6 @@ impl Database {
         Ok(rows)
     }
 
-    /// 搜索工作记忆
-    /// 使用 FTS5 全文检索，支持中英文混合查询。
-    /// 回退到关键词匹配当 FTS 无结果时。
     /// 搜索工作记忆
     /// 使用 FTS5 全文检索，支持中英文混合查询。
     /// FTS 无结果时回退到关键词匹配。
@@ -3504,6 +3999,8 @@ impl Database {
                     score,
                 });
             }
+        } else {
+            log::warn!("search_memory: FTS activities 通道查询失败，跳过该通道");
         }
 
         // === FTS5 检索小时摘要 ===
@@ -3528,6 +4025,8 @@ impl Database {
                     score: 180,
                 });
             }
+        } else {
+            log::warn!("search_memory: FTS 小时摘要通道查询失败，跳过该通道");
         }
 
         // === FTS5 检索日报 ===
@@ -3551,6 +4050,8 @@ impl Database {
                     score: 160,
                 });
             }
+        } else {
+            log::warn!("search_memory: FTS 日报通道查询失败，跳过该通道");
         }
 
         // === FTS 无结果时回退到关键词匹配 ===
@@ -3605,26 +4106,30 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
         let now = chrono::Utc::now().timestamp();
-        conn.execute(
+        // 新建+超额清理包在同一事务：两条 DELETE 之间崩溃会留下无会话归属的
+        // 孤儿 assistant_messages，且此后无任何入口清理
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO assistant_conversations (title, created_at, updated_at) VALUES (?1, ?2, ?2)",
             params![title, now],
         )?;
-        let id = conn.last_insert_rowid();
+        let id = tx.last_insert_rowid();
         // 超额清理：删除最旧的会话及其消息
-        conn.execute(
+        tx.execute(
             "DELETE FROM assistant_messages WHERE conversation_id IN (
                 SELECT id FROM assistant_conversations
                 ORDER BY updated_at DESC LIMIT -1 OFFSET 100
             )",
             [],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM assistant_conversations WHERE id IN (
                 SELECT id FROM assistant_conversations
                 ORDER BY updated_at DESC LIMIT -1 OFFSET 100
             )",
             [],
         )?;
+        tx.commit()?;
         Ok(id)
     }
 
@@ -3692,16 +4197,21 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
         let now = chrono::Utc::now().timestamp();
-        conn.execute(
+        // 两条语句包事务：UPDATE 失败/中途崩溃时不留 updated_at 停留旧值的会话
+        // （会话列表按 updated_at 排序，半写会让新消息会话沉底并提前落入清理范围）
+        // （同 create/delete_assistant_conversation 的事务口径）
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO assistant_messages (conversation_id, role, content, tool_digest, model_name, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![conversation_id, role, content, tool_digest, model_name, now],
         )?;
-        let id = conn.last_insert_rowid();
-        conn.execute(
+        let id = tx.last_insert_rowid();
+        tx.execute(
             "UPDATE assistant_conversations SET updated_at = ?1 WHERE id = ?2",
             params![now, conversation_id],
         )?;
+        tx.commit()?;
         Ok(id)
     }
 
@@ -3710,14 +4220,18 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
-        conn.execute(
+        // 两条 DELETE 包事务：第二条失败/中途崩溃时不留 0 消息的空壳会话
+        // （同 create_assistant_conversation / append 系列的事务口径）
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "DELETE FROM assistant_messages WHERE conversation_id = ?1",
             params![conversation_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM assistant_conversations WHERE id = ?1",
             params![conversation_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -4440,7 +4954,8 @@ impl Database {
         Ok(exists != 0)
     }
 
-    /// 写入/更新记忆块。内容变化时清空 embedding（待重嵌入）。
+    /// 写入/更新记忆块。仅当新内容更长时更新内容并清空 embedding（待重嵌入）；
+    /// 等长/变短的更新保留旧内容与旧嵌入（upsert 以 chunk_key 幂等）。
     #[allow(clippy::too_many_arguments)]
     pub fn upsert_memory_chunk(
         &self,
@@ -4693,7 +5208,9 @@ impl Database {
         )?;
         let mut rows = stmt.query(params![SEMANTIC_MEMORY_CURSOR_CHUNK_KEY])?;
 
-        // 小顶堆语义：保留分数最高的 limit 条（用 Vec + 阈值淘汰，K 很小）
+        // 小顶堆语义：保留分数最高的 limit 条（用 Vec + 阈值淘汰，K 很小）。
+        // top 按 score 升序维护：top[0] 是当前最差命中，作为淘汰门槛；
+        // 返回前翻转为降序（最优在前），调用方 RRF 融合按排名赋权。
         let mut top: Vec<SemanticMemoryHit> = Vec::with_capacity(limit + 1);
         while let Some(row) = rows.next()? {
             let blob: Vec<u8> = row.get(6)?;
@@ -4707,7 +5224,7 @@ impl Database {
                 .map(|(a, b)| a * b)
                 .sum();
             let score = f64::from(score);
-            if top.len() >= limit && top.last().map(|h| h.score).unwrap_or(f64::MIN) >= score {
+            if top.len() >= limit && top.first().map(|h| h.score).unwrap_or(f64::MIN) >= score {
                 continue;
             }
             let content: String = row.get(5)?;
@@ -4720,18 +5237,21 @@ impl Database {
                 excerpt: truncate_excerpt(&content, 240),
                 score,
             };
+            // 标准约定：闭包返回「元素相对目标」的序，才能在升序数组上得到
+            // 正确的插入点（原实现写成 score.cmp(&h.score)，插入点错乱）
             let pos = top
                 .binary_search_by(|h| {
-                    score
-                        .partial_cmp(&h.score)
+                    h.score
+                        .partial_cmp(&score)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .unwrap_or_else(|p| p);
             top.insert(pos, hit);
             if top.len() > limit {
-                top.pop();
+                top.remove(0);
             }
         }
+        top.reverse();
         Ok(top)
     }
 
@@ -4793,14 +5313,34 @@ impl Database {
         let mut items = Vec::new();
 
         // 回退：activities
-        let mut stmt = conn.prepare(
+        // WHERE (?1 IS NULL OR timestamp >= ?1) 让 SQLite 无法把参数下推为索引
+        // 范围约束，带旧日期区间时 DESC 扫描要先跳过全部更新的行；按实参拼出
+        // 确定性条件保持同结果的同时让 timestamp 索引可走范围扫描
+        // （同 get_activities_in_range 的已修款）
+        let mut conditions: Vec<&'static str> = Vec::with_capacity(2);
+        let mut args: Vec<i64> = Vec::with_capacity(3);
+        if let Some(start) = start_ts {
+            conditions.push("timestamp >= ?");
+            args.push(start);
+        }
+        if let Some(end) = end_ts {
+            conditions.push("timestamp < ?");
+            args.push(end);
+        }
+        args.push(fetch_limit);
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
             "SELECT id, timestamp, app_name, window_title, ocr_text, browser_url, duration
              FROM activities
-             WHERE (?1 IS NULL OR timestamp >= ?1)
-               AND (?2 IS NULL OR timestamp < ?2)
+             {where_clause}
              ORDER BY timestamp DESC
-             LIMIT ?3",
-        )?;
+             LIMIT ?"
+        );
+        let mut stmt = conn.prepare(&sql)?;
 
         let rows: Vec<(
             i64,
@@ -4811,7 +5351,7 @@ impl Database {
             Option<String>,
             i64,
         )> = stmt
-            .query_map(params![start_ts, end_ts, fetch_limit], |row| {
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, i64>(1)?,
@@ -4977,11 +5517,81 @@ impl Database {
 }
 
 #[cfg(test)]
+mod daily_project_adjustment_tests {
+    use super::Database;
+
+    fn temp_db(name: &str) -> (Database, std::path::PathBuf) {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("work-review-{name}-{unique}.db"));
+        (Database::new(&path).expect("open db"), path)
+    }
+
+    fn cleanup(path: &std::path::PathBuf) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn 当日项目调整应支持增删状态翻转且同日同项目唯一() {
+        let (db, path) = temp_db("proj-adj-flip");
+        // 添加（removed=false）→ 删除（removed=true）→ 再添加：同 (date, project) 覆盖不报错
+        db.upsert_daily_project_adjustment("2026-09-29", "Plane演示项目", false)
+            .expect("add");
+        db.upsert_daily_project_adjustment("2026-09-29", "Plane演示项目", true)
+            .expect("remove");
+        let rows = db.get_daily_project_adjustments("2026-09-29").expect("get");
+        assert_eq!(rows.len(), 1, "同日同项目只有一条（覆盖）");
+        assert!(rows[0].removed, "最后一次写入生效（删除）");
+
+        db.upsert_daily_project_adjustment("2026-09-29", "Plane演示项目", false)
+            .expect("re-add");
+        let rows = db.get_daily_project_adjustments("2026-09-29").expect("get");
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].removed, "复活为添加态");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn 当日项目调整应按日隔离且空表返回空() {
+        let (db, path) = temp_db("proj-adj-isolate");
+        assert!(db
+            .get_daily_project_adjustments("2026-09-29")
+            .expect("get")
+            .is_empty());
+
+        db.upsert_daily_project_adjustment("2026-09-28", "项目A", false)
+            .expect("add A");
+        db.upsert_daily_project_adjustment("2026-09-28", "项目B", true)
+            .expect("remove B");
+        db.upsert_daily_project_adjustment("2026-09-27", "项目A", false)
+            .expect("add A prev day");
+
+        let today = db.get_daily_project_adjustments("2026-09-29").expect("get");
+        assert!(today.is_empty(), "查询互不串日");
+
+        let day28 = db.get_daily_project_adjustments("2026-09-28").expect("get");
+        assert_eq!(day28.len(), 2);
+        assert!(day28
+            .iter()
+            .any(|r| r.project_name == "项目A" && !r.removed));
+        assert!(day28.iter().any(|r| r.project_name == "项目B" && r.removed));
+
+        let day27 = db.get_daily_project_adjustments("2026-09-27").expect("get");
+        assert_eq!(day27.len(), 1);
+        cleanup(&path);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{
         apply_flex_overtime_correction, local_day_bounds, local_hour_bounds,
-        local_hour_end_timestamp, safe_local_timestamp, Activity, Database,
-        SemanticMemoryIndexState,
+        local_hour_end_timestamp, safe_local_timestamp, Activity, DailyReport, Database,
+        FileEventRow, GitlabCommitRow, HourlySummary, PlaneWorkItemRow, SemanticMemoryIndexState,
     };
     use chrono::{TimeZone, Timelike};
     use rusqlite::params;
@@ -4996,10 +5606,110 @@ mod tests {
         std::env::temp_dir().join(format!("work-review-{name}-{unique}.db"))
     }
 
+    /// 测试收尾统一清理：删库文件并连带 WAL 模式的 -wal/-shm 伴生文件。
+    /// 调用前必须先 drop 数据库连接——连接存活时 Windows 上文件被句柄锁定、
+    /// 删除静默失败，CI runner 与开发机临时目录会持续累积。
+    fn remove_db_files(db_path: &std::path::Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", db_path.display(), suffix));
+        }
+    }
+
     fn local_ts(date: &str, hour: u32, minute: u32) -> i64 {
         let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").expect("解析日期失败");
         let ndt = date.and_hms_opt(hour, minute, 0).expect("构造本地时间失败");
         safe_local_timestamp(ndt)
+    }
+
+    #[test]
+    fn fts日报搜索同日多语言命中应返回确定行而非随机语言() {
+        let db_path = temp_db_path("fts-deterministic");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        // 同一日期先 zh-CN 后 en 两份日报，双双命中搜索词：
+        // GROUP BY date 的裸列必须确定取自 created_at 最早那行
+        // （FTS5 unicode61 对 CJK 连续串不切词，用英文词保证命中）
+        db.save_report(&DailyReport {
+            date: "2026-09-20".to_string(),
+            locale: "zh-CN".to_string(),
+            content: "# 日报\n\nProject review notes for today (中文总结见下节).".to_string(),
+            ai_mode: "ai".to_string(),
+            model_name: Some("m1".to_string()),
+            fallback_reason: None,
+            created_at: 1_000,
+        })
+        .expect("保存 zh-CN 报告失败");
+        db.save_report(&DailyReport {
+            date: "2026-09-20".to_string(),
+            locale: "en".to_string(),
+            content: "# Daily Report\n\nProject review translated to English.".to_string(),
+            ai_mode: "ai".to_string(),
+            model_name: Some("m1".to_string()),
+            fallback_reason: None,
+            created_at: 2_000,
+        })
+        .expect("保存 en 报告失败");
+
+        let rows = db
+            .search_reports_fts("review", None, None, 10)
+            .expect("搜索失败");
+        assert_eq!(rows.len(), 1, "同日多份命中应聚合为一行");
+        let (date, content, _, _, created_at, _) = &rows[0];
+        assert_eq!(date, "2026-09-20");
+        assert_eq!(*created_at, 1_000, "应固定返回 created_at 最早的行");
+        assert!(
+            content.contains("中文总结见下节"),
+            "content 应取自最早那行而非随机语言"
+        );
+    }
+
+    #[test]
+    fn fts活动与小时摘要搜索应对小数rank正常命中() {
+        let db_path = temp_db_path("fts-rank");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let now = chrono::Local::now().timestamp();
+
+        db.insert_activity(&Activity {
+            id: None,
+            timestamp: now - 60,
+            app_name: "Code".to_string(),
+            window_title: "review-notes.md — Editor".to_string(),
+            screenshot_path: String::new(),
+            ocr_text: None,
+            category: "development".to_string(),
+            duration: 60,
+            browser_url: None,
+            executable_path: None,
+            semantic_category: None,
+            semantic_confidence: None,
+            screenshot_url: None,
+        })
+        .expect("插入活动失败");
+
+        db.save_hourly_summary(&HourlySummary {
+            id: None,
+            date: "2026-09-20".to_string(),
+            hour: 10,
+            summary: "Refactored the review pipeline today".to_string(),
+            main_apps: "Code".to_string(),
+            activity_count: 3,
+            total_duration: 600,
+            representative_screenshots: None,
+            created_at: 1_000,
+        })
+        .expect("保存小时摘要失败");
+
+        // bm25 对命中的 rank 是小数 REAL：修复前按 i64 读取全部丢行、
+        // 记忆搜索永远走 LIKE fallback
+        let acts = db
+            .search_activities_fts("review", Some(0), None, 10)
+            .expect("活动搜索失败");
+        assert_eq!(acts.len(), 1, "活动 FTS 命中不应因 rank 类型被丢弃");
+
+        let hours = db
+            .search_hourly_fts("Refactored", None, None, 10)
+            .expect("小时摘要搜索失败");
+        assert_eq!(hours.len(), 1, "小时摘要 FTS 命中不应因 rank 类型被丢弃");
     }
 
     #[test]
@@ -5047,15 +5757,19 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].1, "screenshots/a.jpg");
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
     fn 时间线应使用最新记录详情并累计分组时长() {
         let db_path = temp_db_path("timeline");
         let db = Database::new(&db_path).expect("创建测试数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         let records = vec![
             Activity {
@@ -5141,7 +5855,8 @@ mod tests {
             Some("https://cdn.example.com/workreview/shot-b.jpg")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5180,7 +5895,8 @@ mod tests {
         assert_eq!(merged.timestamp, now);
         assert_eq!(merged.ocr_text.as_deref(), Some("old\n---\nnew"));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5239,15 +5955,19 @@ mod tests {
             Some("https://cdn.example.com/new.jpg")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
     fn 今日统计应合并应用别名避免重复显示() {
         let db_path = temp_db_path("daily-stats-merge");
         let db = Database::new(&db_path).expect("创建测试数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         let records = vec![
             Activity {
@@ -5323,7 +6043,8 @@ mod tests {
         );
         assert_eq!(stats.app_usage.len(), 2);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5390,7 +6111,8 @@ mod tests {
                 }
             }));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5463,7 +6185,8 @@ mod tests {
             .flat_map(|browser| browser.domains.iter())
             .all(|domain| domain.domain != "linux.dolatest"));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5524,7 +6247,8 @@ mod tests {
             Some("/Applications/Mail.app/Contents/MacOS/Mail")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5576,7 +6300,8 @@ mod tests {
 
         assert_eq!(stats.hourly_activity_distribution[10].duration, 55 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5652,7 +6377,8 @@ mod tests {
             .iter()
             .all(|bucket| bucket.total_duration <= 60 * 60));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5737,7 +6463,8 @@ mod tests {
         assert_eq!(stats.browser_duration, 0);
         assert!(stats.domain_usage.is_empty());
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5772,7 +6499,8 @@ mod tests {
         assert_eq!(stats.domain_usage.len(), 12);
         assert_eq!(stats.domain_total_count, 12);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5818,7 +6546,8 @@ mod tests {
             "自定义分类的时长不应被算到 other"
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5855,7 +6584,8 @@ mod tests {
         assert_eq!(buckets[11].apps[0].app_name, "VS Code");
         assert_eq!(buckets[11].apps[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5891,7 +6621,8 @@ mod tests {
         assert_eq!(buckets[10].apps[0].app_name, "Cursor");
         assert_eq!(buckets[10].apps[0].duration, 20 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -5993,7 +6724,8 @@ mod tests {
             Some(10 * 60)
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6066,7 +6798,8 @@ mod tests {
         assert_eq!(buckets[10].apps[0].app_name, "Google Chrome");
         assert_eq!(buckets[10].apps[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6124,7 +6857,8 @@ mod tests {
             stats.hourly_activity_distribution[10].duration
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6163,7 +6897,8 @@ mod tests {
         assert_eq!(hour11.len(), 1);
         assert_eq!(hour11[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6197,7 +6932,8 @@ mod tests {
         assert_eq!(stats.total_duration, 10 * 60);
         assert_eq!(stats.app_usage[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6231,7 +6967,8 @@ mod tests {
         assert_eq!(stats.total_duration, 10 * 60);
         assert_eq!(stats.app_usage[0].duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6265,7 +7002,8 @@ mod tests {
         assert_eq!(stats.total_duration, 20 * 60);
         assert_eq!(stats.work_time_duration, 10 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6354,7 +7092,8 @@ mod tests {
         assert_eq!(flex_stats.work_time_duration, 90 * 60);
         assert_eq!(flex_stats.overtime_duration, 60 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6436,7 +7175,8 @@ mod tests {
         assert_eq!(stats.total_duration, 240 * 60);
         assert_eq!(stats.work_time_duration, 210 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6489,15 +7229,19 @@ mod tests {
         assert_eq!(stats.total_duration, 45 * 60);
         assert_eq!(stats.work_time_duration, 15 * 60);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
     fn 时间线应返回最新记录的可执行路径() {
         let db_path = temp_db_path("timeline-executable-path");
         let db = Database::new(&db_path).expect("创建测试数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         let records = vec![
             Activity {
@@ -6549,7 +7293,8 @@ mod tests {
             Some(r"D:\Portable\Code\Code.exe")
         );
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6584,7 +7329,8 @@ mod tests {
         assert_eq!(latest.semantic_category.as_deref(), Some("资料阅读"));
         assert_eq!(latest.semantic_confidence, Some(86));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6659,7 +7405,8 @@ mod tests {
             .iter()
             .all(|activity| activity.semantic_confidence == Some(88)));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6732,7 +7479,8 @@ mod tests {
                 .contains("github.com/")
         }));
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6781,7 +7529,8 @@ mod tests {
         );
         assert_eq!(en_report.fallback_reason, None);
 
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -6789,8 +7538,11 @@ mod tests {
         let source_path = temp_db_path("backup-source");
         let backup_path = temp_db_path("backup-target");
         let db = Database::new(&source_path).expect("创建源数据库失败");
-        let now = chrono::Local::now().timestamp();
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 固定取当天 10:00（办公窗口 9-18 之内）：用真实 now 时，午夜运行的流水线
+        // 会把插入的活动落在办公窗口之外，导致统计断言失败（2026-09-15 tag 流水线实测）
+        let today = chrono::Local::now().date_naive();
+        let now = safe_local_timestamp(today.and_hms_opt(10, 0, 0).expect("有效时间"));
 
         db.insert_activity(&Activity {
             id: None,
@@ -6842,8 +7594,9 @@ mod tests {
             Some("返回空内容，已回退到基础模板")
         );
 
-        let _ = std::fs::remove_file(source_path);
-        let _ = std::fs::remove_file(backup_path);
+        // WAL 模式下 -wal/-shm 任何平台都会伴生，统一走三件套清理（同 remove_db_files 口径）
+        remove_db_files(&source_path);
+        remove_db_files(&backup_path);
     }
 
     fn sample_activity(timestamp: i64, app_name: &str) -> Activity {
@@ -7083,7 +7836,8 @@ mod tests {
             .expect("读取已删除记忆失败")
             .is_none());
         assert_eq!(db.clear_user_memories().expect("清空长期记忆失败"), 3);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7145,7 +7899,8 @@ mod tests {
             )
             .expect("Unicode 字母数字及安全分隔符应可用");
         assert_eq!(valid.memory_key, "回答风格.v2");
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7153,17 +7908,20 @@ mod tests {
         let (path, db, _, _, date) = seed_activity_deletion_state("delete-before-date");
         assert_eq!(db.delete_activities_before_date("2026-08-05").unwrap(), 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, id, _, date) = seed_activity_deletion_state("delete-by-id");
         assert_eq!(db.delete_activity_by_id(id).unwrap().0, 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, _, _, date) = seed_activity_deletion_state("delete-by-date");
         assert_eq!(db.delete_activities_by_date(&date).unwrap().0, 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, _, timestamp, date) = seed_activity_deletion_state("delete-by-range");
         assert_eq!(
@@ -7173,12 +7931,14 @@ mod tests {
             1
         );
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
 
         let (path, db, _, _, date) = seed_activity_deletion_state("delete-by-app");
         assert_eq!(db.delete_activities_by_app("Code", None).unwrap().0, 1);
         assert_activity_deletion_invalidated(&db, &date);
-        let _ = std::fs::remove_file(path);
+        drop(db); // 先关连接再删三件套（Windows 上连接存活时主文件删除静默失败）
+        remove_db_files(&path);
     }
 
     #[test]
@@ -7215,7 +7975,8 @@ mod tests {
         assert_eq!(chunk_count, 1);
         assert_eq!(summary_count, 3);
         drop(conn);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7254,7 +8015,49 @@ mod tests {
         assert_eq!(stats.total_chunks, 1);
         assert_eq!(stats.embedded_chunks, 0);
         assert_eq!(stats.last_indexed_activity_id, 20);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 语义检索应保留分数最高的limit条并按降序返回() {
+        let db_path = temp_db_path("semantic-topk");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        // 三个块按“低分→高分→最高分”的扫描顺序写入，limit=2 时应保留最高分的
+        // 两个并按分数降序返回（调用方 RRF 融合按排名赋权，顺序即语义）。
+        let vectors: &[(&str, [f32; 2])] = &[
+            ("chunk-low", [0.0, 1.0]),
+            ("chunk-mid", [0.6, 0.8]),
+            ("chunk-top", [1.0, 0.0]),
+        ];
+        for (key, _) in vectors {
+            db.upsert_memory_chunk(key, "2026-09-16", "Code", key, None, key, 1)
+                .expect("写入语义块失败");
+        }
+        let pending = db
+            .get_unembedded_memory_chunks(10)
+            .expect("读取待嵌入语义块失败");
+        assert_eq!(pending.len(), 3);
+        for (chunk_id, content) in &pending {
+            let vector = &vectors
+                .iter()
+                .find(|(key, _)| *key == content.as_str())
+                .expect("未知语义块内容")
+                .1;
+            db.set_memory_chunk_embedding(*chunk_id, &super::encode_embedding(vector))
+                .expect("写入嵌入失败");
+        }
+
+        let hits = db
+            .search_memory_chunks_semantic(&[1.0, 0.0], 2)
+            .expect("语义检索失败");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].title, "chunk-top");
+        assert_eq!(hits[1].title, "chunk-mid");
+        assert!(hits[0].score > hits[1].score);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7326,7 +8129,8 @@ mod tests {
                 .1,
             "新内容"
         );
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7356,7 +8160,8 @@ mod tests {
         assert!(state.rebuild_required);
         assert_eq!(state.total_activities, 1);
         assert!(state.build_id.is_empty(), "失效后必须撤销旧构建代际");
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7413,7 +8218,8 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM memory_chunks", [], |row| row.get(0))
             .expect("查询语义块失败");
         assert_eq!(chunk_count, 0);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7433,7 +8239,8 @@ mod tests {
         assert_eq!(current.build_id, "build-b");
         assert_eq!(current.status, "building");
         assert_eq!(current.last_error, None);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7476,7 +8283,8 @@ mod tests {
             .expect("读取失效后的语义状态失败");
         assert_eq!(current.status, "idle");
         assert!(current.rebuild_required);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7508,7 +8316,8 @@ mod tests {
         assert_eq!(current.status, "building");
         assert!(current.rebuild_required);
         assert_eq!(current.total_activities, 1);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7554,7 +8363,8 @@ mod tests {
                 .status,
             "building"
         );
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7581,7 +8391,8 @@ mod tests {
             .expect("读取完成后的语义状态失败");
         assert_eq!(current.status, "ready");
         assert_eq!(current.total_activities, 0);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7623,7 +8434,8 @@ mod tests {
                 .expect("查询语义块数量失败"),
             0
         );
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7661,7 +8473,8 @@ mod tests {
             )
             .expect("旧任务读取待嵌入块失败");
         assert!(stale_pending.is_empty());
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7679,7 +8492,8 @@ mod tests {
         assert_eq!(current.status, "failed");
         assert!(current.rebuild_required);
         assert_eq!(current.last_error.as_deref(), Some("模型探测失败"));
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
     }
 
     #[test]
@@ -7741,6 +8555,173 @@ mod tests {
         assert_eq!(current.status, "ready");
         assert!(!current.rebuild_required);
         assert_eq!(current.total_activities, 1);
-        let _ = std::fs::remove_file(db_path);
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn gitlab项目统计应按区间聚合并处理空行数统计() {
+        let db_path = temp_db_path("gitlab-project-stats");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        let row = |sha: &str,
+                   date: &str,
+                   project: &str,
+                   additions: Option<i64>,
+                   deletions: Option<i64>| GitlabCommitRow {
+            sha: sha.to_string(),
+            date: date.to_string(),
+            committed_at: 1_758_000_000,
+            project: project.to_string(),
+            branch: "main".to_string(),
+            short_id: sha[..8].to_string(),
+            title: "commit".to_string(),
+            additions,
+            deletions,
+            author_name: "a".to_string(),
+            author_email: "a@example.com".to_string(),
+        };
+
+        db.upsert_gitlab_commits(&[
+            row(
+                "aaaaaaaa1",
+                "2026-09-21",
+                "group/alpha",
+                Some(120),
+                Some(30),
+            ),
+            row("bbbbbbbb2", "2026-09-21", "group/alpha", Some(10), Some(5)),
+            row("cccccccc3", "2026-09-21", "group/beta", Some(7), Some(90)),
+            row("dddddddd4", "2026-09-22", "group/beta", None, None),
+            row(
+                "eeeeeeee5",
+                "2026-09-19",
+                "group/out-of-range",
+                Some(999),
+                Some(999),
+            ),
+        ])
+        .expect("写入提交失败");
+
+        let stats = db
+            .get_gitlab_project_stats("2026-09-21", "2026-09-22")
+            .expect("聚合失败");
+
+        assert_eq!(stats.len(), 2, "区间外项目不应计入");
+        // 提交次数倒序；alpha 2 次提交在前
+        assert_eq!(stats[0].project, "group/alpha");
+        assert_eq!(stats[0].commits, 2);
+        assert_eq!(stats[0].additions, 130);
+        assert_eq!(stats[0].deletions, 35);
+        assert_eq!(stats[1].project, "group/beta");
+        assert_eq!(stats[1].commits, 2);
+        // NULL 统计按 0 计入
+        assert_eq!(stats[1].additions, 7);
+        assert_eq!(stats[1].deletions, 90);
+
+        // 空区间返回空列表
+        let empty = db
+            .get_gitlab_project_stats("2026-01-01", "2026-01-02")
+            .expect("聚合失败");
+        assert!(empty.is_empty(), "无提交区间应返回空列表");
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn plane工作项应按日期幂等覆盖并按更新时间倒序返回() {
+        let db_path = temp_db_path("plane-work-items");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        let item = |id: &str, name: &str, updated_at: i64| PlaneWorkItemRow {
+            plane_item_id: id.to_string(),
+            project_name: "Alpha".to_string(),
+            name: name.to_string(),
+            state_name: "进行中".to_string(),
+            updated_at,
+            url: None,
+        };
+
+        // 首次写入两条 + 跨日一条；同日同 id 重复写入应覆盖而非新增（幂等）
+        db.upsert_plane_work_items(
+            "2026-09-22",
+            &[
+                item("wi-a", "旧标题", 3_000),
+                item("wi-b", "搭建设计稿评审流程", 1_000),
+            ],
+        )
+        .expect("写入工作项失败");
+        db.upsert_plane_work_items("2026-09-22", &[item("wi-a", "新标题", 4_000)])
+            .expect("重复写入工作项失败");
+        db.upsert_plane_work_items("2026-09-23", &[item("wi-a", "次日又更新", 9_000)])
+            .expect("跨日写入工作项失败");
+
+        let day = db
+            .get_plane_work_items_for_date("2026-09-22")
+            .expect("按日期读取工作项失败");
+        assert_eq!(day.len(), 2, "同 id 同日应幂等覆盖，不产生重复行");
+        assert_eq!(day[0].plane_item_id, "wi-a", "更新时间倒序，4s 的在前");
+        assert_eq!(day[0].name, "新标题", "重复写入应覆盖字段值");
+        assert_eq!(day[0].updated_at, 4_000);
+        assert_eq!(day[1].plane_item_id, "wi-b");
+        assert_eq!(day[1].updated_at, 1_000);
+
+        // 同一工作项在不同同步日各存一条，互不影响
+        let next_day = db
+            .get_plane_work_items_for_date("2026-09-23")
+            .expect("读取次日工作项失败");
+        assert_eq!(next_day.len(), 1);
+        assert_eq!(next_day[0].name, "次日又更新");
+
+        // 无数据的日期返回空列表
+        let empty = db
+            .get_plane_work_items_for_date("2026-09-21")
+            .expect("读取空日期失败");
+        assert!(empty.is_empty(), "无工作项日期应返回空列表");
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 文件事件应按日期区间查询且倒序返回() {
+        let db_path = temp_db_path("file-events");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        let event = |path: &str, occurred_at: i64, date: &str| FileEventRow {
+            path: path.to_string(),
+            event_type: "modified".to_string(),
+            size: Some(1024),
+            occurred_at,
+            date: date.to_string(),
+        };
+
+        db.insert_file_events(&[
+            event("D:/work/a.rs", 1_000, "2026-09-22"),
+            event("D:/work/b.ts", 3_000, "2026-09-22"),
+            event("D:/work/c.md", 2_000, "2026-09-22"),
+            event("D:/work/outside.log", 5_000, "2026-09-20"),
+        ])
+        .expect("写入文件事件失败");
+
+        let count = db
+            .count_file_events("2026-09-22", "2026-09-22")
+            .expect("统计失败");
+        assert_eq!(count, 3, "区间外事件不计入");
+
+        let rows = db
+            .get_recent_file_events("2026-09-22", "2026-09-22", 2)
+            .expect("查询失败");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].path, "D:/work/b.ts", "按发生时间倒序");
+        assert_eq!(rows[1].path, "D:/work/c.md");
+        assert_eq!(rows[0].size, Some(1024));
+
+        // 空区间
+        let none = db
+            .get_recent_file_events("2026-01-01", "2026-01-02", 10)
+            .expect("查询失败");
+        assert!(none.is_empty());
+        drop(db);
+        remove_db_files(&db_path);
     }
 }

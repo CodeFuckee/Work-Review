@@ -34,10 +34,6 @@ test('网站语义规则命中后应同步基础分类，保障工休统计可�
 
 test('桌面采集侧迁移到核心分类模块后应继续使用兼容口径', async () => {
   const mainSource = await readFile(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
-  const avatarSource = await readFile(
-    new URL('../src-tauri/src/avatar_engine.rs', import.meta.url),
-    'utf8',
-  );
   const categorySource = await readFile(
     new URL('../src-tauri/src/commands/category.rs', import.meta.url),
     'utf8',
@@ -45,14 +41,6 @@ test('桌面采集侧迁移到核心分类模块后应继续使用兼容口径',
 
   assert.match(
     mainSource,
-    /work_review_core::categorize::categorize_collected_app_with_rules/,
-  );
-  assert.match(
-    avatarSource,
-    /work_review_core::categorize::find_collected_category_override/,
-  );
-  assert.match(
-    avatarSource,
     /work_review_core::categorize::categorize_collected_app_with_rules/,
   );
   assert.match(

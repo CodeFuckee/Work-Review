@@ -2,15 +2,19 @@
   import { onMount } from 'svelte';
   import type { ComponentProps } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { push } from 'svelte-spa-router';
   import { cache } from '../../lib/stores/cache.ts';
   import { locale, t } from '$lib/i18n/index.ts';
   import { formatUserError } from '$lib/utils/errorDisplay.ts';
   import { showToast } from '../../lib/stores/toast.ts';
+  import { clearAuth, getAdminUrl, getAuth, setAdminUrl, type AuthState } from '$lib/stores/auth.ts';
 
   import SettingsGeneral from './components/SettingsGeneral.svelte';
   import SettingsAppearance from './components/SettingsAppearance.svelte';
   import SettingsAI from './components/SettingsAI.svelte';
-  import SettingsAvatar from './components/SettingsAvatar.svelte';
+  import SettingsGitlab from './components/SettingsGitlab.svelte';
+  import SettingsPlane from './components/SettingsPlane.svelte';
+  import SettingsFileMonitor from './components/SettingsFileMonitor.svelte';
   import SettingsNodeGateway from './components/SettingsNodeGateway.svelte';
   import SettingsSystem from './components/SettingsSystem.svelte';
   import SettingsPrivacy from './components/SettingsPrivacy.svelte';
@@ -53,11 +57,12 @@
     & NodeGatewayConfig
     & PrivacyConfig
     & StorageConfig
-    & RootSettingsFields;
+    & RootSettingsFields
+    & ComponentProps<SettingsGitlab>['config']
+    & ComponentProps<SettingsPlane>['config']
+    & ComponentProps<SettingsFileMonitor>['config'];
 
   type NullableCredentialKey =
-    | 'telegram_bot_token'
-    | 'telegram_bot_proxy'
     | 'feishu_app_id'
     | 'feishu_app_secret'
     | 'feishu_verification_token'
@@ -106,7 +111,7 @@
     ui_visual_style: string;
   };
 
-  type SettingsTabId = 'general' | 'appearance' | 'ai' | 'avatar' | 'privacy' | 'storage' | 'node';
+  type SettingsTabId = 'general' | 'appearance' | 'ai' | 'privacy' | 'storage' | 'node' | 'gitlab' | 'plane' | 'filemonitor';
 
   interface SettingsTab {
     id: SettingsTabId;
@@ -119,6 +124,7 @@
   let loading = true;
   let saving = false;
   let dirty = false;
+  let configLoaded = false;
   let error: string | null = null;
   let success = false;
   let providers: AiProvider[] = [];
@@ -138,10 +144,12 @@
     { id: 'general', labelKey: 'settings.tabs.general', icon: 'general' },
     { id: 'appearance', labelKey: 'settings.tabs.appearance', icon: 'appearance' },
     { id: 'ai', labelKey: 'settings.tabs.ai', icon: 'ai' },
-    { id: 'avatar', labelKey: 'settings.tabs.avatar', icon: 'avatar', beta: true },
     { id: 'privacy', labelKey: 'settings.tabs.privacy', icon: 'privacy' },
     { id: 'storage', labelKey: 'settings.tabs.storage', icon: 'storage' },
     { id: 'node', labelKey: 'settings.tabs.node', icon: 'node', beta: true },
+    { id: 'gitlab', labelKey: 'settings.tabs.gitlab', icon: 'gitlab' },
+    { id: 'plane', labelKey: 'settings.tabs.plane', icon: 'plane' },
+    { id: 'filemonitor', labelKey: 'settings.tabs.fileMonitor', icon: 'filemonitor' },
   ];
 
   // 加载配置
@@ -201,18 +209,6 @@
       if (!['a', 'b', 'c'].includes(loadedConfig.ui_visual_style)) {
         loadedConfig.ui_visual_style = 'c';
       }
-      if (typeof loadedConfig.avatar_proactive_ai_enabled !== 'boolean') {
-        loadedConfig.avatar_proactive_ai_enabled = false;
-      }
-      if (typeof loadedConfig.telegram_bot_enabled !== 'boolean') {
-        loadedConfig.telegram_bot_enabled = false;
-      }
-      if (typeof loadedConfig.telegram_bot_token !== 'string' && loadedConfig.telegram_bot_token !== null) {
-        loadedConfig.telegram_bot_token = null;
-      }
-      if (typeof loadedConfig.telegram_bot_proxy !== 'string' && loadedConfig.telegram_bot_proxy !== null) {
-        loadedConfig.telegram_bot_proxy = null;
-      }
       if (!Array.isArray(loadedConfig.node_devices)) {
         loadedConfig.node_devices = [];
       }
@@ -269,12 +265,6 @@
       if (typeof loadedConfig.lightweight_mode !== 'boolean') {
         loadedConfig.lightweight_mode = false;
       }
-      if (typeof loadedConfig.break_reminder_enabled !== 'boolean') {
-        loadedConfig.break_reminder_enabled = false;
-      }
-      if (![30, 45, 50, 60, 90, 120].includes(loadedConfig.break_reminder_interval_minutes)) {
-        loadedConfig.break_reminder_interval_minutes = 50;
-      }
       if (typeof loadedConfig.auto_start_silent !== 'boolean') {
         loadedConfig.auto_start_silent = false;
       }
@@ -307,6 +297,9 @@
 
       config = loadedConfig as SettingsConfig;
       cache.setConfig(config);
+      // 后端配置已加载：此后缓存 store 的旧快照不得再覆盖 config
+      //（防御「缓存里的旧配置整体写回、抹掉新增设置项」类回归）
+      configLoaded = true;
     } catch (e) {
       error = formatUserError(e, t('common.loadFailedRetry'));
       console.error('加载配置失败:', e);
@@ -401,7 +394,37 @@
     }
   }
 
+  // 账号区块（凭证在 localStorage，与 config 保存流程无关）
+  let accountState: AuthState | null = null;
+  let accountServerUrl = '';
+  let accountServerSaved = false;
+  let accountServerSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function refreshAccountState(): void {
+    accountState = getAuth();
+    accountServerUrl = getAdminUrl();
+  }
+
+  function saveAccountServerUrl(): void {
+    setAdminUrl(accountServerUrl);
+    accountServerUrl = getAdminUrl();
+    accountServerSaved = true;
+    if (accountServerSaveTimer !== null) clearTimeout(accountServerSaveTimer);
+    accountServerSaveTimer = setTimeout(() => {
+      accountServerSaved = false;
+      accountServerSaveTimer = null;
+    }, 2000);
+  }
+
+  function handleAccountLogout(): void {
+    clearAuth();
+    refreshAccountState();
+    // 通知 App.svelte 刷新认证门（无凭证会强制跳回登录页）
+    window.dispatchEvent(new CustomEvent('auth-changed'));
+  }
+
   onMount(() => {
+    refreshAccountState();
     const unsubscribeCache = cache.subscribe((state) => {
       if (!state.config) return;
       // 保存中或用户已编辑配置时，不覆盖（避免丢弃未保存的修改）
@@ -417,6 +440,7 @@
     return () => {
       unsubscribeCache();
       if (successTimer !== null) clearTimeout(successTimer);
+      if (accountServerSaveTimer !== null) clearTimeout(accountServerSaveTimer);
     };
   });
 </script>
@@ -470,6 +494,54 @@
     </div>
   {:else if config}
     <div class="w-full settings-editorial-board page-axis-operation">
+      <div class="settings-card settings-account">
+        <h3 class="settings-card-title">{t('settings.accountTitle')}</h3>
+        <p class="settings-card-desc">{t('settings.accountDesc')}</p>
+
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          {#if accountState}
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold text-slate-900 dark:text-[#e6edf3]">
+                {accountState.name || accountState.userName}
+              </p>
+              <p class="truncate text-xs text-slate-500 dark:text-slate-400">
+                {accountState.userName} · {t('settings.accountLoggedInAs')}
+              </p>
+            </div>
+            <div class="ms-auto flex items-center gap-2">
+              <button type="button" on:click={() => push('/auth')} class="page-control-btn min-h-9 px-3">
+                {t('auth.reloginAction')}
+              </button>
+              <button type="button" on:click={handleAccountLogout} class="page-control-btn min-h-9 px-3">
+                {t('auth.logoutAction')}
+              </button>
+            </div>
+          {:else}
+            <p class="text-sm text-slate-500 dark:text-slate-400">{t('settings.accountNotLoggedIn')}</p>
+            <button type="button" on:click={() => push('/auth')} class="page-control-btn ms-auto min-h-9 px-3">
+              {t('auth.loginTab')}
+            </button>
+          {/if}
+        </div>
+
+        <div class="mt-4">
+          <label class="settings-label" for="account-server-url">{t('settings.accountServerLabel')}</label>
+          <div class="mt-1.5 flex items-center gap-2">
+            <input
+              id="account-server-url"
+              bind:value={accountServerUrl}
+              spellcheck="false"
+              placeholder="http://10.37.80.25:4191"
+              class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
+            />
+            <button type="button" on:click={saveAccountServerUrl} class="page-control-btn min-h-9 shrink-0 px-3">
+              {accountServerSaved ? t('settings.saved') : t('settings.save')}
+            </button>
+          </div>
+          <p class="settings-subtle mt-1.5">{t('settings.accountServerHint')}</p>
+        </div>
+      </div>
+
       {#if settingsRuntimePlatform === 'macos'}
         <div class="settings-card settings-top-status-zone">
           <SettingsSystem />
@@ -493,12 +565,16 @@
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                 {:else if tab.icon === 'node'}
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 7h14M5 12h14M5 17h10" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5z" /></svg>
-                {:else if tab.icon === 'avatar'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7.5 9.5l1.5-3 3 2 3-2 1.5 3M7 14.5c0-2.5 2.239-4.5 5-4.5s5 2 5 4.5S14.761 19 12 19s-5-2-5-4.5z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 14h.01M14 14h.01M10.5 16.5c.6.5 1 .75 1.5.75s.9-.25 1.5-.75" /></svg>
                 {:else if tab.icon === 'privacy'}
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
                 {:else if tab.icon === 'storage'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
+                {:else if tab.icon === 'gitlab'}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" /></svg>
+                {:else if tab.icon === 'plane'}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 12L3.269 3.125A59.769 59.769 0 0121.485 12 59.768 59.768 0 013.27 20.875L5.999 12zm0 0h7.5" /></svg>
+                {:else if tab.icon === 'filemonitor'}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                 {/if}
               </span>
               <span class="inline-flex items-center gap-1 whitespace-nowrap">
@@ -517,7 +593,7 @@
         {#if activeTab === 'general'}
           <SettingsGeneral bind:config on:change={() => dirty = true} />
         {:else if activeTab === 'appearance'}
-          <SettingsAppearance bind:config mode="background-only" on:change={handleSettingsChange} />
+          <SettingsAppearance bind:config on:change={handleSettingsChange} />
         {:else if activeTab === 'node'}
           <SettingsNodeGateway bind:config {dataDir} on:change={() => dirty = true} />
         {:else if activeTab === 'ai'}
@@ -526,8 +602,6 @@
             <p class="settings-card-desc">{t('settings.aiCardDescription')}</p>
             <SettingsAI bind:config {providers} on:change={() => dirty = true} />
           </div>
-        {:else if activeTab === 'avatar'}
-          <SettingsAvatar bind:config on:change={() => dirty = true} />
         {:else if activeTab === 'privacy'}
           <SettingsPrivacy
             bind:config
@@ -546,6 +620,12 @@
             on:clearCache={handleClearCache}
             on:dataDirChanged={handleDataDirChanged}
           />
+        {:else if activeTab === 'gitlab'}
+          <SettingsGitlab bind:config on:change={() => dirty = true} />
+        {:else if activeTab === 'plane'}
+          <SettingsPlane bind:config on:change={() => dirty = true} />
+        {:else if activeTab === 'filemonitor'}
+          <SettingsFileMonitor bind:config on:change={() => dirty = true} />
         {/if}
         </div>
       </div>

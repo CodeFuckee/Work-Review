@@ -237,3 +237,71 @@ fn focus_session_advisor_skill() -> SkillPackage {
         ],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::SkillCategory;
+
+    #[test]
+    fn 注册后应能取到技能包与状态() {
+        let mut registry = SkillRegistry::new();
+        let pkg = builtin_skills().remove(0);
+        let id = pkg.id.clone();
+        registry.register(pkg);
+        assert!(registry.get_package(&id).is_some());
+        let state = registry.get_state(&id).expect("注册时应同步创建状态");
+        assert_eq!(state.skill_id, id);
+        assert!(registry.get_state("不存在").is_none());
+    }
+
+    #[test]
+    fn 可变状态修改应反映回注册表() {
+        let mut registry = SkillRegistry::new();
+        let pkg = builtin_skills().remove(0);
+        let id = pkg.id.clone();
+        registry.register(pkg);
+        registry
+            .get_state_mut(&id)
+            .unwrap()
+            .record_execution(true, 10);
+        assert_eq!(
+            registry.get_execution_stats(&id).unwrap().total_executions,
+            1
+        );
+    }
+
+    #[test]
+    fn 内置技能应有五个且形状合法() {
+        let skills = builtin_skills();
+        assert_eq!(skills.len(), 5);
+        let ids: Vec<&str> = skills.iter().map(|s| s.id.as_str()).collect();
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), 5, "技能 id 不得重复: {ids:?}");
+        for skill in &skills {
+            assert!(skill.enabled, "内置技能默认启用: {}", skill.id);
+            assert!(!skill.name.is_empty());
+            assert!(!skill.description.is_empty());
+        }
+        // 分类抽检：既有 Report 也有 Analysis / Suggestion
+        assert!(skills.iter().any(|s| s.category == SkillCategory::Report));
+        assert!(skills.iter().any(|s| s.category == SkillCategory::Analysis));
+        assert!(skills
+            .iter()
+            .any(|s| s.category == SkillCategory::Suggestion));
+    }
+
+    #[test]
+    fn 技能包应能从json往返序列化() {
+        let pkg = &builtin_skills()[0];
+        let json = serde_json::to_string(pkg).unwrap();
+        let back: SkillPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, pkg.id);
+        assert_eq!(
+            back.pipeline.transforms.len(),
+            pkg.pipeline.transforms.len()
+        );
+        // 反序列化默认值：缺省 enabled 应为 true
+        assert!(back.enabled);
+    }
+}

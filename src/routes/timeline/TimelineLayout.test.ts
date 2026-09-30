@@ -324,3 +324,24 @@ test('640px 及以下活动详情抽屉应全屏展示并移除圆角', async ()
     /\.timeline-detail-drawer\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100vh;[\s\S]*?border-radius:\s*0;/
   );
 });
+
+test('时间线工具栏应有日报同款日期快捷按钮（上一天/今天/昨天 + 选中高亮）', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+
+  // 三按钮复用日报既有键与 page-control-btn 样式（不新增 i18n 键）
+  assert.match(source, /page-control-btn[\s\S]*?t\('report\.previousDay'\)/);
+  assert.match(source, /page-control-btn \{selectedDate === getLocalDateString\(\) \? 'page-control-btn-active' : ''\}"\s*\n?\s*on:click=\{\(\) => \(selectedDate = getLocalDateString\(\)\)\}/);
+  assert.match(source, /page-control-btn \{selectedDate === getTimelineYesterdayDateString\(\) \? 'page-control-btn-active' : ''\}/);
+  assert.match(source, /t\('report\.today'\)/);
+  assert.match(source, /t\('report\.yesterday'\)/);
+  // 上一天为相对操作：连点可一直往前翻（selectedDate 前移一天）
+  assert.match(source, /selectedDate = shiftIsoDate\(selectedDate, -1\)/);
+  // 三按钮位于日期选择器左侧（与日报同序）
+  const toolbarStart = source.indexOf('<div class="page-toolbar">');
+  const picker = source.indexOf('<LocalizedDatePicker', toolbarStart);
+  const prevBtn = source.indexOf("t('report.previousDay')", toolbarStart);
+  assert.ok(toolbarStart > 0 && prevBtn > toolbarStart && prevBtn < picker, '快捷按钮应在日期选择器之前');
+  // 日期平移复用日报的纯函数模块（昨天 = 今天前移一天）
+  assert.match(source, /import \{ shiftIsoDate \} from '\.\.\/report\/reportDateNavigation\.ts'/);
+  assert.match(source, /function getTimelineYesterdayDateString/);
+});
