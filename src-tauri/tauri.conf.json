@@ -76,7 +76,7 @@
   },
   "productName": "Yue-Review",
   "mainBinaryName": "Yue_Review",
-  "version": "1.2.19",
+  "version": "1.2.20",
   "identifier": "com.yuereview.app",
   "plugins": {
     "updater": {
