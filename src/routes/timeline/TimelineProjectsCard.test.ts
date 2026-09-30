@@ -59,3 +59,28 @@ test('今日项目卡文案应在四语言词典中齐备且非空', async () =>
     }
   }
 });
+
+test('今日项目卡应有手动触发归因按钮（recompute 事件 + spinner + 失败提示）', async () => {
+  const source = await readFile(new URL('./TimelineProjectsCard.svelte', import.meta.url), 'utf8');
+
+  // 卡头部图标按钮：悬停文案 + 计算中 spinner/禁用
+  assert.match(source, /t\('timeline\.projects\.recomputeTitle'\)/);
+  assert.match(source, /recomputing/);
+  assert.match(source, /disabled=\{recomputing\}/);
+  assert.match(source, /dispatch\('recompute'\)/);
+  // 失败提示行（手动触发必须可见结果，区别于自动链路静默）
+  assert.match(source, /t\('timeline\.projects\.recomputeFailed'\)/);
+  // 失败提示带自动消失（几秒后清空）
+  assert.match(source, /recomputeError/);
+});
+
+test('手动归因应由 Timeline 监听 recompute 事件重算当日归因', async () => {
+  const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /on:recompute=\{manualRecomputeAttributions\}/);
+  assert.match(source, /async function manualRecomputeAttributions/);
+  // 手动路径复用同一归因加载函数并带成败返回值驱动 spinner
+  assert.match(source, /recomputeAttributionsLoading/);
+  assert.match(source, /<TimelineProjectsCard[\s\S]*?recomputing=\{recomputeAttributionsLoading\}/);
+  assert.match(source, /recomputeError=\{recomputeAttributionsError\}/);
+});

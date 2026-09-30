@@ -237,6 +237,8 @@ export default {
         editLabel: 'Edit',
         removeLabel: 'Remove',
         empty: 'No attributed projects today — add one manually',
+        recomputeTitle: 'Recompute attribution',
+        recomputeFailed: 'Attribution failed, please retry later',
       },
       detail: {
         appCategory: 'Default App Category',

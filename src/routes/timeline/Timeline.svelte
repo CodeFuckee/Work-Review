@@ -182,7 +182,8 @@
 
   // Plane 工作项归因：时间线主数据加载完成后按日现算（随用随算不入库；
   // 未配置 Plane 时后端返回空成功）。失败静默，不影响时间线首屏。
-  async function loadPlaneAttributions(date: string): Promise<void> {
+  // 返回是否成功：自动链路忽略返回值（保持静默），手动链路用它驱动失败提示
+  async function loadPlaneAttributions(date: string): Promise<boolean> {
     planeAttributions = [];
     try {
       const result = await invoke<{
@@ -191,14 +192,31 @@
         ai_used: boolean;
         message: string | null;
       }>('plane_attributions_for_date', { date });
-      if (date !== selectedDate) return;
+      if (date !== selectedDate) return false;
       if (!result.ok) {
         if (result.message) console.warn('Plane 工作项归因失败:', result.message);
-        return;
+        return false;
       }
       planeAttributions = result.attributions;
+      return true;
     } catch (e) {
       console.warn('Plane 工作项归因失败:', e);
+      return false;
+    }
+  }
+
+  // 「今日项目」卡的手动归因入口：只重算当日归因（不重拉活动/不动图片缓存），
+  // spinner 与失败提示由卡内展示——用户主动点击必须知道结果。
+  let recomputeAttributionsLoading = false;
+  let recomputeAttributionsError = false;
+  async function manualRecomputeAttributions(): Promise<void> {
+    if (recomputeAttributionsLoading) return;
+    recomputeAttributionsLoading = true;
+    recomputeAttributionsError = false;
+    try {
+      recomputeAttributionsError = !(await loadPlaneAttributions(selectedDate));
+    } finally {
+      recomputeAttributionsLoading = false;
     }
   }
 
@@ -1865,7 +1883,13 @@
     </div>
   </div>
 
-  <TimelineProjectsCard date={selectedDate} attributions={planeAttributions} />
+  <TimelineProjectsCard
+      date={selectedDate}
+      attributions={planeAttributions}
+      recomputing={recomputeAttributionsLoading}
+      recomputeError={recomputeAttributionsError}
+      on:recompute={manualRecomputeAttributions}
+    />
 
   {#if loading}
     <div class="flex items-center justify-center h-64">

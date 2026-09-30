@@ -236,6 +236,8 @@ export default {
         editLabel: 'تعديل',
         removeLabel: 'حذف',
         empty: 'لا توجد مشاريع مسندة اليوم — أضف واحدًا يدويًا',
+        recomputeTitle: 'إعادة حساب الإسناد',
+        recomputeFailed: 'فشل الإسناد، أعد المحاولة لاحقًا',
       },
       detail: {
         appCategory: 'التصنيف الافتراضي للتطبيق',

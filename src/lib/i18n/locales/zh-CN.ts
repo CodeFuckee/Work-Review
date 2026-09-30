@@ -235,6 +235,8 @@ export default {
         editLabel: '修改',
         removeLabel: '删除',
         empty: '当日暂无归因项目，可手动添加',
+        recomputeTitle: '重新归因',
+        recomputeFailed: '归因失败，请稍后重试',
       },
       detail: {
         appCategory: '应用默认分类',

@@ -12,8 +12,11 @@
   export let attributions: Array<{
     project_name: string;
   }> = [];
+  // 手动归因状态（由父组件驱动；error=true 时展示轻量失败提示，几秒后自动消失）
+  export let recomputing = false;
+  export let recomputeError = false;
 
-  const dispatch = createEventDispatcher<{ changed: void }>();
+  const dispatch = createEventDispatcher<{ changed: void; recompute: void }>();
 
   let adjustments: Array<{ project_name: string; removed: boolean }> = [];
   let planeProjects: string[] = [];
@@ -128,6 +131,13 @@
     return 'auto';
   }
 
+  // 失败提示自动消失（手动点击的轻量反馈，不打断操作）
+  let errorVisible = false;
+  $: if (recomputeError) {
+    errorVisible = true;
+    setTimeout(() => (errorVisible = false), 4000);
+  }
+
   onDestroy(() => {
     // 无常驻资源
   });
@@ -137,6 +147,25 @@
   <div class="page-card timeline-projects-card">
     <div class="timeline-projects-head">
       <h3 class="timeline-projects-title">{t('timeline.projects.title')}</h3>
+      <button
+        type="button"
+        class="timeline-projects-recompute-btn"
+        title={t('timeline.projects.recomputeTitle')}
+        aria-label={t('timeline.projects.recomputeTitle')}
+        disabled={recomputing}
+        on:click={() => dispatch('recompute')}
+      >
+        {#if recomputing}
+          <span class="timeline-projects-recompute-spinner" aria-hidden="true"></span>
+        {:else}
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        {/if}
+      </button>
+      {#if errorVisible}
+        <span class="timeline-projects-error">{t('timeline.projects.recomputeFailed')}</span>
+      {/if}
       {#if todayProjects.length === 0}
         <span class="timeline-projects-empty">{t('timeline.projects.empty')}</span>
       {/if}
@@ -234,6 +263,44 @@
 
   :global(.dark) .timeline-projects-title {
     color: #c9d1d9;
+  }
+
+  .timeline-projects-recompute-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem;
+    border-radius: var(--radius-sm);
+    color: #94a3b8;
+    transition: color 0.15s ease;
+  }
+
+  .timeline-projects-recompute-btn:hover:not(:disabled) {
+    color: rgb(37 99 235);
+  }
+
+  .timeline-projects-recompute-btn:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
+
+  .timeline-projects-recompute-spinner {
+    width: 0.85rem;
+    height: 0.85rem;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: var(--radius-full);
+    animation: timeline-projects-spin 0.8s linear infinite;
+  }
+
+  @keyframes timeline-projects-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .timeline-projects-error {
+    font-size: 0.78rem;
+    color: #e11d48;
   }
 
   .timeline-projects-empty {
