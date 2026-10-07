@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 新增
+- **私有 apt 软件源**（Linux/Debian 系 amd64）：`apt update && apt install yue-review` 直装。仓库挂在 GitLab Generic Package Registry 固定地址 `…/packages/generic/apt-repo/stable/`（客户端源地址永不变化），每次发版由新增 `publish-apt-repo` 作业自动重建（Packages 索引 + 含 SHA256 校验和段的 Release + GPG 清签/分离签名，整包先删后传、pool 只留最新版）。关键实测前提：generic registry 下载/上传接受 HTTP Basic 认证（apt 走 `/etc/apt/auth.conf.d`，客户端仅需 read_api PAT）、文件名支持斜杠（拼出 `dists/…` 仓库路径）。签名私钥在受保护 CI 变量 `APT_REPO_GPG_KEY`（本地 `~/.gnupg` 内 ed25519 `FA09…D0D0`，可吊销重发）。配置方法见 `.gitlab-ci.yml` 中 `publish-apt-repo` 作业头注释。
 - **时间线「今日项目」卡新增手动归因按钮**：卡标题旁刷新图标按钮，点击只重算当日归因（复用 `plane_attributions_for_date` 按日现算链路，不重拉活动/不动图片缓存，轻量秒级）——徽标与卡的 auto 项随意更新；适合 AI 兜底失败重试、当日持续工作后刷新归因。计算中按钮 spinner + 禁用；归因失败显示轻量错误提示行（4 秒自动消失，区别于自动链路的静默策略——用户主动点击必须知道结果）。`loadPlaneAttributions` 增加成败返回值（自动链路行为不变）。未配置 Plane 时随卡隐藏。i18n 每语言新增 2 键（叶子钉 1_294→1_296）。
 
 ### 修复

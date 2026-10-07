@@ -1036,3 +1036,42 @@ publish-release:
       node scripts/verify-update-artifacts.mjs --version "$VERSION" --url-base "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION" --token-env GIT_PUSH_TOKEN --platform "windows-x86_64=$WIN_EXE" --platform "darwin-aarch64=$MAC_A64"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
+
+# ---- 私有 apt 仓库：把本次 deb 索引化 + GPG 签名后整包重建到 generic registry ----
+# 客户端（Ubuntu/Debian amd64）：
+#   认证   /etc/apt/auth.conf.d/yue-review.conf（machine home.chenkaidi.top:509 login <user> password <PAT>）
+#   公钥   仓库根 KEY.gpg（客户端 gpg --dearmor 后放 /etc/apt/keyrings/yue-review.gpg，
+#          注意 apt 按后缀识别格式：二进制必须 .gpg、armored 必须 .asc）
+#   源地址 deb [signed-by=/etc/apt/keyrings/yue-review.gpg]
+#          https://home.chenkaidi.top:509/api/v4/projects/131/packages/generic/apt-repo/stable/ stable main
+# 之后 apt update && apt install yue-review / apt upgrade 均可用。
+# 关键事实（2026-10-07 实测，GitLab 19）：generic registry 下载/上传接受 HTTP Basic
+# （oauth2:PAT → apt auth.conf.d 可用）、文件名可含斜杠（拼出 dists/ 路径）、
+# 包管理 DELETE 需 PRIVATE-TOKEN。私钥在受保护变量 APT_REPO_GPG_KEY（base64 armor，
+# 仅受保护 tag 流水线可见；v* 为受保护 tag）。发布策略：整包先删后传，无重复记录漂移，
+# pool 只留最新版。GitLab 不提供 Debian 仓库格式（Packages/Release 索引），本作业自建。
+publish-apt-repo:
+  stage: publish
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  # 同 runner 持久工作区复用：publish-release 结束后 target/**/bundle/deb/ 留有本版 deb
+  needs: [publish-release]
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
+  script:
+    - set -euo pipefail
+    - |
+      if ! command -v gpg >/dev/null 2>&1; then
+        echo "runner 缺少 gpg，请运维预装 gnupg（apt-get install -y gnupg）" >&2
+        exit 1
+      fi
+    - |
+      export GNUPGHOME="$(mktemp -d)"
+      trap 'rm -rf "$GNUPGHOME"' EXIT
+      printf '%s' "$APT_REPO_GPG_KEY" | base64 -d | gpg --batch --import
+      gpg --batch --list-keys >/dev/null
+    - shopt -s globstar
+    - mapfile -t debs < <(ls target/**/release/bundle/deb/*.deb)
+    - |
+      if [ ${#debs[@]} -eq 0 ]; then echo "工作区未找到 deb 产物" >&2; exit 1; fi
+      printf '待发布 deb: %s\n' "${debs[@]}"
+    - WR_TOKEN="$GIT_PUSH_TOKEN" ./scripts/ci/publish-apt-repo.sh "${debs[@]}"
