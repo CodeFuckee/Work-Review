@@ -27,7 +27,9 @@ REG_BASE="$API_BASE/packages/generic/apt-repo/stable"
 TOKEN="${WR_TOKEN:?需要 WR_TOKEN（PAT，api 权限）}"
 SUITE=stable
 COMP=main
-GNUPGHOME="${WR_GNUPGHOME:-$HOME/.gnupg}"
+# 三级回退：WR_GNUPGHOME 显式指定 > 继承外部 GNUPGHOME（CI 作业的 mktemp 导入目录）> 本机默认。
+# 不能无条件覆盖：CI 作业先把私钥导入临时 GNUPGHOME，覆盖会导致签名时 "no default secret key"。
+GNUPGHOME="${WR_GNUPGHOME:-${GNUPGHOME:-$HOME/.gnupg}}"
 export GNUPGHOME
 
 if [ "$#" -eq 0 ]; then
