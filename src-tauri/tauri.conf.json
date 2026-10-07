@@ -104,11 +104,11 @@
         "alwaysOnTop": false,
         "dragDropEnabled": false,
         "useHttpsScheme": true,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --allow-running-insecure-content --unsafely-treat-insecure-origin-as-secure=http://10.37.80.25:4191"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --allow-running-insecure-content --unsafely-treat-insecure-origin-as-secure=http://10.37.80.25:4191,http://10.0.0.220:4191"
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* http://10.37.80.25:*"
+      "csp": "default-src 'self'; img-src 'self' data: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* http://10.37.80.25:* http://10.0.0.220:*"
     }
   }
 }
