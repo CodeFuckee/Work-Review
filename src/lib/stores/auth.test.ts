@@ -29,6 +29,18 @@ test('clientRegister 应调用 Admin.Core client-auth/register 端点', async ()
   assert.match(source, /\/api\/admin\/client-auth\/register/);
 });
 
+// 回归：v1.1.81（Windows）与 v1.2.22（Linux）两度因 WebView 安全上下文的混合内容拦截
+// 导致登录页 fetch 纯 HTTP 内网地址零请求失败。登录/注册必须走 Rust 侧
+// client_http_post_json（reqwest），fetch 仅作为无 Tauri 运行时的浏览器预览兜底。
+test('登录/注册请求应经 Rust 侧 client_http_post_json 发出（绕开 WebView 混合内容拦截）', async () => {
+  const source = await import('node:fs').then(fs =>
+    fs.readFileSync(new URL('./auth.ts', import.meta.url), 'utf8'),
+  );
+  assert.match(source, /invoke<ClientHttpPostJsonResult>\('client_http_post_json'/);
+  // 浏览器预览兜底必须保留（vite dev / README 截图 harness 无 __TAURI_INTERNALS__）
+  assert.match(source, /__TAURI_INTERNALS__/);
+});
+
 test('认证状态持久化与过期判定应成对出现', async () => {
   const source = await import('node:fs').then(fs =>
     fs.readFileSync(new URL('./auth.ts', import.meta.url), 'utf8'),

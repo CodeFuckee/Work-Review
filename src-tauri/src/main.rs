@@ -3773,6 +3773,7 @@ async fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::client_http_post_json,
             autostart::enable_autostart,
             autostart::disable_autostart,
             autostart::is_autostart_enabled,

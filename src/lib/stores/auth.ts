@@ -5,7 +5,16 @@
 //   POST {admin}/api/admin/client-auth/login
 //   POST {admin}/api/admin/client-auth/register
 
+import { invoke } from '@tauri-apps/api/core';
 import { parseTokenExpiresAt, type AuthGate, resolveAuthGate } from '../../routes/auth/authLogic.ts';
+
+/** Rust 侧 client_http_post_json 命令的返回（delivered=false 即网络层失败） */
+interface ClientHttpPostJsonResult {
+  delivered: boolean;
+  status?: number;
+  body?: string;
+  error?: string;
+}
 
 const AUTH_KEY = 'yue-review-auth';
 const ADMIN_URL_KEY = 'yue-review-admin-url';
@@ -126,19 +135,53 @@ async function postClientAuth(
   path: string,
   body: Record<string, string>,
 ): Promise<ClientAuthCallResult> {
+  const url = `${adminUrl}${path}`;
+  let httpStatus = 0;
+  let rawBody: unknown;
+
+  // 生产路径：登录/注册经 Rust 侧 reqwest 发请求（client_http_post_json 命令）。
+  // WebView 页面源（Windows https://tauri.localhost / Linux tauri://localhost）都是
+  // 安全上下文，页面 fetch 纯 HTTP 内网地址会被混合内容拦截且零网络请求
+  // （v1.1.81 Windows、v1.2.22 Linux 两次复现）；Rust 侧不受 WebView 网络栈约束。
   try {
-    const resp = await fetch(`${adminUrl}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      // admin 服务挂起（建连但不响应）时 15 秒超时落入下方 network 分支，
-      // 登录/注册按钮不再永久 pending
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!resp.ok) {
-      return { ok: false, message: `HTTP ${resp.status}` };
+    const res = await invoke<ClientHttpPostJsonResult>('client_http_post_json', { url, body });
+    if (!res.delivered) {
+      console.warn('客户端认证请求异常（网络层）:', res.error);
+      return { ok: false, network: true };
     }
-    const data = (await resp.json()) as { data?: ClientAuthResponse } | ClientAuthResponse;
+    httpStatus = res.status ?? 0;
+    rawBody = res.body;
+  } catch (e) {
+    // 浏览器预览（vite dev / README 截图 harness）无 Tauri 运行时：退回 fetch，
+    // 行为与旧版一致（localhost 源无混合内容问题）。
+    if (!(e instanceof Error) || !String(e.message ?? e).includes('__TAURI_INTERNALS__')) {
+      console.warn('客户端认证请求异常:', e);
+      return { ok: false, network: true };
+    }
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        // admin 服务挂起（建连但不响应）时 15 秒超时落入下方 network 分支，
+        // 登录/注册按钮不再永久 pending
+        signal: AbortSignal.timeout(15_000),
+      });
+      httpStatus = resp.status;
+      rawBody = await resp.text();
+    } catch (e2) {
+      console.warn('客户端认证请求异常:', e2);
+      return { ok: false, network: true };
+    }
+  }
+
+  if (httpStatus < 200 || httpStatus >= 300) {
+    return { ok: false, message: `HTTP ${httpStatus}` };
+  }
+  try {
+    const data = (typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody) as {
+      data?: ClientAuthResponse;
+    } | ClientAuthResponse;
     // Admin.Core 统一包装为 { success, code, msg, data }，登录结果在 data.data
     const inner: ClientAuthResponse = (('data' in data && data.data) ? data.data : data) as ClientAuthResponse;
     if (inner.success === false) {
@@ -155,8 +198,7 @@ async function postClientAuth(
       name: inner.name ?? undefined,
     };
   } catch (e) {
-    // 混合内容拦截/CSP/代理等渲染层失败都在这里暴露（如 Failed to fetch），console 保留原始错误便于排查
-    console.warn('客户端认证请求异常:', e);
+    console.warn('客户端认证响应解析异常:', e);
     return { ok: false, network: true };
   }
 }
