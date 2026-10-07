@@ -108,7 +108,22 @@ cache:
         echo "rustup not found. Install Rust via https://rustup.rs on this runner (linux-x64/linux-arm64/macos) or add ~/.cargo/bin to its PATH." >&2
         exit 1
       fi
-    - rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy
+    # rustup 工具链安装：直连失败时重试并回退国内镜像（2026-10-08 mac runner 两连败，
+    # static.rust-lang.org 拉取超时——家庭网络对该 CDN 时通时断；镜像仅在直连失败后使用）
+    - |
+      for attempt in 1 2 3; do
+        if rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy; then
+          break
+        fi
+        if [ "$attempt" = 3 ]; then
+          echo "rustup 工具链安装三连败（直连+镜像），见 .rust-node 重试策略" >&2
+          exit 1
+        fi
+        echo "rustup 直连失败，第 $((attempt+1)) 次尝试改走 rsproxy.cn 镜像…"
+        export RUSTUP_DIST_SERVER="https://rsproxy.cn"
+        export RUSTUP_UPDATE_ROOT="https://rsproxy.cn/rustup"
+        sleep 15
+      done
     - rustup default "$RUST_VERSION"
     - node --version
     - npm --version
