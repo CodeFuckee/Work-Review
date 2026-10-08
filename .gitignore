@@ -84,6 +84,7 @@ src-tauri/icons.backup/
 /plan.md
 .claude/
 .zcode/
+.mcp.json
 
 # 内置兜底模型的本地 API Key（编译期注入用，绝不入库）
 /src-tauri/.builtin-model-key.local
