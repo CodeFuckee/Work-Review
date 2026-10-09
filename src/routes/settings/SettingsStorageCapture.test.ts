@@ -11,9 +11,9 @@ test('存储设置应提供独立的启用截图开关，而不只是截图间�
   assert.match(source, /settingsStorage\.screenshotsEnabled/);
   assert.match(source, /config\.storage\.screenshots_enabled/);
   assert.match(source, /settingsStorage\.screenshotsEnabledHint/);
-  assert.match(source, /role="switch"/);
-  assert.match(source, /aria-label=\{t\('settingsStorage\.screenshotsEnabled'\)\}/);
-  assert.match(source, /aria-checked=\{config\.storage\.screenshots_enabled\}/);
+  assert.match(source, /<Toggle/);
+  assert.match(source, /labelText=\{t\('settingsStorage\.screenshotsEnabled'\)\}/);
+  assert.match(source, /toggled=\{config\.storage\.screenshots_enabled\}/);
 });
 
 test('存储设置数值输入和自动导出开关应提供本地化可访问名称', async () => {
@@ -22,10 +22,12 @@ test('存储设置数值输入和自动导出开关应提供本地化可访问�
     'utf8'
   );
 
-  for (const key of ['pollingInterval', 'retentionDays', 'storageLimitLabel', 'autoExport']) {
+  for (const key of ['pollingInterval', 'retentionDays', 'storageLimitLabel']) {
     assert.match(source, new RegExp(`aria-label=\\{t\\('settingsStorage\\.${key}'\\)\\}`));
   }
-  assert.match(source, /aria-checked=\{config\.daily_report_auto_export\}/);
+  // 自动导出开关已迁移 Carbon Toggle
+  assert.match(source, /labelText=\{t\('settingsStorage\.autoExport'\)\}/);
+  assert.match(source, /toggled=\{config\.daily_report_auto_export\}/);
   assert.equal((source.match(/settingsStorage\.(?:showSecret|hideSecret)/g) || []).length, 6);
   assert.match(source, /aria-label=\{`\$\{t\(s3AccessKeyVisible/);
   assert.match(source, /aria-label=\{`\$\{t\(webdavPasswordVisible/);

@@ -264,7 +264,7 @@
         value={(gitlab().project_filter ?? []).join('\n')}
         on:input={onFilterInput}
         class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
-      />
+      ></textarea>
       {#if pickerError}
         <p class="mt-1 break-all text-xs text-rose-500">{pickerError}</p>
       {/if}
@@ -292,7 +292,7 @@
         value={(gitlab().work_authors ?? []).join('\n')}
         on:input={onAuthorsInput}
         class="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
-      />
+      ></textarea>
       {#if authorPickerError}
         <p class="mt-1 break-all text-xs text-rose-500">{authorPickerError}</p>
       {/if}

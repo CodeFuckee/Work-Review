@@ -22,11 +22,11 @@ test('联网、语义记忆与长期记忆开关应暴露本地化 switch 语义
     'utf8'
   );
 
-  assert.equal((source.match(/role="switch"/g) || []).length, 3);
-  assert.match(source, /aria-label=\{t\('settingsAI\.webAccess\.title'\)\}/);
-  assert.match(source, /aria-label=\{t\('settingsAI\.semanticMemory\.title'\)\}/);
-  assert.match(source, /aria-label=\{t\('settingsAI\.assistantMemory\.enabled'\)\}/);
-  assert.equal((source.match(/aria-checked=\{/g) || []).length, 3);
+  assert.equal((source.match(/<Toggle/g) || []).length, 3);
+  assert.match(source, /labelText=\{t\('settingsAI\.webAccess\.title'\)\}/);
+  assert.match(source, /labelText=\{t\('settingsAI\.semanticMemory\.title'\)\}/);
+  assert.match(source, /labelText=\{t\('settingsAI\.assistantMemory\.enabled'\)\}/);
+  assert.equal((source.match(/toggled=\{/g) || []).length, 3);
 });
 
 test('日报导出目录应从 AI 设置移到存储设置', async () => {

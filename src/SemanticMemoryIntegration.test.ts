@@ -7,10 +7,9 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 
 test('语义记忆不再有独立页面与侧栏入口（查询统一走助手）', () => {
   const app = read('./App.svelte');
-  const sidebar = read('./lib/components/Sidebar.svelte');
 
   assert.doesNotMatch(app, /'\/memory'/, 'App.svelte 不应再注册 /memory 路由');
-  assert.doesNotMatch(sidebar, /sidebar\.nav\.memory/, '侧栏不应再有记忆入口');
+  assert.doesNotMatch(app, /sidebar\.nav\.memory/, '壳层导航不应再有记忆入口');
   assert.ok(
     !existsSync(fileURLToPath(new URL('./routes/memory/Memory.svelte', import.meta.url))),
     '独立记忆页应已删除'

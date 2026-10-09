@@ -272,19 +272,16 @@
             <span class="settings-muted">{t('settingsGeneral.workTimeDisabledHint')}</span>
           {/if}
         </div>
-        <button
-          type="button"
-          on:click={() => {
+        <Toggle
+          size="sm"
+          toggled={config.work_time_enabled}
+          labelText={t('settingsGeneral.workTime')}
+          hideLabel={true}
+          on:toggle={() => {
             config.work_time_enabled = !config.work_time_enabled;
             handleChange();
           }}
-          class="switch-track {config.work_time_enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-          role="switch"
-          aria-label={t('settingsGeneral.workTime')}
-          aria-checked={config.work_time_enabled}
-        >
-          <span class="switch-thumb {config.work_time_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+        />
       </div>
 
       {#if config.work_time_enabled}

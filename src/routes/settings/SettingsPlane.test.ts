@@ -47,8 +47,8 @@ test('Plane 组件应提供工作项预览命令与预览列表', () => {
 
 test('Plane 组件应提供启用开关并按结构化结果展示连接状态', () => {
   const source = read(PLANE_COMPONENT);
-  assert.match(source, /role="switch"/);
-  assert.match(source, /aria-checked=\{config\.plane\?\.enabled\}/);
+  assert.match(source, /<Toggle/);
+  assert.match(source, /toggled=\{config\.plane\?\.enabled\}/);
   assert.match(source, /testResult\.ok/);
   assert.match(source, /previewError/);
 });
@@ -70,9 +70,11 @@ test('Plane 组件应提供项目过滤 textarea 并随保存流程持久化', (
   assert.match(source, /config\.plane = \{ \.\.\.plane\(\), project_filter: lines \};/);
 });
 
-test('设置页 Plane 图标分支应使用单枚描边 SVG', () => {
+test('设置页 Plane 页签应经由 Carbon Tabs 渲染（图标分支已随壳层迁移移除）', () => {
   const source = read(SETTINGS);
-  assert.match(source, /\{:else if tab\.icon === 'plane'\}\s*<svg class="w-3\.5 h-3\.5" fill="none" stroke="currentColor"/);
+  assert.match(source, /<Tabs/);
+  assert.match(source, /id: 'plane'/);
+  assert.doesNotMatch(source, /tab\.icon === 'plane'/);
 });
 
 test('四个语言的 i18n 都应包含 plane tab 与完整 settingsPlane 文案块', () => {

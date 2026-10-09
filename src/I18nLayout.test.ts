@@ -19,12 +19,12 @@ test('应用壳层应使用统一 i18n 资源并支持三种界面语言', async
   assert.match(appSource, /<Router \{routes\} \/>/);
 });
 
-test('侧边栏底部应提供语言切换菜单，并按 ZH、EN、TW 顺序展示缩写标识', async () => {
-  const source = await readFile(new URL('./lib/components/Sidebar.svelte', import.meta.url), 'utf8');
+// Carbon 迁移后语言菜单位于 UIShell Header 的 OverflowMenu 内（App.svelte），
+// 语言清单与顺序断言改为针对壳层实现。
+test('壳层应提供语言切换菜单，并按 ZH、EN、TW、AR 顺序展示', async () => {
+  const source = await readFile(new URL('./App.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /locale-switch/);
-  assert.match(source, /aria-haspopup="menu"/);
-  assert.match(source, /toggleLocaleMenu/);
+  assert.match(source, /OverflowMenu/);
   assert.match(source, /selectLocale\(option\.value\)/);
   assert.match(source, /value: 'zh-CN', label: 'ZH'/);
   assert.match(source, /value: 'en', label: 'EN'/);
@@ -39,7 +39,6 @@ test('侧边栏底部应提供语言切换菜单，并按 ZH、EN、TW 顺序展
       < source.indexOf("value: 'ar', label: 'AR'"),
     '语言顺序应为 ZH、EN、TW、AR'
   );
-  assert.doesNotMatch(source, /sidebar-footer-version/);
 });
 
 test('后端语言切换命令应保持私有以避免 Tauri command 宏重导出冲突', async () => {
@@ -47,18 +46,4 @@ test('后端语言切换命令应保持私有以避免 Tauri command 宏重导�
 
   assert.match(source, /#\[tauri::command\]\s*async fn set_app_locale\b/);
   assert.doesNotMatch(source, /#\[tauri::command\]\s*pub async fn set_app_locale\b/);
-});
-
-test('语言菜单应左对齐展开，并按“英文缩写 + 语言名称”展示避免裁切', async () => {
-  const source = await readFile(new URL('./lib/components/Sidebar.svelte', import.meta.url), 'utf8');
-
-  assert.match(source, /class="absolute bottom-full start-0 mb-2/);
-  assert.match(source, /min-w-\[148px\]/);
-  assert.match(source, /whitespace-nowrap/);
-  assert.match(source, /fullLabelKey: 'sidebar\.localeNames\.zhCN'/);
-  assert.match(source, /fullLabel: translate\(option\.fullLabelKey\)/);
-  assert.match(
-    source,
-    /<span class="font-semibold tracking-\[0\.08em\] text-slate-500 dark:text-\[#7d8590\]">\{option\.label\}<\/span>\s*<span class="text-slate-700 dark:text-\[#c9d1d9\]">\{option\.fullLabel\}<\/span>/s
-  );
 });

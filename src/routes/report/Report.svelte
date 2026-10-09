@@ -1578,7 +1578,7 @@
     <div class="modal-panel relative z-10">
       <div class="modal-header">
         <h3 id="report-edit-section-title" class="modal-title">{t('report.editSection')}</h3>
-        <button class="modal-close" on:click={cancelEditSection}>
+        <button class="modal-close" aria-label={t('window.close')} on:click={cancelEditSection}>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
@@ -1621,7 +1621,7 @@
     <div class="modal-panel relative z-10" style="max-width: 36rem;">
       <div class="modal-header">
         <h3 id="report-preset-dialog-title" class="modal-title">{editingPresetIndex >= 0 ? editingPresetName || t('report.presetsTitle') : t('report.addPreset')}</h3>
-        <button class="modal-close" on:click={() => { showPresetModal = false; }}>
+        <button class="modal-close" aria-label={t('window.close')} on:click={() => { showPresetModal = false; }}>
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
@@ -1681,6 +1681,7 @@
         <h3 id="report-batch-export-dialog-title" class="modal-title">{t('report.batchExportModalTitle')}</h3>
         <button
           class="modal-close"
+          aria-label={t('window.close')}
           on:click={() => { if (!batchExporting) showBatchExportModal = false; }}
           disabled={batchExporting}
         >

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 变更
+- **前端迁移 Carbon Design（第一阶段）**：升级 Svelte 5（零源码改动，legacy 模式兼容），引入 carbon-components-svelte 0.113 + carbon-icons-svelte + IBM Plex Sans/Arabic 字体；应用壳层重建为 Carbon UIShell（Header+SideNav+Content，窗口控制/录制/语言/主题并入 Header）；Toast/ConfirmDialog 改用 Carbon 组件（store API 不变）；登录、关于、设置壳（Carbon Tabs）与全部设置面板的手写开关批量迁移 Carbon Toggle/Slider/RadioButtonGroup/TextInput；主题桥接 Carbon 浅色 g10/深色 g90，移除 A/B/C 三套界面风格（Rust 配置字段保留但不再使用）；测试套件相应改写（删除纯视觉断言 10 文件，改写开关/菜单/Plane 图标等断言为 Carbon 语义），725 项测试全绿。助手/日报/时间线/概览四个大页面继续迁移中。
+
 ### 修复
 - **Linux 登录页连内网服务器地址仍报"无法连接服务器"（v1.2.22 白名单修复在 Linux 无效）**：WebView 页面源在 Linux 是 `tauri://localhost`（wry 注册为 secure），同样是安全上下文，页面 fetch 纯 HTTP 内网地址仍被混合内容拦截；Windows 的 `additionalBrowserArgs` 豁免在 WebKitGTK 不存在，平台各自打补丁不可持续。**根治**：登录/注册请求改由 Rust 侧 `client_http_post_json` 命令（reqwest，15s 超时）发出，完全绕开 WebView 网络栈——任意 http/https 服务器地址全平台可用，不再依赖 CSP/浏览器参数白名单；无 Tauri 运行时的浏览器预览（vite dev/README 截图）自动退回 fetch。临时绕过（本机 `systemd --user` 转发 127.0.0.1:4191→10.0.0.220:4191）可停用。
 

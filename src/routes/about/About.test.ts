@@ -19,9 +19,9 @@ test('关于页不应包含 GitHub 与赞助入口及其弹层死代码', async 
 test('关于页操作区应保留数据目录入口且检查更新位于下方状态区', async () => {
   const source = await readFile(new URL('./About.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /about-action-row/);
-  assert.match(source, /role="switch"/);
-  assert.match(source, /aria-checked=\{autoCheckUpdate\}/);
+  assert.match(source, /<Button[\s\S]*?on:click=\{openDataDir\}/);
+  assert.match(source, /<Toggle/);
+  assert.match(source, /toggled=\{autoCheckUpdate\}/);
   assert.ok(
     source.indexOf("t('about.openDataDir')")
       < source.indexOf("t('about.checkUpdates')"),

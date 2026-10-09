@@ -2204,6 +2204,7 @@
     on:click|self={handleDetailDismiss}
     on:keydown={handleDetailOverlayKeydown}
   >
+    <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
     <aside
       class="timeline-detail-drawer"
       use:trapFocus
@@ -2541,6 +2542,7 @@
     on:click|self={handleCommitDetailDismiss}
     on:keydown={handleCommitDetailOverlayKeydown}
   >
+    <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
     <aside
       class="timeline-detail-drawer"
       use:trapFocus
@@ -2695,7 +2697,7 @@
     <div class="w-full max-w-lg rounded-[var(--radius-lg)] border border-slate-200 dark:border-[#30363d] bg-white dark:bg-[#161b22] shadow-2xl">
       <div class="flex items-center justify-between p-5 border-b border-slate-200 dark:border-[#30363d]">
         <h3 class="text-base font-semibold text-slate-900 dark:text-[#e6edf3]">{t('timeline.cleanupRecordsTitle')}</h3>
-        <button class="btn btn-ghost" on:click={() => (showCleanupPanel = false)} disabled={cleanupBusy}>
+        <button class="btn btn-ghost" on:click={() => (showCleanupPanel = false)} disabled={cleanupBusy} aria-label={t('window.close')}>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>

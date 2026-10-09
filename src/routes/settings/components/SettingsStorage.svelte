@@ -331,19 +331,16 @@
         <span class="settings-text">{t('settingsStorage.screenshotsEnabled')}</span>
         <p class="settings-muted mt-0.5">{t('settingsStorage.screenshotsEnabledHint')}</p>
       </div>
-      <button
-        type="button"
-        on:click={() => {
+      <Toggle
+        size="sm"
+        toggled={config.storage.screenshots_enabled}
+        labelText={t('settingsStorage.screenshotsEnabled')}
+        hideLabel={true}
+        on:toggle={() => {
           config.storage.screenshots_enabled = !config.storage.screenshots_enabled;
           handleChange();
         }}
-        class="switch-track {config.storage.screenshots_enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-        role="switch"
-        aria-label={t('settingsStorage.screenshotsEnabled')}
-        aria-checked={config.storage.screenshots_enabled}
-      >
-        <span class="switch-thumb {config.storage.screenshots_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-      </button>
+      />
     </div>
 
     <!-- 轮询间隔 -->

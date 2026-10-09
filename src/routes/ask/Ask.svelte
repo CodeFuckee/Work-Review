@@ -1180,7 +1180,7 @@
           aria-label={t('ask.placeholder')}
           on:input={resizeComposer}
           on:keydown={handleComposerKeydown}
-        />
+        ></textarea>
 
         <div class="ask-composer-toolbar">
           <div class="ask-composer-controls">

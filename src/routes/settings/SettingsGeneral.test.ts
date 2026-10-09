@@ -169,21 +169,21 @@ test('基本设置的开关和数值输入应提供本地化可访问名称', as
     'utf8'
   );
 
-  assert.equal((source.match(/role="switch"/g) || []).length, 4);
-  assert.equal((source.match(/aria-checked=\{/g) || []).length, 4);
+  assert.equal((source.match(/<Toggle/g) || []).length, 4);
+  assert.equal((source.match(/labelText=\{t\(/g) || []).length, 4);
   for (const key of [
-    'workTime',
     'standardWorkHours',
     'idleThreshold',
     'workGoalHours',
     'reportAutoGenerateTime',
-    'autoStart',
-    'hideDockIcon',
-    'lightweightMode',
   ]) {
+    // 开关类（autoStart/hideDockIcon/lightweightMode）已迁移 Carbon Toggle，用 labelText 断言
+    assert.doesNotMatch(source, new RegExp(`role="switch"`));
     assert.match(source, new RegExp(`aria-label=\\{t\\('settingsGeneral\\.${key}'\\)\\}`));
   }
   assert.match(source, /aria-label=\{`\$\{t\('settingsGeneral\.segmentLabel'/);
+  // 工作时间开关已迁移 Carbon Toggle
+  assert.match(source, /labelText=\{t\('settingsGeneral\.workTime'\)\}/);
   assert.match(source, /\$\{t\('settingsGeneral\.from'\)\}`\}/);
   assert.match(source, /\$\{t\('settingsGeneral\.to'\)\}`\}/);
 });
