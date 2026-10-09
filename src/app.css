@@ -17,16 +17,17 @@
   font-size: 16px;
   line-height: 1.6;
   font-weight: 400;
-  --editorial-shell-bg: linear-gradient(180deg, #f4f7ff 0%, #eef2ff 28%, #f8fafc 100%);
-  --editorial-surface-featured: #ffffff;
-  --editorial-surface-subtle: #f8fafc;
+  /* Carbon 令牌桥：浅色取 g10，深色取 g90（由 <Theme> 在 <html> 上切换，自动跟随） */
+  --editorial-shell-bg: var(--cds-background);
+  --editorial-surface-featured: var(--cds-layer);
+  --editorial-surface-subtle: var(--cds-layer-alternate);
   /* 操作型页面（设置/概览页头等）满宽铺开，与 page-shell 类页面一致；
      宽度由页面内部网格吸收。阅读型内容保留行长上限以保证可读性。 */
   --content-width-operation: none;
   --content-width-reading: 84rem;
-  --surface-border-subtle: rgba(203, 213, 225, 0.62);
-  --surface-border-default: rgba(148, 163, 184, 0.46);
-  --surface-border-emphasis: rgba(79, 70, 229, 0.42);
+  --surface-border-subtle: var(--cds-border-subtle);
+  --surface-border-default: var(--cds-border-subtle);
+  --surface-border-emphasis: var(--cds-border-strong);
 
   /* 圆角仅保留五档；胶囊档只用于圆点、开关、进度条和短徽标。 */
   --radius-xs: 4px;
@@ -40,8 +41,8 @@
   --space-section: 1.75rem;  /* 段落间距 */
   --space-block: 1rem;       /* 卡片内边距 */
 
-  color: #213547;
-  background-color: #f8fafc;
+  color: var(--cds-text-primary);
+  background-color: var(--cds-background);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -50,21 +51,12 @@
   -webkit-text-size-adjust: 100%;
 }
 
-/* 暗色主题 — 主流深色配色（参考 GitHub Dark / VS Code Dark+）*/
+/* 暗色主题：值已桥接 Carbon g90（上面的 var(--cds-*) 随 html[theme] 自动切换，
+   此块仅保留 color-scheme 与文字/底色的 Carbon 对齐值，供尚未迁移的 dark: 变体兜底）*/
 .dark {
   color-scheme: dark;
-  color: #e6edf3;
-  background-color: #0d1117;
-  --editorial-shell-bg: linear-gradient(180deg, #010409 0%, #0d1117 22%, #161b22 56%, #0d1117 100%);
-  --editorial-surface-featured: #161b22;
-  --editorial-surface-subtle: #0d1117;
-  --surface-border-subtle: rgba(48, 54, 61, 0.58);
-  --surface-border-default: rgba(48, 54, 61, 0.82);
-  --surface-border-emphasis: rgba(99, 102, 241, 0.58);
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.20), 0 1px 3px rgba(0, 0, 0, 0.24);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.20);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.32), 0 2px 10px rgba(0, 0, 0, 0.20);
+  color: var(--cds-text-primary);
+  background-color: var(--cds-background);
 }
 
 /* 滚动条样式 */
