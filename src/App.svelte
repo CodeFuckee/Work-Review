@@ -5,6 +5,7 @@
   import Sidebar from './lib/components/Sidebar.svelte';
   import Toast from './lib/components/Toast.svelte';
   import ConfirmDialog from './lib/components/ConfirmDialog.svelte';
+  import CarbonTheme from 'carbon-components-svelte/src/Theme/Theme.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -17,8 +18,7 @@
   import { isTimelineActivity } from './routes/timeline/timelineData.ts';
   import { timelineGateway } from './routes/timeline/timelineGateway.ts';
 
-  type Theme = 'system' | 'light' | 'dark';
-  type UiVisualStyle = 'a' | 'b' | 'c';
+  type ThemePreference = 'system' | 'light' | 'dark';
 
   interface WorkTimeSegment {
     end_hour?: number;
@@ -27,7 +27,7 @@
 
   interface RuntimeConfig {
     lightweight_mode?: boolean;
-    theme?: Theme;
+    theme?: ThemePreference;
     ui_visual_style?: string;
     background_image?: string | null;
     background_opacity?: number;
@@ -62,10 +62,6 @@
     blur?: number;
   }
 
-  interface UiVisualStyleChangeDetail {
-    style?: string;
-  }
-
   interface AutoReportWorkEnd {
     hour: number;
     minute: number;
@@ -92,7 +88,7 @@
     return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
-  function isTheme(value: unknown): value is Theme {
+  function isTheme(value: unknown): value is ThemePreference {
     return value === 'system' || value === 'light' || value === 'dark';
   }
 
@@ -138,10 +134,6 @@
     ) return false;
 
     return true;
-  }
-
-  function isUiVisualStyle(value: string): value is UiVisualStyle {
-    return value === 'a' || value === 'b' || value === 'c';
   }
 
   function isBoolean(value: unknown): value is boolean {
@@ -341,8 +333,10 @@
     '/about': wrap({ asyncComponent: () => import('./routes/about/About.svelte') }),
   };
 
-  let theme: Theme = 'system';
+  let theme: ThemePreference = 'system';
   let isDark = false;
+  // Carbon 当前主题（g10=浅 / g90=深），由 applyTheme 桥接
+  let carbonTheme: 'g10' | 'g90' = 'g10';
   let isRecording = true;
   let isPaused = false;
   let platform = '';
@@ -350,7 +344,6 @@
   let backgroundOpacity = 0.25;
   let backgroundBlur = 1;
   let runtimeConfig: RuntimeConfig | null = null;
-  let uiVisualStyle: UiVisualStyle = 'c';
   let unsubscribeLocale: () => void = () => {};
   $: currentLocale = $locale;
 
@@ -370,10 +363,13 @@
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
 
-  function applyTheme(newTheme: Theme): void {
+  function applyTheme(newTheme: ThemePreference): void {
     theme = newTheme;
     isDark = theme === 'system' ? detectSystemTheme() : theme === 'dark';
-    
+
+    // Carbon 主题桥：浅色 g10 / 深色 g90（Theme 组件在 <html> 上写 theme 属性 + color-scheme）。
+    // html.dark 保留至全站迁移收尾（过渡期旧语义类仍依赖 .dark 变量层），收尾时移除。
+    carbonTheme = isDark ? 'g90' : 'g10';
     if (isDark) {
       document.documentElement.classList.add('dark');
     } else {
@@ -381,17 +377,7 @@
     }
   }
 
-  function normalizeUiVisualStyle(value: unknown): UiVisualStyle {
-    const nextStyle = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    return isUiVisualStyle(nextStyle) ? nextStyle : 'c';
-  }
-
-  function applyUiVisualStyle(value: unknown): void {
-    uiVisualStyle = normalizeUiVisualStyle(value);
-    document.documentElement.dataset.uiVisualStyle = uiVisualStyle;
-  }
-
-  async function handleThemeChange(event: CustomEvent<Theme>): Promise<void> {
+  async function handleThemeChange(event: CustomEvent<ThemePreference>): Promise<void> {
     const newTheme = event.detail;
     applyTheme(newTheme);
 
@@ -562,11 +548,9 @@
         runtimeConfig = config;
         cache.setConfig(config);
         applyTheme(config.theme || 'system');
-        applyUiVisualStyle(config.ui_visual_style || 'c');
       } catch (e) {
         console.error('加载配置失败:', e);
         applyTheme('system');
-        applyUiVisualStyle('c');
         config = { work_end_hour: 18 };
         runtimeConfig = config;
       }
@@ -604,9 +588,6 @@
           applyTheme(state.config.theme);
         }
 
-        if (state.config.ui_visual_style && state.config.ui_visual_style !== uiVisualStyle) {
-          applyUiVisualStyle(state.config.ui_visual_style);
-        }
       });
       pendingCleanup.push(unsubscribeCache);
 
@@ -627,7 +608,6 @@
         isRuntimeConfig,
         (payload) => {
           runtimeConfig = payload;
-          applyUiVisualStyle(payload.ui_visual_style || 'c');
           cache.setConfig(payload);
         },
       );
@@ -639,13 +619,6 @@
       window.addEventListener('background-changed', handleBgChange);
       pendingCleanup.push(() => window.removeEventListener('background-changed', handleBgChange));
 
-      const handleUiVisualStyleChange = (event: Event) => {
-        if (!(event instanceof CustomEvent)) return;
-        const detail: UiVisualStyleChangeDetail = event.detail;
-        applyUiVisualStyle(detail?.style || 'c');
-      };
-      window.addEventListener('ui-visual-style-changed', handleUiVisualStyleChange);
-      pendingCleanup.push(() => window.removeEventListener('ui-visual-style-changed', handleUiVisualStyleChange));
 
       // 启动预加载
       preloadApp();
@@ -766,7 +739,9 @@
   });
 </script>
 
-<div class="app-shell ui-style-{uiVisualStyle} platform-{platform || 'web'} flex h-screen overflow-hidden relative">
+<CarbonTheme theme={carbonTheme} />
+
+<div class="app-shell platform-{platform || 'web'} flex h-screen overflow-hidden relative">
   <div class="app-shell-ambient pointer-events-none absolute inset-0 z-0 opacity-80">
     <div class="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.14),transparent_62%)] dark:bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.18),transparent_62%)]"></div>
     <div class="absolute -right-16 top-24 h-48 w-48 rounded-full bg-indigo-200/20 blur-3xl dark:bg-indigo-500/12"></div>

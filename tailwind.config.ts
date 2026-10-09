@@ -21,6 +21,8 @@ export default {
       },
       fontFamily: {
         sans: [
+          'IBM Plex Sans',
+          'IBM Plex Sans Arabic',
           '-apple-system',
           'BlinkMacSystemFont',
           'SF Pro Text',
