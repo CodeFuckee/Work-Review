@@ -4531,242 +4531,49 @@
 
 /* ===== 界面风格切换：C 为当前默认，A/B/C 只通过根 class 覆盖视觉变量 ===== */
 
-.app-shell.ui-style-b {
-  --ui-visual-style: "b";
-}
-
-.app-shell.ui-style-a {
-  --ui-visual-style: "a";
-  --editorial-shell-bg: #f6f7f9;
-  --editorial-surface-featured: #ffffff;
-  --editorial-surface-subtle: #f8fafc;
-}
-
-.app-shell.ui-style-a .app-shell-ambient {
-  display: none;
-}
-
-.app-shell.ui-style-a .app-shell-sidebar-frame,
-.app-shell.ui-style-a .app-shell-main-frame {
-  padding: 0;
-  background: #ffffff;
-  border-color: rgba(203, 213, 225, 0.9);
-  box-shadow: none;
-}
-
-.app-shell.ui-style-a .app-shell-main-scroll {
-  margin-right: 0.18rem;
-  padding-right: 0.18rem;
-}
-
-.app-shell.ui-style-a .page-card,
-.app-shell.ui-style-a .page-card-soft {
-  background: #ffffff;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-/* a 风格定位为实底清爽：设置卡片保持实底，不参与玻璃化 */
-.app-shell.ui-style-a .settings-card {
-  background: #ffffff;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.app-shell.ui-style-a .overview-lead-card {
-  display: contents;
-}
-
-.app-shell.ui-style-a .overview-command-deck {
-  margin-bottom: 0.8rem;
-  padding: 0 0 0.8rem;
-}
-
-.app-shell.ui-style-a .overview-panel {
-  overflow: visible;
-}
-
-.app-shell.ui-style-a .overview-panel::before {
-  display: none;
-}
-
-.app-shell.ui-style-a .sidebar-nav-item-active {
-  color: #0f172a;
-  background: #ffffff;
-  border: 1px solid rgba(203, 213, 225, 0.9);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
-}
 
 
-.dark .app-shell.ui-style-a {
-  --editorial-shell-bg: #0d1117;
-  --editorial-surface-featured: #161b22;
-  --editorial-surface-subtle: #0f141b;
-  --surface-border-subtle: rgba(48, 54, 61, 0.58);
-  --surface-border-default: rgba(48, 54, 61, 0.82);
-}
 
-.dark .app-shell.ui-style-a .app-shell-sidebar-frame,
-.dark .app-shell.ui-style-a .app-shell-main-frame {
-  background: #161b22;
-  border-color: rgba(48, 54, 61, 0.82);
-  box-shadow: none;
-}
 
-.dark .app-shell.ui-style-a .page-card,
-.dark .app-shell.ui-style-a .page-card-soft {
-  background: #161b22;
-}
 
-.dark .app-shell.ui-style-a .settings-card {
-  background: var(--editorial-surface-featured);
-}
 
-.dark .app-shell.ui-style-a .sidebar-nav-item-active {
-  color: #e6edf3;
-  background: #21262d;
-  border-color: rgba(48, 54, 61, 0.92);
-  box-shadow: none;
-}
 
-.app-shell.ui-style-c {
-  --ui-visual-style: "c";
-  --editorial-shell-bg: #f3f5f7;
-  --editorial-surface-featured: #ffffff;
-  --editorial-surface-subtle: #f8fafc;
-}
 
-.app-shell.ui-style-c .app-shell-ambient {
-  display: none;
-}
 
-.app-shell.ui-style-c .app-shell-stage {
-  grid-template-columns: 12rem minmax(0, 1fr);
-  gap: 0.65rem;
-  margin: 0.45rem;
-  padding-right: 0.25rem;
-  padding-bottom: 0.25rem;
-  padding-left: 0.25rem;
-}
 
-.app-shell.ui-style-c .app-shell-stage--windowbar {
-  padding-top: 1.75rem;
-}
 
-.app-shell.ui-style-c .app-shell-stage--macos {
-  padding-top: 0.45rem;
-}
 
-.app-shell.ui-style-c .app-shell-stage--auth {
-  grid-template-columns: minmax(0, 1fr);
-}
 
-.app-shell.ui-style-c .app-shell-sidebar-frame,
-.app-shell.ui-style-c .app-shell-main-frame {
-  padding: 0.14rem;
-  border-color: rgba(203, 213, 225, 0.82);
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
-}
 
-.app-shell.ui-style-c .page-shell {
-  padding: 0.75rem 0.85rem 0.85rem;
-}
 
-.app-shell.ui-style-c .page-header {
-  margin-bottom: 0.7rem;
-  gap: 0.75rem;
-}
 
-.app-shell.ui-style-c .page-card,
-.app-shell.ui-style-c .page-card-soft,
-.app-shell.ui-style-c .settings-card {
-  padding: 0.85rem;
-  box-shadow: none;
-}
 
-.app-shell.ui-style-c .overview-command-deck {
-  margin-bottom: 0.55rem;
-  padding-bottom: 0.55rem;
-}
 
-.app-shell.ui-style-c .overview-summary-grid {
-  gap: 0.5rem;
-  margin-bottom: 0.6rem;
-}
 
-.app-shell.ui-style-c .overview-section-grid,
-.app-shell.ui-style-c .settings-editorial-board,
-.app-shell.ui-style-c .settings-stage-layout {
-  gap: 0.6rem;
-}
 
-.app-shell.ui-style-c .sidebar-brand {
-  min-height: 50px;
-}
 
-.app-shell.ui-style-c .sidebar-nav-item {
-  padding: 0.5rem 0.65rem;
-  font-size: 0.86rem;
-}
 
-.app-shell.ui-style-c .page-title-badge {
-  width: 2.1rem;
-  height: 2.1rem;
-}
 
-.app-shell.ui-style-c .page-title-copy h2 {
-  font-size: 1.18rem;
-}
 
-.app-shell.ui-style-c .page-title-copy p {
-  margin-top: 0.15rem;
-  font-size: 0.76rem;
-  line-height: 1.35;
-}
 
-.app-shell.ui-style-c .page-section-title {
-  font-size: 0.92rem;
-  line-height: 1.35;
-  margin-bottom: 0.65rem;
-}
 
-.app-shell.ui-style-c .overview-summary-grid > :where(a, div) {
-  min-height: 88px;
-  padding: 0.85rem;
-}
 
-.app-shell.ui-style-c .overview-summary-grid > :where(a, div) p {
-  margin-top: 0.95rem;
-  font-size: 1.55rem;
-}
 
-.app-shell.ui-style-c .overview-summary-grid > :where(a, div) span {
-  font-size: 0.72rem;
-}
 
-.app-shell.ui-style-c .overview-summary-grid > :where(a, div) svg {
-  width: 1rem;
-  height: 1rem;
-}
 
-.app-shell.ui-style-c .overview-summary-grid > :where(a, div) > div > div:last-child {
-  width: 2.2rem;
-  height: 2.2rem;
-}
 
-.dark .app-shell.ui-style-c {
-  --editorial-shell-bg: #0d1117;
-  --editorial-surface-featured: #161b22;
-  --editorial-surface-subtle: #101820;
-}
 
-/* ui-style-c 深色模式：外框边框/阴影/背景需覆盖，否则浅色 border + 半透明白底会形成"白边"（#129） */
-.dark .app-shell.ui-style-c .app-shell-sidebar-frame,
-.dark .app-shell.ui-style-c .app-shell-main-frame {
-  background: rgba(22, 27, 34, 0.36);
-  border-color: rgba(48, 54, 61, 0.82);
-  box-shadow: none;
-}
+
+
+
+
+
+
+
+
+
+
+
 
 @media (max-width: 920px) {
   .overview-section-grid {
