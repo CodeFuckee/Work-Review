@@ -317,7 +317,8 @@ function buildTimelineActivities(locale: CaptureLocale) {
     app_name: item.app,
     window_title: timelineTitles[locale][index] ?? item.app,
     screenshot_path: `readme-capture-${item.id}.png`,
-    screenshot_url: null,
+    // 校验器契约：screenshot_url 只接受 undefined 或 string（null 无效）
+    screenshot_url: undefined,
     ocr_text: null,
     category: item.category,
     duration: item.duration,
@@ -487,15 +488,23 @@ async function installTauriMock(
   context: BrowserContext,
   locale: CaptureLocale
 ): Promise<void> {
-  await context.addInitScript<CaptureMockPayload>((mock) => {
+  const mock = mockPayload(locale);
+  const initBody = `
     window.localStorage.setItem('work-review.locale', mock.locale);
     window.localStorage.setItem('theme', 'light');
+    // 登录门放行：注入未过期本地凭证（结构与真实 JWT 一致）
+    const b64url = (obj) => btoa(JSON.stringify(obj)).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+    const authExp = Math.floor(Date.now() / 1000) + 7200;
+    const authToken = \`\${b64url({ alg: 'none', typ: 'JWT' })}.\${b64url({ sub: 1, exp: authExp, userName: 'demo' })}.capture\`;
+    window.localStorage.setItem('yue-review-auth', JSON.stringify({
+      token: authToken, userId: 1, userName: 'demo', name: '演示用户', expiresAt: Date.now() + 7200000,
+    }));
 
-    const callbacks = new Map<number, TauriCallback>();
+    const callbacks = new Map();
     let callbackId = 1;
-    const registerCallback = (callback?: TauriCallback, once = false): number => {
+    const registerCallback = (callback, once = false) => {
       const id = callbackId++;
-      callbacks.set(id, (data: unknown) => {
+      callbacks.set(id, (data) => {
         if (once) callbacks.delete(id);
         return callback?.(data);
       });
@@ -510,10 +519,10 @@ async function installTauriMock(
       },
       callbacks,
       transformCallback: registerCallback,
-      unregisterCallback: (id: number) => callbacks.delete(id),
-      runCallback: (id: number, data: unknown) => callbacks.get(id)?.(data),
-      convertFileSrc: (filePath: string) => filePath,
-      invoke: async (command: string, args: TauriInvokeArgs = {}) => {
+      unregisterCallback: (id) => callbacks.delete(id),
+      runCallback: (id, data) => callbacks.get(id)?.(data),
+      convertFileSrc: (filePath) => filePath,
+      invoke: async (command, args = {}) => {
         switch (command) {
           case 'plugin:event|listen':
             return args.handler;
@@ -620,13 +629,34 @@ async function installTauriMock(
             return false;
           case 'get_app_icon':
             return null;
+          case 'get_gitlab_commits_for_date':
+            return args.date === mock.captureDate
+              ? [
+                  { sha: '4029854', repo: 'work-review', message: 'fix: 今日项目卡可见性以 Plane 已配置为准', committed_at: 1785228000, author_name: 'chenkaidi' },
+                  { sha: 'e203928', repo: 'work-review', message: 'ci: linux 打包加 --verbose 抓 linuxdeploy 输出', committed_at: 1785224400, author_name: 'chenkaidi' },
+                  { sha: '934f2a8', repo: 'work-review', message: 'feat: 日报新增文件修改小节', committed_at: 1785220800, author_name: 'chenkaidi' },
+                ]
+              : [];
+          case 'get_plane_work_items_for_date':
+          case 'get_daily_project_adjustments':
+            return [];
+          case 'list_plane_projects':
+            return ['work-review', 'honey-money', 'knowledge-base'];
+          case 'plane_attributions_for_date':
+            return { ok: true, attributions: [], ai_used: false, message: null };
+          case 'plane_sync_work_items_for_date':
+            return { ok: true, synced: 0 };
+          case 'get_file_monitor_stats':
+            return { total: 0, events: [] };
           default:
-            console.warn(`[README capture] 未处理的 Tauri 命令: ${command}`);
+            console.warn('[README capture] 未处理的 Tauri 命令: ' + command);
             return null;
         }
       },
     };
-  }, mockPayload(locale));
+`;
+  // Function 断言：运行时与 addInitScript(fn, arg) 兼容，仅为绕开 esbuild keepNames
+  await context.addInitScript(new Function('mock', initBody) as unknown as (m: typeof mock) => void, mock);
 }
 
 async function waitForStablePage(page: Page, selector: string): Promise<void> {
@@ -681,19 +711,20 @@ async function captureSettingsTab(
 ): Promise<void> {
   // 漂移守卫：设置页页签增删（如桌宠移除）曾让数字索引整体错位且无报错，
   // 截图整体拍错页签。索引越界时立刻失败并提示同步本文件的 settingsTabs
-  const tabCount = await page.locator('.settings-tab-rail-item').count();
+  const tabCount = await page.locator('.bx--tabs--container .bx--tabs__nav-link, .bx--tabs__nav-link').count();
   if (tabIndex >= tabCount) {
     throw new Error(
       `设置页签索引 ${tabIndex} 超出实际页签数 ${tabCount}——Settings.svelte 的 tabs 已变更，请同步本文件的 settingsTabs 列表`
     );
   }
-  const tab = page.locator('.settings-tab-rail-item').nth(tabIndex);
+  const tab = page.locator('.bx--tabs__nav-item').nth(tabIndex);
   await tab.click();
+  // 选中类挂在 li（bx--tabs__nav-item--selected），点击锚点 a（role=tab）亦可
   await page.waitForFunction(
-    (index) => document.querySelectorAll('.settings-tab-rail-item')[index]?.getAttribute('aria-current') === 'page',
+    (index) => document.querySelectorAll('.bx--tabs__nav-item')[index]?.classList.contains('bx--tabs__nav-item--selected') ?? false,
     tabIndex,
   );
-  await waitForStablePage(page, '.settings-stage-shell .settings-card');
+  await waitForStablePage(page, '.settings-carbon-panel, .settings-carbon-card');
   await saveScreenshot(page, outputPath);
 }
 
@@ -710,9 +741,9 @@ async function checkCaptureDependencies(): Promise<void> {
   }
 
   try {
-    await access(chromium.executablePath());
+    await access(process.env.CAPTURE_CHROMIUM || chromium.executablePath());
   } catch {
-    throw new Error('未找到 Playwright Chromium。请先执行 `npx playwright install chromium`。');
+    throw new Error('未找到 Playwright Chromium。请先执行 `npx playwright install chromium`，或用 CAPTURE_CHROMIUM 指定系统 Chrome。');
   }
 }
 
@@ -744,6 +775,7 @@ async function main(): Promise<void> {
   await checkCaptureDependencies();
   const browser = await chromium.launch({
     headless: true,
+    executablePath: process.env.CAPTURE_CHROMIUM || undefined,
     args: [
       '--disable-gpu',
       '--disable-lcd-text',
@@ -753,7 +785,11 @@ async function main(): Promise<void> {
     ],
   });
   try {
-    for (const item of LOCALES) {
+    const localeFilter = (process.env.README_CAPTURE_LOCALES || '').trim();
+    const locales = localeFilter
+      ? LOCALES.filter((entry) => localeFilter.split(',').includes(entry.locale))
+      : LOCALES;
+    for (const item of locales) {
       const outDir = path.resolve('docs', item.dir);
       await mkdir(outDir, { recursive: true });
 
@@ -768,6 +804,9 @@ async function main(): Promise<void> {
 
       const pageErrors: string[] = [];
       const page = await context.newPage();
+      if (process.env.CAPTURE_DEBUG) {
+        page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 300)));
+      }
       page.on('console', (message) => {
         if (message.type() === 'warning' || message.type() === 'error') {
           console.warn(`[${item.locale}] 浏览器 ${message.type()}: ${message.text()}`);
@@ -785,6 +824,14 @@ async function main(): Promise<void> {
       const reportPath = outputPath('日报');
 
       console.log(`[${item.locale}] 截取概览`);
+      if (process.env.CAPTURE_DEBUG) {
+        await page.goto(`${BASE_URL}#/`);
+        await page.waitForTimeout(3000);
+        console.log('[debug] hash:', await page.evaluate(() => location.hash));
+        console.log('[debug] mock:', await page.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke));
+        console.log('[debug] auth:', await page.evaluate(() => !!localStorage.getItem('yue-review-auth')));
+        console.log('[debug] shell:', await page.evaluate(() => { const el = document.querySelector('.overview-editorial-shell'); return el ? 'visible' : 'NOT FOUND'; }));
+      }
       await capturePage(page, '/#/', '.overview-editorial-shell', overviewPath);
       await page.waitForFunction(() => !document.querySelector('.overview-editorial-shell .animate-pulse'), null, { timeout: 15_000 }).catch(() => {});
       await saveScreenshot(page, overviewPath);
@@ -794,6 +841,16 @@ async function main(): Promise<void> {
       }, overviewBase64);
 
       console.log(`[${item.locale}] 截取时间线`);
+      if (process.env.CAPTURE_DEBUG) {
+        await page.goto(`${BASE_URL}#/timeline?date=${CAPTURE_DATE}`);
+        await page.waitForTimeout(3500);
+        console.log('[debug-tl] board:', await page.evaluate(() => { const el = document.querySelector('.timeline-editorial-board'); return el ? 'visible' : 'NOT FOUND'; }));
+        console.log('[debug-tl] body:', await page.evaluate(() => document.body.innerText.slice(0, 200).replace(/\n/g, '|')));
+        console.log('[debug-tl] timeline payload:', await page.evaluate(async () => {
+          const res = await window.__TAURI_INTERNALS__.invoke('get_timeline', { date: '2026-07-28', limit: 200, offset: 0 });
+          return Array.isArray(res) ? `array[${res.length}] first=${JSON.stringify(res[0]).slice(0, 160)}` : 'not-array: ' + String(res).slice(0, 80);
+        }));
+      }
       await capturePage(
         page,
         `/#/timeline?date=${CAPTURE_DATE}`,
@@ -802,7 +859,8 @@ async function main(): Promise<void> {
       );
 
       console.log(`[${item.locale}] 截取时间线详情`);
-      await page.locator('.timeline-entry').first().click();
+      // 跳过 GitLab 提交行（其抽屉无截图预览），点活动行
+      await page.locator('.timeline-entry:not(.timeline-entry-commit)').first().click();
       await waitForStablePage(page, '.timeline-detail-drawer');
       await page.waitForSelector('.timeline-detail-preview-image', { state: 'visible', timeout: 10_000 });
       await saveScreenshot(page, outputPath('时间线详情'));
@@ -824,7 +882,7 @@ async function main(): Promise<void> {
       await capturePage(page, '/#/ask', '.ask-workbench-shell', outputPath('助手'));
 
       console.log(`[${item.locale}] 截取设置页`);
-      await capturePage(page, '/#/settings', '.settings-stage-shell .settings-card', outputPath('设置-通用'));
+      await capturePage(page, '/#/settings', '.settings-carbon-panel', outputPath('设置-通用'));
       // 索引对应 Settings.svelte tabs 数组（0=general 已随 /#/settings 首屏拍过）：
       // 1=appearance, 2=ai, 3=privacy, 4=storage, 5=node；桌宠移除后 6=gitlab、
       // 7=plane（2026-09 新增）、8=filemonitor 暂不进 README
@@ -840,7 +898,7 @@ async function main(): Promise<void> {
       }
 
       console.log(`[${item.locale}] 截取关于`);
-      await capturePage(page, '/#/about', '.about-editorial-shell', outputPath('关于'));
+      await capturePage(page, '/#/about', '.about-carbon-shell', outputPath('关于'));
 
       for (const label of README_SCREENSHOT_LABELS) {
         await access(outputPath(label));
