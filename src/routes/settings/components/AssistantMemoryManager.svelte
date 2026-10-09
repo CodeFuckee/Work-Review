@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
+  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
 
   type MemoryType = 'preference' | 'workflow' | 'profile' | 'goal' | 'project' | 'constraint';
   type RecallPolicy = 'always' | 'relevant' | 'manual';
@@ -304,17 +306,17 @@
         placeholder={t('settingsAI.assistantMemory.searchPlaceholder')}
         aria-label={t('settingsAI.assistantMemory.searchPlaceholder')}
       />
-      <select
-        bind:value={selectedMemoryType}
-        on:change={loadMemories}
-        class="control-input sm:w-40"
-        aria-label={t('settingsAI.assistantMemory.type')}
+      <Select
+        selected={selectedMemoryType}
+        labelText={t('settingsAI.assistantMemory.type')}
+        hideLabel={true}
+        on:change={(e) => { selectedMemoryType = (e as CustomEvent<string>).detail as typeof selectedMemoryType; void loadMemories(); }}
       >
-        <option value="">{t('settingsAI.assistantMemory.type')}</option>
-        {#each memoryTypes as memoryType}
-          <option value={memoryType}>{typeLabel(memoryType)}</option>
+        <SelectItem value="" text={t('settingsAI.assistantMemory.type')} />
+        {#each memoryTypes as memoryType (memoryType)}
+          <SelectItem value={memoryType} text={typeLabel(memoryType)} />
         {/each}
-      </select>
+      </Select>
       <button type="button" class="settings-action-primary shrink-0" on:click={openCreateForm}>
         {t('settingsAI.assistantMemory.add')}
       </button>
@@ -333,25 +335,24 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="settings-field">
             <span class="settings-label">{t('settingsAI.assistantMemory.type')}</span>
-            <select bind:value={form.memoryType} class="control-input" disabled={saving}>
-              {#each memoryTypes as memoryType}
-                <option value={memoryType}>{typeLabel(memoryType)}</option>
+            <Select labelText={t('settingsAI.assistantMemory.type')} hideLabel={true} disabled={saving} selected={form.memoryType} on:change={(e) => form.memoryType = (e as CustomEvent<string>).detail as typeof form.memoryType}>
+              {#each memoryTypes as memoryType (memoryType)}
+                <SelectItem value={memoryType} text={typeLabel(memoryType)} />
               {/each}
-            </select>
+            </Select>
           </label>
 
           <label class="settings-field">
             <span class="settings-label">{t('settingsAI.assistantMemory.recallPolicy')}</span>
-            <select bind:value={form.recallPolicy} class="control-input" disabled={saving}>
-              {#each recallPolicies as recallPolicy}
-                <option
+            <Select labelText={t('settingsAI.assistantMemory.recallPolicy')} hideLabel={true} disabled={saving} selected={form.recallPolicy} on:change={(e) => form.recallPolicy = (e as CustomEvent<string>).detail as typeof form.recallPolicy}>
+              {#each recallPolicies as recallPolicy (recallPolicy)}
+                <SelectItem
                   value={recallPolicy}
+                  text={policyLabel(recallPolicy)}
                   disabled={form.sensitivity === 'caution' && recallPolicy === 'always'}
-                >
-                  {policyLabel(recallPolicy)}
-                </option>
+                />
               {/each}
-            </select>
+            </Select>
           </label>
         </div>
 

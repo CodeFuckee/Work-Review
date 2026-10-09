@@ -7,6 +7,8 @@
   import type { Locale } from '$lib/i18n/index.ts';
   import AssistantMemoryManager from './AssistantMemoryManager.svelte';
   import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
+  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
 
   type AiMode = 'local' | 'summary';
   type SemanticStatus = 'idle' | 'building' | 'ready' | 'failed';
@@ -1054,15 +1056,17 @@
         {#if generationCaps.thinking}
           <label class="block">
             <span class="settings-label">{t('settingsAI.thinkingMode')}</span>
-            <select
-              class="control-input mt-1"
-              value={thinkingModeValue}
-              on:change={(e) => setThinkingMode(e.currentTarget.value)}
+            <Select
+              class="mt-1"
+              labelText={t('settingsAI.thinkingMode')}
+              hideLabel={true}
+              selected={thinkingModeValue}
+              on:change={(e) => setThinkingMode((e as CustomEvent<string>).detail)}
             >
-              <option value="">{t('settingsAI.thinkingServerDefault')}</option>
-              <option value="on">{t('settingsAI.thinkingOn')}</option>
-              <option value="off">{t('settingsAI.thinkingOff')}</option>
-            </select>
+              <SelectItem value="" text={t('settingsAI.thinkingServerDefault')} />
+              <SelectItem value="on" text={t('settingsAI.thinkingOn')} />
+              <SelectItem value="off" text={t('settingsAI.thinkingOff')} />
+            </Select>
             {#if generationCaps.thinkingStreamingOnly}
               <p class="settings-note mt-1">{t('settingsAI.thinkingStreamingOnlyHint')}</p>
             {/if}
@@ -1141,16 +1145,16 @@
         <div class="space-y-2">
           <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
             <label class="settings-muted text-xs" for="assistant-search-provider">{t('settingsAI.webAccess.searchProvider')}</label>
-            <select
-              id="assistant-search-provider"
-              bind:value={config.assistant_search_provider}
-              on:change={handleChange}
-              class="control-input"
+            <Select
+              labelText={t('settingsAI.webAccess.searchProvider')}
+              hideLabel={true}
+              selected={config.assistant_search_provider}
+              on:change={(e) => { config.assistant_search_provider = (e as CustomEvent<string>).detail as typeof config.assistant_search_provider; handleChange(); }}
             >
-              <option value="duckduckgo">{t('settingsAI.webAccess.providerFreeBing')}</option>
-              <option value="tavily">Tavily</option>
-              <option value="bocha">{t('settingsAI.webAccess.providerBocha')}</option>
-            </select>
+              <SelectItem value="duckduckgo" text={t('settingsAI.webAccess.providerFreeBing')} />
+              <SelectItem value="tavily" text="Tavily" />
+              <SelectItem value="bocha" text={t('settingsAI.webAccess.providerBocha')} />
+            </Select>
 
             {#if config.assistant_search_provider !== 'duckduckgo'}
             <label class="settings-muted text-xs" for="assistant-search-key">{t('settingsAI.webAccess.searchKey')}</label>
@@ -1217,15 +1221,15 @@
         <div class="space-y-2">
           <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
             <label class="settings-muted text-xs" for="embedding-provider">{t('settingsAI.semanticMemory.provider')}</label>
-            <select
-              id="embedding-provider"
-              bind:value={config.embedding_provider}
-              on:change={handleChange}
-              class="control-input"
+            <Select
+              labelText={t('settingsAI.semanticMemory.provider')}
+              hideLabel={true}
+              selected={config.embedding_provider}
+              on:change={(e) => { config.embedding_provider = (e as CustomEvent<string>).detail as typeof config.embedding_provider; handleChange(); }}
             >
-              <option value="ollama">{t('settingsAI.semanticMemory.providerOllama')}</option>
-              <option value="openai">{t('settingsAI.semanticMemory.providerOpenai')}</option>
-            </select>
+              <SelectItem value="ollama" text={t('settingsAI.semanticMemory.providerOllama')} />
+              <SelectItem value="openai" text={t('settingsAI.semanticMemory.providerOpenai')} />
+            </Select>
 
             <label class="settings-muted text-xs" for="embedding-endpoint">{t('settingsAI.semanticMemory.endpoint')}</label>
             <input

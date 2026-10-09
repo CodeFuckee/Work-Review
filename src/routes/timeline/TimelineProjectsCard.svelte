@@ -3,6 +3,8 @@
   import { invoke } from '@tauri-apps/api/core';
   import { createEventDispatcher } from 'svelte';
   import { t } from '../../lib/i18n/index.ts';
+  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
+  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
 
   // 「今日项目」归因卡：当日 Plane 项目清单 = 归因聚合(auto) − 当日屏蔽(removed)
   // ∪ 手动添加(added)。人工调整只影响本卡展示，不联动时间线行徽标（行级归因
@@ -219,11 +221,18 @@
             <span class="timeline-projects-editor-from" title={editor.from}>{editor.from}</span>
             <span class="timeline-projects-editor-arrow" aria-hidden="true">→</span>
           {/if}
-          <select class="timeline-projects-select" bind:value={editorSelection} disabled={editorBusy}>
+          <Select
+            class="timeline-projects-select"
+            labelText={t('timeline.projectsEditorTitle')}
+            hideLabel={true}
+            disabled={editorBusy}
+            selected={editorSelection}
+            on:change={(e) => editorSelection = (e as CustomEvent<string>).detail}
+          >
             {#each selectableProjects as name (name)}
-              <option value={name}>{name}</option>
+              <SelectItem value={name} text={name} />
             {/each}
-          </select>
+          </Select>
           <button
             type="button"
             class="timeline-projects-editor-confirm"
