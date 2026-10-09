@@ -47,10 +47,10 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-dialog": "^2.7.0",
-    "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-shell": "^2.3.4",
+    "@tauri-apps/api": "2.10.1",
+    "@tauri-apps/plugin-dialog": "2.7.0",
+    "@tauri-apps/plugin-process": "2.3.1",
+    "@tauri-apps/plugin-shell": "2.3.4",
     "carbon-components-svelte": "^0.113.1",
     "carbon-icons-svelte": "^13.16.0",
     "dompurify": "^3.4.12",
