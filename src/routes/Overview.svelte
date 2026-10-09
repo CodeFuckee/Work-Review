@@ -6,7 +6,7 @@
   import StatsCard from '../lib/components/StatsCard.svelte';
   import AppUsageChart from '../lib/components/AppUsageChart.svelte';
   import ActivityHourlyChart from '../lib/components/ActivityHourlyChart.svelte';
-  import LocalizedDatePicker from '../lib/components/LocalizedDatePicker.svelte';
+  import LocalizedDatePicker from '../lib/components/CarbonDatePicker.svelte';
   import { cache } from '../lib/stores/cache.ts';
   import { recordingStore, isActiveRecording } from '../lib/stores/recording.ts';
   import { confirm } from '../lib/stores/confirm.ts';

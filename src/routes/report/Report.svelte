@@ -23,7 +23,7 @@
     type VisibleReportSection,
   } from './reportSections.ts';
   import { createReportGenerationOwnership, createReportRequestSnapshot, shiftIsoDate } from './reportDateNavigation.ts';
-  import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
+  import LocalizedDatePicker from '../../lib/components/CarbonDatePicker.svelte';
   import OverflowMenu from 'carbon-components-svelte/src/OverflowMenu/OverflowMenu.svelte';
   import OverflowMenuItem from 'carbon-components-svelte/src/OverflowMenu/OverflowMenuItem.svelte';
   import Button from 'carbon-components-svelte/src/Button/Button.svelte';

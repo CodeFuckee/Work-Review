@@ -58,7 +58,7 @@
   import { attachAttribution } from './timelineAttribution.ts';
   import { shiftIsoDate } from '../report/reportDateNavigation.ts';
   import { timelineGateway } from './timelineGateway.ts';
-  import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
+  import LocalizedDatePicker from '../../lib/components/CarbonDatePicker.svelte';
   import HourlySummaryDrawer from './HourlySummaryDrawer.svelte';
   import TimelineProjectsCard from './TimelineProjectsCard.svelte';
   import { confirm } from '../../lib/stores/confirm.ts';
