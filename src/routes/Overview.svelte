@@ -41,6 +41,11 @@
     type GitlabProjectStat,
   } from './overviewGitlabPresentation.ts';
   import { buildPlaneProjectOverview } from './overviewPlanePresentation.ts';
+  import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
+  import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import ChevronLeftIcon from 'carbon-icons-svelte/lib/ChevronLeft.svelte';
+  import ChevronRightIcon from 'carbon-icons-svelte/lib/ChevronRight.svelte';
 
   // GitLab 项目进度条配色（与 AppUsageChart 的柱色保持一致）
   const GITLAB_BAR_COLORS = [
@@ -1765,41 +1770,25 @@
     </div>
     <!-- 改版：原 overview-lead-card 模式切换整卡删除，分段切换（今天/本周/自定义）并入页头右侧一行 -->
     <div class="overview-command-deck">
-      <button
-        type="button"
-        class="page-control-btn {overviewMode === 'today' ? 'page-control-btn-active' : ''}"
-        on:click={() => setOverviewMode('today')}
+      <ContentSwitcher
+        selectedIndex={overviewMode === 'today' ? 0 : overviewMode === 'week' ? 1 : 2}
+        on:change={(e) => setOverviewMode(e.detail === 0 ? 'today' : e.detail === 1 ? 'week' : 'date')}
       >
-        {t('overview.modeToday')}
-      </button>
-      <button
-        type="button"
-        class="page-control-btn {overviewMode === 'week' ? 'page-control-btn-active' : ''}"
-        on:click={() => setOverviewMode('week')}
-      >
-        {t('overview.modeWeek')}
-      </button>
-      <button
-        type="button"
-        class="page-control-btn {overviewMode === 'date' ? 'page-control-btn-active' : ''}"
-        on:click={() => setOverviewMode('date')}
-      >
-        {t('overview.modeDate')}
-      </button>
+        <Switch text={t('overview.modeToday')} id="today" />
+        <Switch text={t('overview.modeWeek')} id="week" />
+        <Switch text={t('overview.modeDate')} id="date" />
+      </ContentSwitcher>
 
       {#if overviewMode === 'date'}
         <div class="overview-date-bar">
-          <button
-            type="button"
-            class="page-control-btn-icon"
-            title={t('common.previous')}
+          <Button
+            kind="ghost"
+            size="small"
+            icon={ChevronLeftIcon}
+            iconDescription={t('common.previous')}
+            tooltipPosition="bottom"
             on:click={() => stepOverviewDateRange(-1)}
-          >
-            <svg class="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-
+          />
           <LocalizedDatePicker
             mode="range"
             bind:startDate={selectedDateFrom}
@@ -1809,18 +1798,15 @@
             triggerClass="overview-date-trigger"
             on:change={handleOverviewDateChange}
           />
-
-          <button
-            type="button"
-            class="page-control-btn-icon"
-            title={t('common.next')}
+          <Button
+            kind="ghost"
+            size="small"
+            icon={ChevronRightIcon}
+            iconDescription={t('common.next')}
+            tooltipPosition="bottom"
             disabled={!canStepOverviewDateForward}
             on:click={() => stepOverviewDateRange(1)}
-          >
-            <svg class="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
+          />
         </div>
       {/if}
     </div>

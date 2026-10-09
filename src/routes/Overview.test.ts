@@ -271,11 +271,13 @@ test('概览页面应支持今日、指定日期与本周三种时间视角切�
   assert.doesNotMatch(source, /inputmode="numeric"/);
   assert.match(source, /dateFrom: overviewMode === 'date'/);
   assert.match(source, /dateTo: overviewMode === 'date'/);
-  const todayIndex = source.indexOf("setOverviewMode('today')");
-  const weekIndex = source.indexOf("setOverviewMode('week')");
-  const dateIndex = source.indexOf("setOverviewMode('date')");
+  // Carbon 迁移后视角切换为 ContentSwitcher，三模式经 change 事件三元表达式分发
+  assert.match(source, /<ContentSwitcher/);
+  const todayIndex = source.indexOf("'today'");
+  const weekIndex = source.indexOf("'week'");
+  const dateIndex = source.indexOf("'date'");
   assert.ok(
-    todayIndex < weekIndex && weekIndex < dateIndex,
+    todayIndex >= 0 && todayIndex < weekIndex && weekIndex < dateIndex,
     '顶部视角顺序应为 今日 -> 本周 -> 指定日期'
   );
 });
