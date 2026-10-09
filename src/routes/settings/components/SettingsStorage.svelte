@@ -5,6 +5,7 @@
   import { cache } from '../../../lib/stores/cache.ts';
   import { locale, t } from '$lib/i18n/index.ts';
   import { showToast } from '$lib/stores/toast.ts';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
   import CollapsibleSection from '../../../lib/components/CollapsibleSection.svelte';
 
   interface ScreenshotStorageSettings {
@@ -579,17 +580,14 @@
           <p class="settings-text">{t('settingsStorage.autoExport')}</p>
           <p class="settings-muted mt-0.5">{t('settingsStorage.autoExportHint')}</p>
         </div>
-        <button
-          type="button"
-          class="switch-track {config.daily_report_auto_export ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'} {!config.daily_report_export_dir ? 'opacity-60 cursor-not-allowed' : ''}"
-          on:click={() => { if (config.daily_report_export_dir) config.daily_report_auto_export = !config.daily_report_auto_export; }}
+        <Toggle
+          size="sm"
+          toggled={config.daily_report_auto_export}
+          labelText={t('settingsStorage.autoExport')}
+          hideLabel={true}
           disabled={!config.daily_report_export_dir}
-          role="switch"
-          aria-label={t('settingsStorage.autoExport')}
-          aria-checked={config.daily_report_auto_export}
-        >
-          <span class="switch-thumb {config.daily_report_auto_export ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+          on:toggle={() => { if (config.daily_report_export_dir) config.daily_report_auto_export = !config.daily_report_auto_export; }}
+        />
       </div>
     </div>
   </div>
@@ -891,20 +889,17 @@
             <span class="settings-text text-sm">{t('settingsStorage.syncAppConfig')}</span>
             <p class="settings-note mt-1">{t('settingsStorage.syncAppConfigHint')}</p>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-label={t('settingsStorage.syncAppConfig')}
-            aria-checked={Boolean(config.remote_storage?.sync_app_config)}
-            class="switch-track {config.remote_storage?.sync_app_config ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-            on:click={() => {
+          <Toggle
+            size="sm"
+            toggled={Boolean(config.remote_storage?.sync_app_config)}
+            labelText={t('settingsStorage.syncAppConfig')}
+            hideLabel={true}
+            on:toggle={() => {
               if (!config.remote_storage) return;
               config.remote_storage.sync_app_config = !config.remote_storage.sync_app_config;
               handleChange();
             }}
-          >
-            <span class="switch-thumb {config.remote_storage?.sync_app_config ? 'translate-x-5' : 'translate-x-0'}"></span>
-          </button>
+          />
         </div>
 
         <div class="flex items-center justify-between pt-1">

@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { locale, t } from '$lib/i18n/index.ts';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
 
   interface PlaneSettings {
     enabled: boolean;
@@ -184,16 +185,7 @@
           <div class="settings-text">{t('settingsPlane.enabledLabel')}</div>
           <div class="settings-muted">{t('settingsPlane.enabledHint')}</div>
         </div>
-        <button
-          type="button"
-          on:click={onEnabledToggle}
-          class="switch-track {config.plane?.enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-          role="switch"
-          aria-label={t('settingsPlane.enabledLabel')}
-          aria-checked={config.plane?.enabled}
-        >
-          <span class="switch-thumb {config.plane?.enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+        <Toggle size="sm" toggled={config.plane?.enabled} labelText={t('settingsPlane.enabledLabel')} hideLabel={true} on:toggle={onEnabledToggle} />
       </div>
     </div>
 
@@ -255,16 +247,7 @@
           <div class="settings-text">{t('settingsPlane.allowInsecureLabel')}</div>
           <div class="settings-muted">{t('settingsPlane.allowInsecureHint')}</div>
         </div>
-        <button
-          type="button"
-          on:click={onAllowInsecureToggle}
-          class="switch-track {config.plane?.allow_insecure_http ? 'bg-amber-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-          role="switch"
-          aria-label={t('settingsPlane.allowInsecureLabel')}
-          aria-checked={config.plane?.allow_insecure_http}
-        >
-          <span class="switch-thumb {config.plane?.allow_insecure_http ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+        <Toggle size="sm" toggled={config.plane?.allow_insecure_http} labelText={t('settingsPlane.allowInsecureLabel')} hideLabel={true} on:toggle={onAllowInsecureToggle} />
       </div>
     </div>
 

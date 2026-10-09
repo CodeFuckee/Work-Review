@@ -10,6 +10,7 @@
   } from '../gitlabAuthorPicker.ts';
   import GitlabProjectPicker from './GitlabProjectPicker.svelte';
   import GitlabAuthorPicker from './GitlabAuthorPicker.svelte';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
 
   interface GitlabSettings {
     url: string | null;
@@ -309,16 +310,7 @@
           <div class="settings-text">{t('settingsGitlab.enabledLabel')}</div>
           <div class="settings-muted">{t('settingsGitlab.enabledHint')}</div>
         </div>
-        <button
-          type="button"
-          on:click={onEnabledToggle}
-          class="switch-track {gitlab().report_enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-          role="switch"
-          aria-label={t('settingsGitlab.enabledLabel')}
-          aria-checked={gitlab().report_enabled}
-        >
-          <span class="switch-thumb {gitlab().report_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+        <Toggle size="sm" toggled={gitlab().report_enabled} labelText={t('settingsGitlab.enabledLabel')} hideLabel={true} on:toggle={onEnabledToggle} />
       </div>
     </div>
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n/index.ts';
   import { createEventDispatcher } from 'svelte';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
 
   type EnabledKey =
     | 'feishu_bot_enabled'
@@ -69,17 +70,7 @@
         <span class="settings-chip-success">{t(enabledLabelKey)}</span>
       {/if}
     </div>
-    <button
-      type="button"
-      on:click={toggle}
-      disabled={saving}
-      class="switch-track {config[enabledKey] ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'} {saving ? 'opacity-60 cursor-not-allowed' : ''}"
-      role="switch"
-      aria-label={t(titleKey)}
-      aria-checked={config[enabledKey]}
-    >
-      <span class="switch-thumb {config[enabledKey] ? 'translate-x-5' : 'translate-x-0'}"></span>
-    </button>
+    <Toggle size="sm" toggled={config[enabledKey]} labelText={t(titleKey)} hideLabel={true} disabled={saving} on:toggle={toggle} />
   </div>
   {#if config[enabledKey]}
     <div class="mt-2 space-y-2">

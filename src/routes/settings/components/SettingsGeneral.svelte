@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { formatDurationLocalized, locale, t } from '$lib/i18n/index.ts';
   import CollapsibleSection from '../../../lib/components/CollapsibleSection.svelte';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
 
   interface WorkTimeSegment {
     start_hour: number;
@@ -477,16 +478,7 @@
       <div class="space-y-2.5">
         <div class="settings-row">
           <span class="settings-text">{t('settingsGeneral.autoStart')}</span>
-          <button
-            type="button"
-            on:click={toggleAutoStart}
-            class="switch-track {autoStartEnabled ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-            role="switch"
-            aria-label={t('settingsGeneral.autoStart')}
-            aria-checked={autoStartEnabled}
-          >
-            <span class="switch-thumb {autoStartEnabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-          </button>
+          <Toggle size="sm" toggled={autoStartEnabled} labelText={t('settingsGeneral.autoStart')} hideLabel={true} on:toggle={toggleAutoStart} />
         </div>
 
         {#if autoStartEnabled}
@@ -513,16 +505,7 @@
 
         <div class="settings-row">
           <span class="settings-text">{t('settingsGeneral.hideDockIcon')}</span>
-          <button
-            type="button"
-            on:click={toggleDockIcon}
-            class="switch-track {config.hide_dock_icon ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-            role="switch"
-            aria-label={t('settingsGeneral.hideDockIcon')}
-            aria-checked={config.hide_dock_icon}
-          >
-            <span class="switch-thumb {config.hide_dock_icon ? 'translate-x-5' : 'translate-x-0'}"></span>
-          </button>
+          <Toggle size="sm" toggled={config.hide_dock_icon} labelText={t('settingsGeneral.hideDockIcon')} hideLabel={true} on:toggle={toggleDockIcon} />
         </div>
 
         <div class="settings-row">
@@ -530,16 +513,7 @@
             <span class="settings-text">{t('settingsGeneral.lightweightMode')}</span>
             <p class="settings-muted mt-0.5">{t('settingsGeneral.lightweightModeDescription')}</p>
           </div>
-          <button
-            type="button"
-            on:click={toggleLightweightMode}
-            class="switch-track {config.lightweight_mode ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-            role="switch"
-            aria-label={t('settingsGeneral.lightweightMode')}
-            aria-checked={config.lightweight_mode}
-          >
-            <span class="switch-thumb {config.lightweight_mode ? 'translate-x-5' : 'translate-x-0'}"></span>
-          </button>
+          <Toggle size="sm" toggled={config.lightweight_mode} labelText={t('settingsGeneral.lightweightMode')} hideLabel={true} on:toggle={toggleLightweightMode} />
         </div>
       </div>
     </div>

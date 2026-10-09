@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { t } from '$lib/i18n/index.ts';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
 
   interface FileMonitorSettings {
     enabled: boolean;
@@ -88,24 +89,7 @@
       <p class="settings-text">{t('settingsFileMonitor.enabled')}</p>
       <p class="settings-muted mt-1">{t('settingsFileMonitor.enabledDesc')}</p>
     </div>
-    <button
-      type="button"
-      role="switch"
-      aria-checked={fileMonitor().enabled}
-      title={t('settingsFileMonitor.enabled')}
-      on:click={toggleEnabled}
-      class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 {fileMonitor()
-        .enabled
-        ? 'bg-blue-500'
-        : 'bg-slate-300 dark:bg-[#484f58]'}"
-    >
-      <span
-        class="pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 dark:shadow-none {fileMonitor()
-          .enabled
-          ? 'translate-x-[18px]'
-          : 'translate-x-[2px]'}"
-      ></span>
-    </button>
+    <Toggle size="sm" toggled={fileMonitor().enabled} labelText={t('settingsFileMonitor.enabled')} hideLabel={true} on:toggle={toggleEnabled} />
   </div>
 
   <div class="settings-field">

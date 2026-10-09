@@ -2,6 +2,7 @@
   import { t } from '$lib/i18n/index.ts';
   import { invoke } from '@tauri-apps/api/core';
   import { createEventDispatcher } from 'svelte';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
 
   interface LocalApiConfig {
     localhost_api_enabled: boolean;
@@ -86,17 +87,7 @@
         <span class="settings-chip-neutral">{t('nodeGatewayPage.localhostDisabled')}</span>
       {/if}
     </div>
-    <button
-      type="button"
-      on:click={toggle}
-      disabled={saving}
-      class="switch-track {config.localhost_api_enabled ? 'bg-primary-500' : 'bg-slate-300 dark:bg-[#484f58]'} {saving ? 'opacity-60 cursor-not-allowed' : ''}"
-      role="switch"
-      aria-label={t('nodeGatewayPage.localApi')}
-      aria-checked={config.localhost_api_enabled}
-    >
-      <span class="switch-thumb {config.localhost_api_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-    </button>
+    <Toggle size="sm" toggled={config.localhost_api_enabled} labelText={t('nodeGatewayPage.localApi')} hideLabel={true} disabled={saving} on:toggle={toggle} />
   </div>
 
   {#if config.localhost_api_enabled}

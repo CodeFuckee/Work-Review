@@ -6,6 +6,7 @@
   import { locale, t } from '$lib/i18n/index.ts';
   import type { Locale } from '$lib/i18n/index.ts';
   import AssistantMemoryManager from './AssistantMemoryManager.svelte';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
 
   type AiMode = 'local' | 'summary';
   type SemanticStatus = 'idle' | 'building' | 'ready' | 'failed';
@@ -1130,19 +1131,10 @@
           </span>
           <p class="settings-muted mt-0.5">{t('settingsAI.webAccess.hint')}</p>
         </div>
-        <button
-          type="button"
-          class="switch-track shrink-0 {config.assistant_web_access_enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-          role="switch"
-          aria-label={t('settingsAI.webAccess.title')}
-          aria-checked={config.assistant_web_access_enabled}
-          on:click={() => {
+        <Toggle size="sm" toggled={config.assistant_web_access_enabled} labelText={t('settingsAI.webAccess.title')} hideLabel={true} on:toggle={() => {
             config.assistant_web_access_enabled = !config.assistant_web_access_enabled;
             handleChange();
-          }}
-        >
-          <span class="switch-thumb {config.assistant_web_access_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+          }} />
       </label>
 
       {#if config.assistant_web_access_enabled}
@@ -1215,19 +1207,10 @@
           </span>
           <p class="settings-muted mt-0.5">{t('settingsAI.semanticMemory.hint')}</p>
         </div>
-        <button
-          type="button"
-          class="switch-track shrink-0 {config.memory_semantic_enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-          role="switch"
-          aria-label={t('settingsAI.semanticMemory.title')}
-          aria-checked={config.memory_semantic_enabled}
-          on:click={() => {
+        <Toggle size="sm" toggled={config.memory_semantic_enabled} labelText={t('settingsAI.semanticMemory.title')} hideLabel={true} on:toggle={() => {
             config.memory_semantic_enabled = !config.memory_semantic_enabled;
             handleChange();
-          }}
-        >
-          <span class="switch-thumb {config.memory_semantic_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+          }} />
       </label>
 
       {#if config.memory_semantic_enabled}
@@ -1350,19 +1333,10 @@
             </span>
             <p class="settings-muted mt-0.5">{t('settingsAI.assistantMemory.hint')}</p>
           </div>
-          <button
-            type="button"
-            class="switch-track shrink-0 {config.assistant_memory_enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-            role="switch"
-            aria-label={t('settingsAI.assistantMemory.enabled')}
-            aria-checked={config.assistant_memory_enabled}
-            on:click={() => {
+          <Toggle size="sm" toggled={config.assistant_memory_enabled} labelText={t('settingsAI.assistantMemory.enabled')} hideLabel={true} on:toggle={() => {
               config.assistant_memory_enabled = !config.assistant_memory_enabled;
               handleChange();
-            }}
-          >
-            <span class="switch-thumb {config.assistant_memory_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-          </button>
+            }} />
         </label>
 
         <AssistantMemoryManager enabled={Boolean(config.assistant_memory_enabled)} {t} />
