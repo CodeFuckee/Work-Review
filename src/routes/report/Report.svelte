@@ -24,6 +24,11 @@
   } from './reportSections.ts';
   import { createReportGenerationOwnership, createReportRequestSnapshot, shiftIsoDate } from './reportDateNavigation.ts';
   import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
+  import OverflowMenu from 'carbon-components-svelte/src/OverflowMenu/OverflowMenu.svelte';
+  import OverflowMenuItem from 'carbon-components-svelte/src/OverflowMenu/OverflowMenuItem.svelte';
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import SettingsIcon from 'carbon-icons-svelte/lib/Settings.svelte';
+  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
 
   interface DailyReport {
     date: string;
@@ -1028,99 +1033,50 @@
           {/key}
         </div>
         {#if report}
-          <div class="report-export-menu">
-            <button
-              type="button"
-              class="page-action-secondary min-h-9 px-3.5 py-1.5"
-              aria-haspopup="menu"
-              aria-expanded={showExportMenu}
-              on:click={() => (showExportMenu = !showExportMenu)}
-            >
-              {#if exportInProgress}
-                <div class="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent"></div>
-                {t('report.exporting')}
-              {:else}
-                {t('report.exportMenu')}
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              {/if}
-            </button>
-            {#if showExportMenu}
-              <button
-                type="button"
-                class="report-export-menu-backdrop"
-                aria-label={t('common.cancel')}
-                on:click={() => (showExportMenu = false)}
-              ></button>
-              <div class="report-export-menu-panel" role="menu">
-                <button
-                  type="button"
-                  class="report-export-menu-item"
-                  role="menuitem"
-                  on:click={handleExportCurrent}
-                  disabled={exportInProgress}
-                >
-                  <span class="report-export-menu-item-title">{t('report.exportMenuCurrent')}</span>
-                  <span class="report-export-menu-item-sub">{config?.daily_report_export_dir || t('report.exportWithoutDefaultDir')}</span>
-                </button>
-                <button
-                  type="button"
-                  class="report-export-menu-item"
-                  role="menuitem"
-                  on:click={openBatchExportModal}
-                  disabled={batchExporting}
-                >
-                  <span class="report-export-menu-item-title">{t('report.exportMenuRange')}</span>
-                  <span class="report-export-menu-item-sub">{t('report.batchExportTitle')}</span>
-                </button>
-                <button
-                  type="button"
-                  class="report-export-menu-item"
-                  role="menuitem"
-                  on:click={copyReportContent}
-                >
-                  <span class="report-export-menu-item-title">{t('report.exportMenuCopy')}</span>
-                  <span class="report-export-menu-item-sub">{t('report.exportMenuCopyHint')}</span>
-                </button>
-              </div>
-            {/if}
-          </div>
+          <OverflowMenu direction="bottom" flipped={false} disabled={exportInProgress} iconDescription={exportInProgress ? t('report.exporting') : t('report.exportMenu')}>
+              <OverflowMenuItem
+                on:click={handleExportCurrent}
+                disabled={exportInProgress}
+              >
+                <span class="report-menu-title">{t('report.exportMenuCurrent')}</span>
+                <span class="report-menu-sub">{config?.daily_report_export_dir || t('report.exportWithoutDefaultDir')}</span>
+              </OverflowMenuItem>
+              <OverflowMenuItem
+                on:click={openBatchExportModal}
+                disabled={batchExporting}
+              >
+                <span class="report-menu-title">{t('report.exportMenuRange')}</span>
+                <span class="report-menu-sub">{t('report.batchExportTitle')}</span>
+              </OverflowMenuItem>
+              <OverflowMenuItem on:click={copyReportContent}>
+                <span class="report-menu-title">{t('report.exportMenuCopy')}</span>
+                <span class="report-menu-sub">{t('report.exportMenuCopyHint')}</span>
+              </OverflowMenuItem>
+            </OverflowMenu>
         {/if}
         {#if config?.ai_mode === 'summary' || hiddenBlocks.length > 0}
-          <button
-            type="button"
-            class="page-action-secondary min-h-9 px-3 py-1.5"
-            title={t('report.generateSettings')}
+          <Button
+            kind="ghost"
+            size="small"
+            icon={SettingsIcon}
             aria-expanded={showGenerateDrawer}
             on:click={() => (showGenerateDrawer = !showGenerateDrawer)}
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            {t('report.generateSettings')}
-            {#if hiddenBlocks.length > 0}
-              <span class="ml-1 rounded-full bg-slate-200 dark:bg-[#484f58] px-1.5 text-[10px] font-semibold">{hiddenBlocks.length}</span>
-            {/if}
-          </button>
+            {t('report.generateSettings')}{#if hiddenBlocks.length > 0}&nbsp;({hiddenBlocks.length}){/if}
+          </Button>
         {/if}
         {#if report}
-          <button
-            class="page-action-warn"
+          <Button
+            kind="primary"
+            size="small"
+            loading={generating}
+            loadingDescription={t('report.generating')}
+            icon={RenewIcon}
             on:click={() => generateReport(true)}
             disabled={generating}
           >
-            {#if generating}
-              <div class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-              {t('report.generating')}
-            {:else}
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              {t('report.regenerate')}
-            {/if}
-          </button>
+            {generating ? t('report.generating') : t('report.regenerate')}
+          </Button>
         {/if}
       </div>
     </div>
