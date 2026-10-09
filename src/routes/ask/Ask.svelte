@@ -922,6 +922,9 @@
       chatBody.scrollTop = chatBody.scrollHeight;
     }
   });
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
+  import AddIcon from 'carbon-icons-svelte/lib/Add.svelte';
 </script>
 
 <svelte:window
@@ -951,31 +954,18 @@
       </div>
 
       <div class="ask-header-actions">
-        <button
-          type="button"
-          class="ask-header-action ask-header-history"
-          on:click={openConversationDrawer}
-          aria-label={t('ask.conversationHistory')}
-          title={t('ask.conversationHistory')}
-        >
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 8v4l2.5 1.5M4.8 6.8A8 8 0 1 1 4 15.5M4.8 6.8V3.5m0 3.3H8" />
-          </svg>
-          <span>{t('ask.conversationHistory')}</span>
-        </button>
-        <button
-          type="button"
-          class="ask-header-action ask-header-action-primary ask-header-new"
+        <Button kind="ghost" size="small" icon={RenewIcon} on:click={openConversationDrawer}>
+          {t('ask.conversationHistory')}
+        </Button>
+        <Button
+          kind="primary"
+          size="small"
+          icon={AddIcon}
           on:click={clearConversation}
           disabled={sending || (!hasConversation && conversationId == null)}
-          aria-label={t('ask.newConversation')}
-          title={t('ask.newConversation')}
         >
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9" d="M12 5v14M5 12h14" />
-          </svg>
-          <span>{t('ask.newConversation')}</span>
-        </button>
+          {t('ask.newConversation')}
+        </Button>
       </div>
     </div>
 

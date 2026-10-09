@@ -63,7 +63,8 @@ test('Ask 超时应读取配置并在到期后取消后端请求', () => {
 test('Ask 生成期间禁止清空或删除会话，但仍允许打开历史抽屉', () => {
   const clearConversation = askSource.match(/async function clearConversation\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
   const deleteConversation = askSource.match(/async function deleteConversation\(id(?:\s*:[^)]+)?\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
-  const headerNewButton = askSource.match(/class="ask-header-action ask-header-action-primary ask-header-new"[\s\S]*?<\/button>/)?.[0] ?? '';
+  // Carbon 迁移后头部新建按钮为 <Button>，disabled 语义不变
+  const headerNewButton = askSource.match(/<Button[\s\S]*?on:click=\{clearConversation\}[\s\S]*?\/>/)?.[0] ?? '';
   const drawerNewButton = askSource.match(/class="rounded-lg px-2\.5 py-1 text-xs[\s\S]*?<\/button>/)?.[0] ?? '';
   const deleteButton = askSource.match(/class="ask-history-delete"[\s\S]*?<\/button>/)?.[0] ?? '';
 
