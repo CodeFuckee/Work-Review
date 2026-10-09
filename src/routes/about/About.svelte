@@ -4,6 +4,12 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { locale, t } from '$lib/i18n/index.ts';
   import { runUpdateFlow } from '$lib/utils/updater.ts';
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  import Tag from 'carbon-components-svelte/src/Tag/Tag.svelte';
+  import InlineLoading from 'carbon-components-svelte/src/InlineLoading/InlineLoading.svelte';
+  import FolderIcon from 'carbon-icons-svelte/lib/Folder.svelte';
+  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
 
   interface UpdateSettings {
     autoCheck: boolean;
@@ -35,15 +41,16 @@
     }
   });
 
-  async function toggleAutoCheck() {
-    autoCheckUpdate = !autoCheckUpdate;
+  async function setAutoCheck(next: boolean) {
+    const previous = autoCheckUpdate;
+    autoCheckUpdate = next;
     try {
       const settings = await invoke<UpdateSettings>('get_update_settings');
       settings.autoCheck = autoCheckUpdate;
       await invoke('save_update_settings', { settings });
     } catch (e) {
       console.error('保存更新设置失败:', e);
-      autoCheckUpdate = !autoCheckUpdate;
+      autoCheckUpdate = previous;
     }
   }
 
@@ -82,119 +89,223 @@
   });
 </script>
 
-<div class="page-shell about-editorial-shell" data-locale={currentLocale}>
-  <div class="page-header page-axis-operation">
-    <div class="page-title-group">
-      <div class="page-title-badge">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="8.5" stroke-width="1.8" />
-          <path stroke-linecap="round" stroke-width="1.8" d="M12 10.5v5" />
-          <circle cx="12" cy="7.5" r=".8" fill="currentColor" stroke="none" />
-        </svg>
-      </div>
-      <div class="page-title-copy">
-        <h2>{t('about.pageTitle')}</h2>
-        <p>{t('about.pageSubtitle')}</p>
-      </div>
-    </div>
-  </div>
+<div class="about-carbon-shell" data-locale={currentLocale}>
+  <div class="about-carbon-grid">
+    <h2 class="cds--type-heading-04 about-page-title">{t('about.pageTitle')}</h2>
+    <p class="cds--type-body-short-01 about-page-subtitle">{t('about.pageSubtitle')}</p>
 
-  <div class="w-full about-minimal-shell page-axis-reading">
-    <section class="page-card about-brand-card">
-      <div class="about-brand-identity flex flex-col items-center">
-        <div class="about-brand-mark">
-          <img src="/icons/256x256.png" alt={t('common.appName')} class="h-16 w-16 rounded-lg object-cover" />
-        </div>
-
+    <section class="about-card">
+      <div class="about-brand">
+        <img src="/icons/256x256.png" alt={t('common.appName')} class="about-brand-logo" />
         <div class="about-brand-copy">
-          <div class="about-brand-title-row flex items-center justify-center">
-            <h1 class="about-brand-title">{t('common.appName')}</h1>
-            <span class="about-version-badge">v{appVersion}</span>
+          <div class="about-brand-title-row">
+            <h1 class="cds--type-heading-03">{t('common.appName')}</h1>
+            <Tag type="blue" size="sm">v{appVersion}</Tag>
           </div>
           <p class="about-brand-description">{t('about.description')}</p>
         </div>
       </div>
 
-      <div class="about-action-row mt-6">
-        <button type="button" on:click={openDataDir} class="page-action-secondary min-h-10 px-4 py-2">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-          <span class="leading-none">{t('about.openDataDir')}</span>
-        </button>
-      </div>
+      <Button kind="tertiary" icon={FolderIcon} on:click={openDataDir}>{t('about.openDataDir')}</Button>
 
-      <div class="about-update-grid mt-7 grid grid-cols-1 pt-5 sm:grid-cols-3">
-        <div class="about-update-unit flex min-h-20 flex-col items-center justify-center gap-2 px-4 py-3">
-          <span class="text-xs font-medium text-slate-400 dark:text-[#7d8590]">{t('about.currentVersionTag')}</span>
-          <strong class="text-sm font-semibold text-slate-700 dark:text-[#c9d1d9]">v{appVersion}</strong>
+      <div class="about-update-grid">
+        <div class="about-update-unit">
+          <span class="about-update-label">{t('about.currentVersionTag')}</span>
+          <strong class="about-update-value">v{appVersion}</strong>
         </div>
 
-        <div class="about-update-unit flex min-h-20 flex-col items-center justify-center gap-2 px-4 py-3">
-          <span class="text-xs font-medium text-slate-400 dark:text-[#7d8590]">{t('about.autoCheckUpdate')}</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoCheckUpdate}
-            aria-label={t('about.autoCheckUpdate')}
-            title={t('about.autoCheckUpdate')}
-            on:click={toggleAutoCheck}
-            class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 {autoCheckUpdate ? 'bg-blue-500' : 'bg-slate-300 dark:bg-[#484f58]'}"
-          >
-            <span class="pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 dark:shadow-none {autoCheckUpdate ? 'translate-x-[18px]' : 'translate-x-[2px]'}"></span>
-          </button>
+        <div class="about-update-unit">
+          <span class="about-update-label">{t('about.autoCheckUpdate')}</span>
+          <Toggle
+            size="sm"
+            toggled={autoCheckUpdate}
+            labelText={t('about.autoCheckUpdate')}
+            hideLabel={true}
+            labelA=""
+            labelB=""
+            on:toggle={(e) => setAutoCheck(e.detail.toggled)}
+          />
         </div>
 
-        <div class="about-update-unit flex min-h-20 flex-col items-center justify-center gap-2 px-4 py-3">
-          <span class="text-xs font-medium text-slate-400 dark:text-[#7d8590]">{t('about.updateStatus')}</span>
-          <button
-            type="button"
-            on:click={checkForUpdates}
+        <div class="about-update-unit">
+          <span class="about-update-label">{t('about.updateStatus')}</span>
+          <Button
+            kind="ghost"
+            size="small"
+            icon={RenewIcon}
             disabled={isCheckingUpdate}
-            class="page-control-btn min-h-9 px-3 disabled:opacity-50"
+            on:click={checkForUpdates}
           >
-            {#if isCheckingUpdate}
-              <svg class="h-3.5 w-3.5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              <span class="leading-none">{t('about.checkingUpdates')}</span>
-            {:else}
-              <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-              <span class="leading-none">{t('about.checkUpdates')}</span>
-            {/if}
-          </button>
+            {#if isCheckingUpdate}{t('about.checkingUpdates')}{:else}{t('about.checkUpdates')}{/if}
+          </Button>
         </div>
       </div>
 
       {#if updateStatus}
-        <div class="about-update-feedback mt-4 text-center" role="status" aria-live="polite">
-          <p class="text-sm text-slate-500 dark:text-[#7d8590]">{updateStatus}</p>
+        <div class="about-update-feedback" role="status" aria-live="polite">
+          <InlineLoading description={updateStatus} />
         </div>
       {/if}
     </section>
 
-    <section class="page-card about-principles-card">
-      <h2 class="about-principles-title page-section-title text-center">{t('about.productPrinciplesTitle')}</h2>
+    <section class="about-card">
+      <h2 class="cds--type-heading-03 about-principles-title">{t('about.productPrinciplesTitle')}</h2>
       <div class="about-trust-grid">
         <article class="about-trust-card">
           <span class="about-trust-kicker">01</span>
-          <h3 class="about-trust-title">{t('about.localFirstTitle')}</h3>
+          <h3 class="cds--type-heading-02">{t('about.localFirstTitle')}</h3>
           <p class="about-trust-copy">{t('about.localFirstCopy')}</p>
         </article>
         <article class="about-trust-card">
           <span class="about-trust-kicker">02</span>
-          <h3 class="about-trust-title">{t('about.timelineTrustTitle')}</h3>
+          <h3 class="cds--type-heading-02">{t('about.timelineTrustTitle')}</h3>
           <p class="about-trust-copy">{t('about.timelineTrustCopy')}</p>
         </article>
         <article class="about-trust-card">
           <span class="about-trust-kicker">03</span>
-          <h3 class="about-trust-title">{t('about.reportTrustTitle')}</h3>
+          <h3 class="cds--type-heading-02">{t('about.reportTrustTitle')}</h3>
           <p class="about-trust-copy">{t('about.reportTrustCopy')}</p>
         </article>
       </div>
     </section>
 
-    <section class="page-card about-tech-stack">
-      <span class="about-tech-item">Tauri 2</span>
-      <span class="about-tech-item">Svelte</span>
-      <span class="about-tech-item">Rust</span>
-      <span class="about-tech-item">SQLite</span>
+    <section class="about-tech-stack">
+      <Tag type="outline" size="sm">Tauri 2</Tag>
+      <Tag type="outline" size="sm">Svelte 5</Tag>
+      <Tag type="outline" size="sm">Carbon Design</Tag>
+      <Tag type="outline" size="sm">Rust</Tag>
+      <Tag type="outline" size="sm">SQLite</Tag>
     </section>
   </div>
 </div>
+
+<style>
+  .about-carbon-shell {
+    min-height: 100%;
+    background: var(--cds-background);
+    color: var(--cds-text-primary);
+    padding: 2rem clamp(1rem, 4vw, 3rem);
+  }
+
+  .about-carbon-grid {
+    max-width: 56rem;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .about-page-subtitle {
+    color: var(--cds-text-secondary);
+    margin-top: -0.75rem;
+  }
+
+  .about-card {
+    background: var(--cds-layer);
+    border: 1px solid var(--cds-border-subtle);
+    border-radius: 8px;
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .about-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    text-align: center;
+  }
+
+  .about-brand-logo {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 12px;
+    object-fit: cover;
+  }
+
+  .about-brand-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .about-brand-description {
+    color: var(--cds-text-secondary);
+    font-size: 0.875rem;
+    margin-top: 0.375rem;
+  }
+
+  .about-update-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.75rem;
+    border-top: 1px solid var(--cds-border-subtle);
+    padding-top: 1.25rem;
+  }
+
+  .about-update-unit {
+    display: flex;
+    min-height: 4.5rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .about-update-label {
+    font-size: 0.75rem;
+    color: var(--cds-text-secondary);
+  }
+
+  .about-update-value {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .about-update-feedback {
+    display: flex;
+    justify-content: center;
+  }
+
+  .about-principles-title {
+    text-align: center;
+  }
+
+  .about-trust-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: 0.875rem;
+  }
+
+  .about-trust-card {
+    background: var(--cds-layer-alternate);
+    border: 1px solid var(--cds-border-subtle);
+    border-radius: 8px;
+    padding: 1.125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .about-trust-kicker {
+    font-size: 0.6875rem;
+    letter-spacing: 0.08em;
+    color: var(--cds-text-secondary);
+  }
+
+  .about-trust-copy {
+    font-size: 0.8125rem;
+    color: var(--cds-text-secondary);
+    line-height: 1.6;
+  }
+
+  .about-tech-stack {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+</style>

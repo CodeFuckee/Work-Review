@@ -17,6 +17,13 @@
     findLoginValidationError,
     findRegisterValidationError,
   } from './authLogic.ts';
+  import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
+  import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
+  import TextInput from 'carbon-components-svelte/src/TextInput/TextInput.svelte';
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import InlineNotification from 'carbon-components-svelte/src/Notification/InlineNotification.svelte';
+  import Accordion from 'carbon-components-svelte/src/Accordion/Accordion.svelte';
+  import AccordionItem from 'carbon-components-svelte/src/Accordion/AccordionItem.svelte';
 
   type Mode = 'login' | 'register';
 
@@ -27,7 +34,6 @@
   let name = '';
   let department = '';
   let serverUrl = getAdminUrl();
-  let showServerSettings = false;
   let submitting = false;
   let errorMessage = '';
   $: currentLocale = $locale;
@@ -121,125 +127,136 @@
   }
 </script>
 
-<div class="flex h-full min-h-0 items-center justify-center overflow-auto bg-gradient-to-br from-slate-100 via-indigo-50 to-sky-100 px-4 py-8 dark:from-[#0d1117] dark:via-[#10161d] dark:to-[#0d1420]">
-  <div class="w-full max-w-sm rounded-xl border border-slate-200 bg-white/90 p-7 shadow-xl backdrop-blur dark:border-[#2d3843] dark:bg-[#10161d]/90">
-    <div class="flex flex-col items-center gap-2 text-center">
-      <img src="/icons/256x256.png" alt={t('common.appName')} class="h-14 w-14 rounded-xl object-cover" />
-      <h1 class="text-lg font-semibold text-slate-900 dark:text-[#e6edf3]">{t('common.appName')}</h1>
-      <p class="text-xs text-slate-500 dark:text-slate-400">
-        {mode === 'login' ? t('auth.loginSubtitle') : t('auth.registerSubtitle')}
-      </p>
-    </div>
+<div class="auth-carbon-frame">
+  <div class="auth-carbon-card">
+    <img src="/icons/256x256.png" alt={t('common.appName')} class="auth-carbon-logo" />
+    <h1 class="auth-carbon-title">{t('common.appName')}</h1>
+    <p class="auth-carbon-subtitle">
+      {mode === 'login' ? t('auth.loginSubtitle') : t('auth.registerSubtitle')}
+    </p>
 
-    <div class="mt-5 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-[#1a222c]" role="tablist" aria-label={t('auth.loginTab')}>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={mode === 'login'}
-        on:click={() => switchMode('login')}
-        class="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {mode === 'login'
-          ? 'bg-white text-slate-900 shadow-sm dark:bg-[#2d3843] dark:text-[#e6edf3]'
-          : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}"
-      >
-        {t('auth.loginTab')}
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={mode === 'register'}
-        on:click={() => switchMode('register')}
-        class="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {mode === 'register'
-          ? 'bg-white text-slate-900 shadow-sm dark:bg-[#2d3843] dark:text-[#e6edf3]'
-          : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}"
-      >
-        {t('auth.registerTab')}
-      </button>
-    </div>
+    <ContentSwitcher
+      selectedIndex={mode === 'login' ? 0 : 1}
+      on:change={(e) => switchMode(e.detail === 0 ? 'login' : 'register')}
+    >
+      <Switch text={t('auth.loginTab')} id="login" />
+      <Switch text={t('auth.registerTab')} id="register" />
+    </ContentSwitcher>
 
-    <form class="mt-5 space-y-3" on:submit|preventDefault={submit}>
-      <input
+    <form class="auth-carbon-form" on:submit|preventDefault={submit}>
+      <TextInput
         bind:value={userName}
+        labelText={t('auth.accountPlaceholder')}
         placeholder={t('auth.accountPlaceholder')}
         autocomplete="username"
-        spellcheck="false"
-        class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
+        spellcheck={false}
       />
 
       {#if mode === 'register'}
-        <input
+        <TextInput
           bind:value={name}
+          labelText={t('auth.namePlaceholder')}
           placeholder={t('auth.namePlaceholder')}
           autocomplete="name"
-          class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
         />
       {/if}
 
-      <input
+      <TextInput
         type="password"
         bind:value={password}
+        labelText={t('auth.passwordPlaceholder')}
         placeholder={t('auth.passwordPlaceholder')}
         autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
-        class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
       />
 
       {#if mode === 'register'}
-        <input
+        <TextInput
           type="password"
           bind:value={confirmPassword}
+          labelText={t('auth.confirmPasswordPlaceholder')}
           placeholder={t('auth.confirmPasswordPlaceholder')}
           autocomplete="new-password"
-          class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
         />
-        <input
+        <TextInput
           bind:value={department}
+          labelText={t('auth.departmentPlaceholder')}
           placeholder={t('auth.departmentPlaceholder')}
-          class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
         />
       {/if}
 
       {#if errorMessage}
-        <p class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300" role="alert">
-          {errorMessage}
-        </p>
+        <InlineNotification kind="error" title={errorMessage} hideCloseButton={true} timeout={0} />
       {/if}
 
-      <button
-        type="submit"
-        disabled={submitting}
-        class="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-600 disabled:opacity-60"
-      >
-        {#if submitting}
-          <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          {mode === 'login' ? t('auth.loggingIn') : t('auth.registering')}
-        {:else}
-          {mode === 'login' ? t('auth.loginAction') : t('auth.registerAction')}
-        {/if}
-      </button>
+      <Button type="submit" fullWidth={true} loading={submitting}>
+        {mode === 'login' ? t('auth.loginAction') : t('auth.registerAction')}
+      </Button>
     </form>
 
-    <div class="mt-4 border-t border-slate-200 pt-3 dark:border-[#2d3843]">
-      <button
-        type="button"
-        on:click={() => (showServerSettings = !showServerSettings)}
-        class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-        aria-expanded={showServerSettings}
-      >
-        <svg class="h-3 w-3 transition-transform {showServerSettings ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-        </svg>
-        {t('auth.serverToggle')}
-      </button>
-      {#if showServerSettings}
-        <input
+    <Accordion align="start" size="sm">
+      <AccordionItem title={t('auth.serverToggle')}>
+        <TextInput
           bind:value={serverUrl}
+          labelText={t('auth.serverToggle')}
           placeholder={t('auth.serverPlaceholder')}
-          spellcheck="false"
-          class="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
+          spellcheck={false}
         />
-      {/if}
-    </div>
+      </AccordionItem>
+    </Accordion>
   </div>
 </div>
+
+<style>
+  .auth-carbon-frame {
+    display: flex;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    background: var(--cds-background);
+  }
+
+  .auth-carbon-card {
+    width: 100%;
+    max-width: 24rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 2rem 1.75rem;
+    background: var(--cds-layer);
+    border: 1px solid var(--cds-border-subtle);
+    border-radius: 8px;
+  }
+
+  .auth-carbon-logo {
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 12px;
+    object-fit: cover;
+  }
+
+  .auth-carbon-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--cds-text-primary);
+  }
+
+  .auth-carbon-subtitle {
+    font-size: 0.75rem;
+    color: var(--cds-text-secondary);
+  }
+
+  .auth-carbon-form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+    margin-top: 0.5rem;
+  }
+
+  .auth-carbon-card :global(.bx--accordion) {
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+</style>

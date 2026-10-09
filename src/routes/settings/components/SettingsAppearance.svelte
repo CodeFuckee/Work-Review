@@ -3,11 +3,19 @@
   import { invoke } from '@tauri-apps/api/core';
   import { showToast } from '$lib/stores/toast.ts';
   import { locale, t } from '$lib/i18n/index.ts';
+  import { cache } from '$lib/stores/cache.ts';
+  import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
+  import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
+  import Slider from 'carbon-components-svelte/src/Slider/Slider.svelte';
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import RadioButtonGroup from 'carbon-components-svelte/src/RadioButtonGroup/RadioButtonGroup.svelte';
+  import RadioButton from 'carbon-components-svelte/src/RadioButton/RadioButton.svelte';
+  import ImageIcon from 'carbon-icons-svelte/lib/Image.svelte';
 
-  type UiVisualStyle = 'a' | 'b' | 'c';
+  type ThemePreference = 'system' | 'light' | 'dark';
 
   interface AppearanceConfig {
-    ui_visual_style: UiVisualStyle;
+    theme?: ThemePreference;
     background_image: string | null;
     background_opacity?: number | null;
     background_blur?: number | null;
@@ -23,32 +31,6 @@
   const dispatch = createEventDispatcher<{ change: AppearanceChangeDetail }>();
   $: currentLocale = $locale;
 
-  let uiVisualStyleSaving = false;
-  const UI_VISUAL_STYLE_OPTIONS: readonly {
-    id: UiVisualStyle;
-    titleKey: string;
-    descriptionKey: string;
-    badgeKey: string;
-  }[] = [
-    {
-      id: 'a',
-      titleKey: 'settingsAppearance.uiStyleATitle',
-      descriptionKey: 'settingsAppearance.uiStyleADesc',
-      badgeKey: 'settingsAppearance.uiStyleABadge',
-    },
-    {
-      id: 'b',
-      titleKey: 'settingsAppearance.uiStyleBTitle',
-      descriptionKey: 'settingsAppearance.uiStyleBDesc',
-      badgeKey: 'settingsAppearance.uiStyleBBadge',
-    },
-    {
-      id: 'c',
-      titleKey: 'settingsAppearance.uiStyleCTitle',
-      descriptionKey: 'settingsAppearance.uiStyleCDesc',
-      badgeKey: 'settingsAppearance.uiStyleCBadge',
-    },
-  ];
   let blurLabels: string[] = [];
   // === 背景图片 ===
   let bgPreview: string | null = null;
@@ -74,32 +56,20 @@
     appearanceDestroyed = true;
   });
 
-  async function selectUiVisualStyle(styleId: UiVisualStyle) {
-    if (uiVisualStyleSaving || config.ui_visual_style === styleId) {
-      return;
-    }
-
-    // 与 Settings.svelte 的归一化默认值保持一致（缺省风格为 'c'）
-    const previousStyle = config.ui_visual_style || 'c';
-    uiVisualStyleSaving = true;
-    config.ui_visual_style = styleId;
+  // 界面主题（跟随系统/浅色/深色）：写 config.theme 并经 cache 回流到 App 壳层的 Carbon 主题桥
+  async function selectTheme(preference: ThemePreference) {
+    const previous = config.theme;
+    if (preference === previous) return;
+    config.theme = preference;
     dispatch('change', { autosaved: true, config });
-    window.dispatchEvent(new CustomEvent('ui-visual-style-changed', {
-      detail: { style: styleId },
-    }));
-
     try {
       await invoke<void>('save_config', { config });
+      cache.setConfig(config as never);
     } catch (e) {
-      config.ui_visual_style = previousStyle;
+      config.theme = previous;
       dispatch('change', { autosaved: true, config });
-      window.dispatchEvent(new CustomEvent('ui-visual-style-changed', {
-        detail: { style: previousStyle },
-      }));
-      console.error('保存界面风格失败:', e);
+      console.error('保存主题设置失败:', e);
       showToast(t('settingsAppearance.uiVisualStyleSaveFailed', { error: e }), 'error');
-    } finally {
-      uiVisualStyleSaving = false;
     }
   }
 
@@ -192,151 +162,180 @@
   }
 </script>
 
-<div class="settings-card" data-locale={currentLocale}>
-  <div class="flex items-start justify-between gap-4">
-    <div>
-      <h3 class="settings-card-title">
-        {t('settingsAppearance.uiVisualStyle')}
-        <span class="ml-1.5 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1 py-px text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-700 align-middle dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">Beta</span>
-      </h3>
-      <p class="settings-muted mt-1">{t('settingsAppearance.uiVisualStyleDesc')}</p>
-    </div>
-    {#if uiVisualStyleSaving}
-      <span class="text-xs text-slate-400 dark:text-[#636c76]">{t('settingsAppearance.syncing')}</span>
-    {/if}
-  </div>
+<div class="appearance-carbon" data-locale={currentLocale}>
+  <!-- 界面主题 -->
+  <section class="appearance-card">
+    <h3 class="cds--type-heading-02">{t('settingsAppearance.uiVisualStyle')}</h3>
+    <p class="appearance-card-desc">{t('settingsAppearance.uiVisualStyleDesc')}</p>
+    <RadioButtonGroup
+      selected={(config.theme as string) || 'system'}
+      on:change={(e) => selectTheme(String(e.detail) as ThemePreference)}
+    >
+      <RadioButton value="system" labelText={t('sidebar.themeTitle.system')} />
+      <RadioButton value="light" labelText={t('sidebar.themeTitle.light')} />
+      <RadioButton value="dark" labelText={t('sidebar.themeTitle.dark')} />
+    </RadioButtonGroup>
+  </section>
 
-  <div class="mt-4 grid gap-3 md:grid-cols-3">
-    {#each UI_VISUAL_STYLE_OPTIONS as option}
-      <button
-        type="button"
-        class="settings-style-option {config.ui_visual_style === option.id ? 'settings-style-option-active' : ''}"
-        on:click={() => selectUiVisualStyle(option.id)}
-        aria-pressed={config.ui_visual_style === option.id}
-      >
-        <div class="settings-style-preview settings-style-preview--{option.id}" aria-hidden="true">
-          <div class="settings-style-preview__sidebar"></div>
-          <div class="settings-style-preview__topbar"></div>
-          <div class="settings-style-preview__metric"></div>
-          <div class="settings-style-preview__chart">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        </div>
-        <div class="mt-3 flex items-center justify-between gap-2">
-          <div class="text-sm font-semibold text-slate-900 dark:text-[#e6edf3]">
-            {t(option.titleKey)}
-          </div>
-          <div class="flex items-center gap-1.5">
-            {#if config.ui_visual_style === option.id}
-              <span class="settings-style-current-mark">
-                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M3.5 8.2L6.5 11L12.5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-                {t('settingsAppearance.uiStyleCurrent')}
-              </span>
-            {/if}
-            <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:bg-[#30363d] dark:text-[#adbac7]">
-              {t(option.badgeKey)}
-            </span>
-          </div>
-        </div>
-        <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-[#7d8590]">
-          {t(option.descriptionKey)}
-        </p>
-        <p class="mt-2 text-[11px] font-medium text-slate-400 dark:text-[#636c76]">
-          {t('settingsAppearance.uiVisualStyleApplyHint')}
-        </p>
-      </button>
-    {/each}
-  </div>
-</div>
+  <!-- 背景图片 -->
+  <section class="appearance-card">
+    <h3 class="cds--type-heading-02">{t('settingsAppearance.backgroundImage')}</h3>
 
-<!-- 背景图片 -->
-<div class="settings-card" data-locale={currentLocale}>
-  <h3 class="settings-card-title">{t('settingsAppearance.backgroundImage')}</h3>
-
-  <div class="settings-section">
-    <!-- 预览 + 上传 -->
-    <div class="flex items-start gap-4">
+    <div class="appearance-bg-row">
       {#if bgPreview}
-        <div class="w-32 h-20 rounded-lg overflow-hidden border border-slate-200 dark:border-[#30363d] flex-shrink-0">
-          <img src={bgPreview} alt={t('settingsAppearance.bgPreviewAlt')} class="w-full h-full object-cover" />
+        <div class="appearance-bg-preview">
+          <img src={bgPreview} alt={t('settingsAppearance.bgPreviewAlt')} />
         </div>
       {:else}
-        <div class="w-32 h-20 rounded-lg border-2 border-dashed border-slate-200 dark:border-[#30363d] flex items-center justify-center flex-shrink-0">
-          <span class="settings-subtle">{t('settingsAppearance.noBackground')}</span>
+        <div class="appearance-bg-empty">
+          <span>{t('settingsAppearance.noBackground')}</span>
         </div>
       {/if}
 
-      <div class="flex-1 settings-field">
-        <label class="settings-action-secondary cursor-pointer">
-          {#if bgUploading}
-            <div class="animate-spin rounded-full h-3 w-3 border-2 border-slate-500 border-t-transparent"></div>
-            {t('common.processing')}
-          {:else}
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+      <div class="appearance-bg-actions">
+        <label class="appearance-upload-label">
+          <Button kind="tertiary" size="small" icon={ImageIcon} loading={bgUploading}>
             {t('settingsAppearance.chooseImage')}
-          {/if}
-          <input type="file" accept="image/*" class="hidden" on:change={handleBgFileSelect} disabled={bgUploading} />
+          </Button>
+          <input type="file" accept="image/*" class="appearance-file-input" on:change={handleBgFileSelect} disabled={bgUploading} />
         </label>
         {#if bgPreview}
-          <button
-            on:click={clearBg}
-            class="settings-link-danger"
-          >
-            {t('settingsAppearance.clearBackground')}
-          </button>
+          <Button kind="ghost" size="small" on:click={clearBg}>{t('settingsAppearance.clearBackground')}</Button>
         {/if}
-        <p class="settings-muted">{t('settingsAppearance.bgSupport')}</p>
+        <p class="appearance-hint">{t('settingsAppearance.bgSupport')}</p>
       </div>
     </div>
 
     {#if bgPreview || config.background_image}
-      <hr class="border-slate-200 dark:border-[#30363d]" />
-
-      <!-- 显示强度 -->
-      <div class="settings-block">
-        <div class="flex items-center justify-between">
-          <span class="settings-text">{t('settingsAppearance.bgStrength')}</span>
-          <span class="settings-value">{Math.round((config.background_opacity ?? 0.25) * 100)}%</span>
+      <div class="appearance-slider-block">
+        <div class="appearance-slider-head">
+          <span>{t('settingsAppearance.bgStrength')}</span>
+          <span class="appearance-slider-value">{Math.round((config.background_opacity ?? 0.25) * 100)}%</span>
         </div>
-        <input
-          type="range"
-          min="0.05"
-          max="0.60"
-          step="0.01"
+        <Slider
+          min={0.05}
+          max={0.6}
+          step={0.01}
           value={config.background_opacity ?? 0.25}
-          on:input={(e) => updateBgOpacity(e.currentTarget.value)}
-          class="range-input"
+          labelText=""
+          hideTextInput={true}
+          on:input={(e) => updateBgOpacity(e.detail as number)}
         />
-        <div class="flex justify-between text-[10px] settings-subtle">
-          <span>{t('settingsAppearance.bgLight')}</span>
-          <span>{t('settingsAppearance.bgStrong')}</span>
-        </div>
       </div>
 
-      <!-- 模糊度 -->
-      <div class="settings-block">
-        <div class="flex items-center justify-between">
-          <span class="settings-text">{t('settingsAppearance.bgBlur')}</span>
-          <span class="settings-muted">{blurLabels[config.background_blur ?? 1]}</span>
+      <div class="appearance-slider-block">
+        <div class="appearance-slider-head">
+          <span>{t('settingsAppearance.bgBlur')}</span>
+          <span class="appearance-slider-value">{blurLabels[config.background_blur ?? 1]}</span>
         </div>
-        <div class="flex gap-2">
-          {#each [0, 1, 2] as level}
-            <button
-              on:click={() => updateBgBlur(level)}
-              class="segment-btn
-                {(config.background_blur ?? 1) === level
-                  ? 'settings-segment-active'
-                  : 'settings-segment-base'}"
-            >
-              {blurLabels[level]}
-            </button>
+        <ContentSwitcher
+          selectedIndex={(config.background_blur ?? 1) as number}
+          on:change={(e) => updateBgBlur(e.detail as number)}
+        >
+          {#each [0, 1, 2] as level, i (level)}
+            <Switch text={blurLabels[i]} id={'blur-' + level} />
           {/each}
-        </div>
+        </ContentSwitcher>
       </div>
     {/if}
-  </div>
+  </section>
 </div>
+
+<style>
+  .appearance-carbon {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .appearance-card {
+    background: var(--cds-layer);
+    border: 1px solid var(--cds-border-subtle);
+    border-radius: 8px;
+    padding: 1.25rem 1.375rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+
+  .appearance-card-desc {
+    font-size: 0.8125rem;
+    color: var(--cds-text-secondary);
+    margin-top: -0.5rem;
+  }
+
+  .appearance-bg-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .appearance-bg-preview {
+    width: 8rem;
+    height: 5rem;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--cds-border-subtle);
+    flex-shrink: 0;
+  }
+
+  .appearance-bg-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .appearance-bg-empty {
+    width: 8rem;
+    height: 5rem;
+    border: 1px dashed var(--cds-border-subtle);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: var(--cds-text-secondary);
+  }
+
+  .appearance-bg-actions {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.625rem;
+  }
+
+  .appearance-upload-label {
+    display: inline-flex;
+    cursor: pointer;
+  }
+
+  .appearance-file-input {
+    display: none;
+  }
+
+  .appearance-hint {
+    width: 100%;
+    font-size: 0.6875rem;
+    color: var(--cds-text-secondary);
+  }
+
+  .appearance-slider-block {
+    border-top: 1px solid var(--cds-border-subtle);
+    padding-top: 0.875rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .appearance-slider-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+  }
+
+  .appearance-slider-value {
+    color: var(--cds-text-secondary);
+  }
+</style>

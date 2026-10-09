@@ -15,6 +15,13 @@
   import SettingsGitlab from './components/SettingsGitlab.svelte';
   import SettingsPlane from './components/SettingsPlane.svelte';
   import SettingsFileMonitor from './components/SettingsFileMonitor.svelte';
+  import Tabs from 'carbon-components-svelte/src/Tabs/Tabs.svelte';
+  import Tab from 'carbon-components-svelte/src/Tabs/Tab.svelte';
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import TextInput from 'carbon-components-svelte/src/TextInput/TextInput.svelte';
+  import InlineNotification from 'carbon-components-svelte/src/Notification/InlineNotification.svelte';
+  import NotificationActionButton from 'carbon-components-svelte/src/Notification/NotificationActionButton.svelte';
+  import Loading from 'carbon-components-svelte/src/Loading/Loading.svelte';
   import SettingsNodeGateway from './components/SettingsNodeGateway.svelte';
   import SettingsSystem from './components/SettingsSystem.svelte';
   import SettingsPrivacy from './components/SettingsPrivacy.svelte';
@@ -38,6 +45,13 @@
   }
 
   interface RootSettingsFields {
+    localhost_api_enabled?: boolean;
+    localhost_api_port?: number;
+    localhost_api_host?: string | null;
+    text_model_provider_cache?: Record<string, unknown>;
+    node_devices?: unknown[];
+    daily_report_export_dir?: string | null;
+    daily_report_auto_export?: boolean;
     ai_provider: LegacyModelConfig;
     text_model_profiles: unknown[];
     daily_report_custom_prompt: string;
@@ -108,7 +122,6 @@
     }) | null;
     app_category_rules?: unknown[];
     privacy: DraftPrivacySettings | null;
-    ui_visual_style: string;
   };
 
   type SettingsTabId = 'general' | 'appearance' | 'ai' | 'privacy' | 'storage' | 'node' | 'gitlab' | 'plane' | 'filemonitor';
@@ -205,9 +218,6 @@
       }
       if (typeof loadedConfig.localhost_api_host !== 'string' && loadedConfig.localhost_api_host !== null) {
         loadedConfig.localhost_api_host = null;
-      }
-      if (!['a', 'b', 'c'].includes(loadedConfig.ui_visual_style)) {
-        loadedConfig.ui_visual_style = 'c';
       }
       if (!Array.isArray(loadedConfig.node_devices)) {
         loadedConfig.node_devices = [];
@@ -445,190 +455,226 @@
   });
 </script>
 
-<div class="page-shell settings-editorial-shell" data-locale={currentLocale}>
-  <div class="page-header page-axis-operation">
-    <div class="page-title-group">
-      <div class="page-title-badge">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      </div>
-      <div class="page-title-copy">
-        <h2>{t('settings.title')}</h2>
-        <p>{t('settings.subtitle')}</p>
-      </div>
+<div class="settings-carbon-shell" data-locale={currentLocale}>
+  <div class="settings-carbon-header">
+    <div>
+      <h2 class="cds--type-heading-04">{t('settings.title')}</h2>
+      <p class="settings-carbon-subtitle">{t('settings.subtitle')}</p>
     </div>
-
-    <!-- 保存按钮 -->
-    <div class="settings-save-dock">
-      <button
-        on:click={saveConfig}
-        disabled={loading || saving}
-        class="settings-action-primary px-4 rounded-xl"
-      >
-        {#if saving}
-          <div class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-          {t('settings.saving')}
-        {:else if success}
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-          {t('settings.saved')}
-        {:else}
-          {t('settings.save')}
-        {/if}
-      </button>
-    </div>
+    <Button
+      kind="primary"
+      loading={saving}
+      disabled={loading || saving}
+      on:click={saveConfig}
+    >
+      {#if success}{t('settings.saved')}{:else}{t('settings.save')}{/if}
+    </Button>
   </div>
 
   {#if loading}
-    <div class="flex justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
+    <div class="settings-carbon-loading">
+      <Loading description={t('settings.loading') || 'Loading'} withOverlay={false} />
     </div>
   {:else if error}
-    <div class="page-banner-error mb-6">
-      <div>
-        <p class="font-semibold">{t('settings.loadError')}</p>
-        <p class="text-sm mt-1">{error}</p>
-      </div>
-      <button on:click={loadConfig} class="page-action-brand">{t('settings.retry')}</button>
-    </div>
+    <InlineNotification
+      kind="error"
+      title={t('settings.loadError')}
+      subtitle={error}
+      hideCloseButton={true}
+      timeout={0}
+    >
+      <NotificationActionButton slot="actions" on:click={loadConfig}>
+        {t('settings.retry')}
+      </NotificationActionButton>
+    </InlineNotification>
   {:else if config}
-    <div class="w-full settings-editorial-board page-axis-operation">
-      <div class="settings-card settings-account">
-        <h3 class="settings-card-title">{t('settings.accountTitle')}</h3>
-        <p class="settings-card-desc">{t('settings.accountDesc')}</p>
+    <!-- 账号区块 -->
+    <section class="settings-carbon-card">
+      <h3 class="cds--type-heading-02">{t('settings.accountTitle')}</h3>
+      <p class="settings-carbon-card-desc">{t('settings.accountDesc')}</p>
 
-        <div class="mt-4 flex flex-wrap items-center gap-3">
-          {#if accountState}
-            <div class="min-w-0">
-              <p class="truncate text-sm font-semibold text-slate-900 dark:text-[#e6edf3]">
-                {accountState.name || accountState.userName}
-              </p>
-              <p class="truncate text-xs text-slate-500 dark:text-slate-400">
-                {accountState.userName} · {t('settings.accountLoggedInAs')}
-              </p>
-            </div>
-            <div class="ms-auto flex items-center gap-2">
-              <button type="button" on:click={() => push('/auth')} class="page-control-btn min-h-9 px-3">
-                {t('auth.reloginAction')}
-              </button>
-              <button type="button" on:click={handleAccountLogout} class="page-control-btn min-h-9 px-3">
-                {t('auth.logoutAction')}
-              </button>
-            </div>
-          {:else}
-            <p class="text-sm text-slate-500 dark:text-slate-400">{t('settings.accountNotLoggedIn')}</p>
-            <button type="button" on:click={() => push('/auth')} class="page-control-btn ms-auto min-h-9 px-3">
-              {t('auth.loginTab')}
-            </button>
-          {/if}
-        </div>
-
-        <div class="mt-4">
-          <label class="settings-label" for="account-server-url">{t('settings.accountServerLabel')}</label>
-          <div class="mt-1.5 flex items-center gap-2">
-            <input
-              id="account-server-url"
-              bind:value={accountServerUrl}
-              spellcheck="false"
-              placeholder="http://10.37.80.25:4191"
-              class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-[#2d3843] dark:bg-[#10161d] dark:text-[#e6edf3]"
-            />
-            <button type="button" on:click={saveAccountServerUrl} class="page-control-btn min-h-9 shrink-0 px-3">
-              {accountServerSaved ? t('settings.saved') : t('settings.save')}
-            </button>
+      <div class="settings-account-row">
+        {#if accountState}
+          <div class="settings-account-id">
+            <p class="settings-account-name">{accountState.name || accountState.userName}</p>
+            <p class="settings-account-meta">{accountState.userName} · {t('settings.accountLoggedInAs')}</p>
           </div>
-          <p class="settings-subtle mt-1.5">{t('settings.accountServerHint')}</p>
-        </div>
-      </div>
-
-      {#if settingsRuntimePlatform === 'macos'}
-        <div class="settings-card settings-top-status-zone">
-          <SettingsSystem />
-        </div>
-      {/if}
-
-      <div class="settings-stage-layout">
-        <nav class="settings-tab-rail" aria-label={t('settings.title')}>
-          {#each tabs as tab}
-            <button
-              on:click={() => activeTab = tab.id}
-              class="settings-tab-rail-item {activeTab === tab.id ? 'settings-tab-rail-item-active' : ''}"
-              aria-current={activeTab === tab.id ? 'page' : undefined}
-            >
-              <span class="settings-tab-rail-icon">
-                {#if tab.icon === 'general'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                {:else if tab.icon === 'appearance'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.75a8.25 8.25 0 100 16.5h1.15a1.85 1.85 0 001.05-3.37 1.15 1.15 0 01.64-2.1h1.01A4.4 4.4 0 0020.25 10.4 6.65 6.65 0 0013.6 3.75H12z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7.8 10.1h.01M9.75 7.4h.01M13 7.05h.01M15.9 9.25h.01" /></svg>
-                {:else if tab.icon === 'ai'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                {:else if tab.icon === 'node'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 7h14M5 12h14M5 17h10" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5z" /></svg>
-                {:else if tab.icon === 'privacy'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-                {:else if tab.icon === 'storage'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
-                {:else if tab.icon === 'gitlab'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3.5l1.6 4.2h-3.2L12 3.5z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.8 7.7L3.8 15a.9.9 0 00.4 1.1l7.8 4.7-2.2-7.1-3-6z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.2 7.7l3 7.3a.9.9 0 01-.4 1.1l-7.8 4.7 2.2-7.1 3-6z" /></svg>
-                {:else if tab.icon === 'plane'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 12L3.269 3.125A59.769 59.769 0 0121.485 12 59.768 59.768 0 013.27 20.875L5.999 12zm0 0h7.5" /></svg>
-                {:else if tab.icon === 'filemonitor'}
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                {/if}
-              </span>
-              <span class="inline-flex items-center gap-1 whitespace-nowrap">
-                <span>{t(tab.labelKey)}</span>
-                {#if tab.beta}
-                  <span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1 py-px text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-                    Beta
-                  </span>
-                {/if}
-              </span>
-            </button>
-          {/each}
-        </nav>
-
-        <div class="settings-stage-shell">
-        {#if activeTab === 'general'}
-          <SettingsGeneral bind:config on:change={() => dirty = true} />
-        {:else if activeTab === 'appearance'}
-          <SettingsAppearance bind:config on:change={handleSettingsChange} />
-        {:else if activeTab === 'node'}
-          <SettingsNodeGateway bind:config {dataDir} on:change={() => dirty = true} />
-        {:else if activeTab === 'ai'}
-          <div class="settings-card settings-ai-shell">
-            <h3 class="settings-card-title">{t('settings.aiCardTitle')}</h3>
-            <p class="settings-card-desc">{t('settings.aiCardDescription')}</p>
-            <SettingsAI bind:config {providers} on:change={() => dirty = true} />
+          <div class="settings-account-actions">
+            <Button kind="ghost" size="small" on:click={() => push('/auth')}>{t('auth.reloginAction')}</Button>
+            <Button kind="ghost" size="small" on:click={handleAccountLogout}>{t('auth.logoutAction')}</Button>
           </div>
-        {:else if activeTab === 'privacy'}
-          <SettingsPrivacy
-            bind:config
-            {runningApps}
-            {recentApps}
-            on:change={() => dirty = true}
-            on:refresh-apps={() => { loadRunningApps(); loadRecentApps(); }}
-          />
-        {:else if activeTab === 'storage'}
-          <SettingsStorage
-            bind:config
-            {storageStats}
-            {dataDir}
-            {defaultDataDir}
-            on:change={() => dirty = true}
-            on:clearCache={handleClearCache}
-            on:dataDirChanged={handleDataDirChanged}
-          />
-        {:else if activeTab === 'gitlab'}
-          <SettingsGitlab bind:config on:change={() => dirty = true} />
-        {:else if activeTab === 'plane'}
-          <SettingsPlane bind:config on:change={() => dirty = true} />
-        {:else if activeTab === 'filemonitor'}
-          <SettingsFileMonitor bind:config on:change={() => dirty = true} />
+        {:else}
+          <p class="settings-account-meta">{t('settings.accountNotLoggedIn')}</p>
+          <Button kind="ghost" size="small" on:click={() => push('/auth')}>{t('auth.loginTab')}</Button>
         {/if}
-        </div>
       </div>
-    </div>
+
+      <div class="settings-account-server">
+        <TextInput
+          id="account-server-url"
+          bind:value={accountServerUrl}
+          labelText={t('settings.accountServerLabel')}
+          placeholder="http://10.37.80.25:4191"
+          spellcheck={false}
+        />
+        <Button
+          kind="ghost"
+          size="small"
+          on:click={saveAccountServerUrl}
+        >
+          {accountServerSaved ? t('settings.saved') : t('settings.save')}
+        </Button>
+      </div>
+      <p class="settings-carbon-hint">{t('settings.accountServerHint')}</p>
+    </section>
+
+    {#if settingsRuntimePlatform === 'macos'}
+      <section class="settings-carbon-card">
+        <SettingsSystem />
+      </section>
+    {/if}
+
+    <!-- 设置页签（Carbon Tabs） -->
+    <Tabs selected={0} on:change={(e) => { activeTab = tabs[e.detail]?.id ?? 'general'; }}>
+      {#each tabs as tab (tab.id)}
+        <Tab label={t(tab.labelKey) + (tab.beta ? ' · Beta' : '')}>
+          {#if activeTab === tab.id || true}
+            <div class="settings-carbon-panel">
+            {#if activeTab === 'general'}
+              <SettingsGeneral bind:config on:change={() => dirty = true} />
+            {:else if activeTab === 'appearance'}
+              <SettingsAppearance bind:config on:change={handleSettingsChange} />
+            {:else if activeTab === 'node'}
+              <SettingsNodeGateway bind:config {dataDir} on:change={() => dirty = true} />
+            {:else if activeTab === 'ai'}
+              <section class="settings-carbon-card">
+                <h3 class="cds--type-heading-02">{t('settings.aiCardTitle')}</h3>
+                <p class="settings-carbon-card-desc">{t('settings.aiCardDescription')}</p>
+                <SettingsAI bind:config {providers} on:change={() => dirty = true} />
+              </section>
+            {:else if activeTab === 'privacy'}
+              <SettingsPrivacy
+                bind:config
+                {runningApps}
+                {recentApps}
+                on:change={() => dirty = true}
+                on:refresh-apps={() => { loadRunningApps(); loadRecentApps(); }}
+              />
+            {:else if activeTab === 'storage'}
+              <SettingsStorage
+                bind:config
+                {storageStats}
+                {dataDir}
+                {defaultDataDir}
+                on:change={() => dirty = true}
+                on:clearCache={handleClearCache}
+                on:dataDirChanged={handleDataDirChanged}
+              />
+            {:else if activeTab === 'gitlab'}
+              <SettingsGitlab bind:config on:change={() => dirty = true} />
+            {:else if activeTab === 'plane'}
+              <SettingsPlane bind:config on:change={() => dirty = true} />
+            {:else if activeTab === 'filemonitor'}
+              <SettingsFileMonitor bind:config on:change={() => dirty = true} />
+            {/if}
+            </div>
+          {/if}
+        </Tab>
+      {/each}
+    </Tabs>
   {/if}
 </div>
+
+<style>
+  .settings-carbon-shell {
+    min-height: 100%;
+    background: var(--cds-background);
+    color: var(--cds-text-primary);
+    padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .settings-carbon-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .settings-carbon-subtitle {
+    color: var(--cds-text-secondary);
+    font-size: 0.8125rem;
+    margin-top: 0.125rem;
+  }
+
+  .settings-carbon-loading {
+    display: flex;
+    justify-content: center;
+    padding: 3rem 0;
+  }
+
+  .settings-carbon-card {
+    background: var(--cds-layer);
+    border: 1px solid var(--cds-border-subtle);
+    border-radius: 8px;
+    padding: 1.25rem 1.375rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .settings-carbon-card-desc {
+    font-size: 0.8125rem;
+    color: var(--cds-text-secondary);
+  }
+
+  .settings-carbon-hint {
+    font-size: 0.6875rem;
+    color: var(--cds-text-secondary);
+  }
+
+  .settings-account-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .settings-account-id {
+    min-width: 0;
+  }
+
+  .settings-account-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .settings-account-meta {
+    font-size: 0.75rem;
+    color: var(--cds-text-secondary);
+  }
+
+  .settings-account-actions {
+    display: flex;
+    gap: 0.375rem;
+    margin-left: auto;
+  }
+
+  .settings-account-server {
+    display: flex;
+    align-items: end;
+    gap: 0.5rem;
+  }
+
+  .settings-account-server :global(.bx--form-item) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .settings-carbon-panel {
+    padding-top: 1rem;
+  }
+</style>
