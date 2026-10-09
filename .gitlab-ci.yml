@@ -808,6 +808,27 @@ tauri-package-macos-x64:
   # 作业成败，放 after_script 的 exit 1 永远不生效，不兼容产物照常流入发布。
   # 门禁失败时 artifacts(when: always) 仍收集产物便于排查。
   script:
+    # 预种 linuxdeploy 缓存：tauri appimage 打包要从 GitHub 下载 linuxdeploy，
+    # 家庭 runner 对 Hub 系时通时断（2026-10-10 两连败 timeout: global）。
+    # bundler 检测 ~/.cache/tauri/linuxdeploy-<arch>.AppImage 存在即跳过下载；
+    # 镜像失败回退直连，双保险。
+    - |
+      mkdir -p "$HOME/.cache/tauri"
+      LD="$HOME/.cache/tauri/linuxdeploy-x86_64.AppImage"
+      if [ ! -s "$LD" ]; then
+        for url in \
+          "https://ghproxy.cn/https://github.com/AppImage/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
+          "https://ghfast.top/https://github.com/AppImage/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
+          "https://github.com/AppImage/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"; do
+          echo "尝试下载 linuxdeploy: $url"
+          if curl -fL --retry 2 --connect-timeout 15 -o "$LD" "$url"; then
+            chmod +x "$LD"
+            break
+          fi
+          rm -f "$LD"
+        done
+        [ -s "$LD" ] || { echo "linuxdeploy 三源均下载失败" >&2; exit 1; }
+      fi
     - |
       # 签名私钥用无值 -e 形式（docker 从作业环境读取变量值）：带值形式会把
       # base64 私钥整段写进 docker 客户端进程 argv，整个打包期间可被同机进程
