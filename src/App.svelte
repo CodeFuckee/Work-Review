@@ -2,17 +2,43 @@
   import { onMount } from 'svelte';
   import Router, { location, push } from 'svelte-spa-router';
   import { wrap } from 'svelte-spa-router/wrap';
-  import Sidebar from './lib/components/Sidebar.svelte';
   import Toast from './lib/components/Toast.svelte';
   import ConfirmDialog from './lib/components/ConfirmDialog.svelte';
   import CarbonTheme from 'carbon-components-svelte/src/Theme/Theme.svelte';
+  import Header from 'carbon-components-svelte/src/UIShell/Header.svelte';
+  import SideNav from 'carbon-components-svelte/src/UIShell/SideNav.svelte';
+  import SideNavItems from 'carbon-components-svelte/src/UIShell/SideNavItems.svelte';
+  import SideNavLink from 'carbon-components-svelte/src/UIShell/SideNavLink.svelte';
+  import HeaderGlobalAction from 'carbon-components-svelte/src/UIShell/HeaderGlobalAction.svelte';
+  import Content from 'carbon-components-svelte/src/UIShell/Content.svelte';
+  import InlineNotification from 'carbon-components-svelte/src/Notification/InlineNotification.svelte';
+  import NotificationActionButton from 'carbon-components-svelte/src/Notification/NotificationActionButton.svelte';
+  import OverflowMenu from 'carbon-components-svelte/src/OverflowMenu/OverflowMenu.svelte';
+  import OverflowMenuItem from 'carbon-components-svelte/src/OverflowMenu/OverflowMenuItem.svelte';
+  import HomeIcon from 'carbon-icons-svelte/lib/Home.svelte';
+  import TimeIcon from 'carbon-icons-svelte/lib/Time.svelte';
+  import ReportIcon from 'carbon-icons-svelte/lib/Report.svelte';
+  import ChatIcon from 'carbon-icons-svelte/lib/Chat.svelte';
+  import SettingsIcon from 'carbon-icons-svelte/lib/Settings.svelte';
+  import InformationIcon from 'carbon-icons-svelte/lib/Information.svelte';
+  import RecordingFilledIcon from 'carbon-icons-svelte/lib/RecordingFilled.svelte';
+  import RecordingIcon from 'carbon-icons-svelte/lib/Recording.svelte';
+  import SubtractIcon from 'carbon-icons-svelte/lib/Subtract.svelte';
+  import CloseIcon from 'carbon-icons-svelte/lib/Close.svelte';
+  import PauseIcon from 'carbon-icons-svelte/lib/Pause.svelte';
+  import PlayIcon from 'carbon-icons-svelte/lib/Play.svelte';
+  import TranslateIcon from 'carbon-icons-svelte/lib/Translate.svelte';
+  import LightIcon from 'carbon-icons-svelte/lib/Light.svelte';
+  import AsleepIcon from 'carbon-icons-svelte/lib/Asleep.svelte';
+  import LaptopIcon from 'carbon-icons-svelte/lib/Laptop.svelte';
+  import CheckmarkIcon from 'carbon-icons-svelte/lib/Checkmark.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { cache, getLocalDate } from './lib/stores/cache.ts';
   import { recordingStore } from './lib/stores/recording.ts';
   import { resolveAuthGateFromStorage } from './lib/stores/auth.ts';
-  import { applyLocaleToDocument, initializeLocale, locale, t } from '$lib/i18n/index.ts';
+  import { applyLocaleToDocument, initializeLocale, locale, setLocale, t, type Locale } from '$lib/i18n/index.ts';
   import { preloadAppIcons, type AppIconInvoke } from './lib/stores/iconCache.ts';
   import { runUpdateFlow } from './lib/utils/updater.ts';
   import { isTimelineActivity } from './routes/timeline/timelineData.ts';
@@ -350,6 +376,57 @@
   // 认证门：login=未登录（强制跳登录页）/ grace=token 过期（离线宽限）/ allow=放行
   type AuthGateState = 'allow' | 'grace' | 'login';
   let authGate: AuthGateState = 'allow';
+
+  // ── Carbon UIShell 壳层：导航 / 录制 / 语言 / 主题 ──
+  let isSideNavOpen = true;
+  interface ShellNavItem {
+    path: string;
+    labelKey: string;
+    icon: typeof HomeIcon;
+  }
+  const shellNavItems: ShellNavItem[] = [
+    { path: '/', labelKey: 'sidebar.nav.overview', icon: HomeIcon },
+    { path: '/timeline', labelKey: 'sidebar.nav.timeline', icon: TimeIcon },
+    { path: '/report', labelKey: 'sidebar.nav.report', icon: ReportIcon },
+    { path: '/ask', labelKey: 'sidebar.nav.ask', icon: ChatIcon },
+    { path: '/settings', labelKey: 'sidebar.nav.settings', icon: SettingsIcon },
+    { path: '/about', labelKey: 'sidebar.nav.about', icon: InformationIcon },
+  ];
+  $: shellActiveStates = shellNavItems.reduce<Record<string, boolean>>((acc, item) => {
+    const loc = $location || '/';
+    acc[item.path] = item.path === '/'
+      ? loc === '/'
+      : loc === item.path || loc.startsWith(item.path + '/');
+    return acc;
+  }, {});
+
+  // 语言菜单数据（label 为语言缩写，labelKey 为全名 i18n 键）
+  const localeChoices: Array<{ value: Locale; label: string; labelKey: string }> = [
+    { value: 'zh-CN', label: 'ZH', labelKey: 'sidebar.localeNames.zhCN' },
+    { value: 'en', label: 'EN', labelKey: 'sidebar.localeNames.en' },
+    { value: 'zh-TW', label: 'TW', labelKey: 'sidebar.localeNames.zhTW' },
+    { value: 'ar', label: 'AR', labelKey: 'sidebar.localeNames.ar' },
+  ];
+  // 壳层模板的 i18n 取值：显式依赖 $locale 以便语言切换时更新（壳层不在 {#key} 重建范围内）
+  $: tLocale = (key: string, params?: Record<string, unknown>): string => {
+    void $locale;
+    return t(key, params);
+  };
+
+  async function toggleRecording(): Promise<void> {
+    try {
+      await invoke(isPaused ? 'resume_recording' : 'pause_recording');
+    } catch (e) {
+      console.error('切换录制状态失败:', e);
+    }
+  }
+
+  async function selectLocale(next: Locale): Promise<void> {
+    const normalized = setLocale(next);
+    invoke('set_app_locale', { locale: normalized }).catch((error) => {
+      console.warn('同步后端语言失败:', error);
+    });
+  }
   $: isAuthRoute = $location === '/auth';
   $: if (authGate === 'login' && $location && $location !== '/auth') {
     void push('/auth');
@@ -377,18 +454,23 @@
     }
   }
 
-  async function handleThemeChange(event: CustomEvent<ThemePreference>): Promise<void> {
-    const newTheme = event.detail;
-    applyTheme(newTheme);
-
+  async function persistTheme(preference: ThemePreference): Promise<void> {
+    applyTheme(preference);
     try {
       const config = await getRuntimeConfig();
-      config.theme = newTheme;
+      config.theme = preference;
       await invoke('save_config', { config });
       cache.setConfig(config);
     } catch (e) {
       console.error('保存主题配置失败:', e);
     }
+  }
+
+  // 壳层主题按钮：system → light → dark 循环
+  function cycleTheme(): void {
+    const order: ThemePreference[] = ['system', 'light', 'dark'];
+    const next = order[(order.indexOf(theme) + 1) % order.length] ?? 'system';
+    void persistTheme(next);
   }
 
   async function loadBackground() {
@@ -741,119 +823,186 @@
 
 <CarbonTheme theme={carbonTheme} />
 
-<div class="app-shell platform-{platform || 'web'} flex h-screen overflow-hidden relative">
-  <div class="app-shell-ambient pointer-events-none absolute inset-0 z-0 opacity-80">
-    <div class="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.14),transparent_62%)] dark:bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.18),transparent_62%)]"></div>
-    <div class="absolute -right-16 top-24 h-48 w-48 rounded-full bg-indigo-200/20 blur-3xl dark:bg-indigo-500/12"></div>
-    <div class="absolute left-8 bottom-10 h-44 w-44 rounded-full bg-sky-200/20 blur-3xl dark:bg-sky-500/10"></div>
+{#if isAuthRoute}
+  <!-- 登录页：无壳层，仅保留顶部拖拽条与窗口控制（Windows/Linux） -->
+  <div class="relative flex h-screen flex-col overflow-hidden">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <header
+      class="flex h-7 shrink-0 items-start justify-end"
+      data-tauri-drag-region
+      style="-webkit-app-region: drag;"
+      on:mousedown={startDrag}
+    >
+      {#if platform && platform !== 'macos'}
+        <div class="flex h-7 items-stretch" style="-webkit-app-region: no-drag;">
+          <button class="shell-window-btn" on:click={minimizeWindow} title={t('window.minimize')} aria-label={t('window.minimize')}>
+            <SubtractIcon size={14} />
+          </button>
+          <button class="shell-window-btn" on:click={maximizeWindow} title={windowMaximized ? t('window.restore') : t('window.maximize')} aria-label={windowMaximized ? t('window.restore') : t('window.maximize')}>
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <rect x="3" y="3" width="10" height="10" />
+            </svg>
+          </button>
+          <button class="shell-window-btn shell-window-btn-close" on:click={closeWindow} title={t('window.close')} aria-label={t('window.close')}>
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      {/if}
+    </header>
+    <main class="min-h-0 flex-1 overflow-auto">
+      {#key currentLocale}
+        <Router {routes} />
+      {/key}
+    </main>
+    <Toast />
+    <ConfirmDialog />
   </div>
-  <!-- 背景图层：图片全强度 + 半透明遮罩控制显隐 -->
-  {#if backgroundImage}
-    <div class="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-      <!-- 图片（全强度，不用 opacity 避免色彩发白） -->
-      <div
-        class="absolute inset-[-20px] bg-cover bg-center bg-no-repeat"
-        style="background-image: url({backgroundImage}); filter: blur({backgroundBlur === 0 ? 0 : backgroundBlur === 1 ? 8 : 16}px);"
-      ></div>
-      <!-- 半透明遮罩：遮罩越透明 = 背景图越明显 -->
-      <div
-        class="absolute inset-0 bg-slate-50 dark:bg-[#161b22] transition-opacity duration-300"
-        style="opacity: {Math.max(0, 1 - backgroundOpacity)};"
-      ></div>
-    </div>
-  {/if}
-
-  <!--
-    全局顶部拖拽层 (Invisible Drag Layer)
-    1. 覆盖在所有内容之上 (z-50)
-    2. 负责处理窗口拖动 (-webkit-app-region: drag)
-    3. 按钮区域排除拖动 (-webkit-app-region: no-drag)
-  -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="app-shell-windowbar absolute top-0 left-0 w-full h-7 z-50" style="-webkit-app-region: drag;" on:mousedown={startDrag}>
-    <!-- 仅 Windows/Linux 平台显示自定义窗口控制按钮，macOS 使用原生控件 -->
+{:else}
+  <Header
+    platformName={tLocale('common.appName')}
+    href="#/"
+    uiShellAriaLabel={tLocale('common.appName')}
+    bind:isSideNavOpen
+    data-tauri-drag-region
+  >
+    <!-- 录制状态（点击暂停/恢复） -->
+    <HeaderGlobalAction
+      icon={isRecording && !isPaused ? RecordingFilledIcon : isPaused ? PlayIcon : RecordingIcon}
+      aria-label={isPaused ? tLocale('sidebar.resume') : tLocale('sidebar.pause')}
+      title={(isRecording && !isPaused ? tLocale('sidebar.recordingStatus') + ' · ' : isPaused ? tLocale('sidebar.recordingStatus') + ' · ' : '') + (isPaused ? tLocale('sidebar.resume') : tLocale('sidebar.pause'))}
+      on:click={toggleRecording}
+    />
+    <!-- 语言切换 -->
+    <OverflowMenu
+      direction="top"
+      flipped={true}
+      icon={TranslateIcon}
+      iconDescription={tLocale('sidebar.localeButtonTitle')}
+    >
+      {#each localeChoices as option (option.value)}
+        <OverflowMenuItem
+          icon={currentLocale === option.value ? CheckmarkIcon : undefined}
+          text="{option.label} · {tLocale(option.labelKey)}"
+          primaryFocus={currentLocale === option.value}
+          on:click={() => selectLocale(option.value)}
+        />
+      {/each}
+    </OverflowMenu>
+    <!-- 主题循环（跟随系统 / 浅色 / 深色） -->
+    <HeaderGlobalAction
+      icon={theme === 'system' ? LaptopIcon : theme === 'light' ? LightIcon : AsleepIcon}
+      aria-label={tLocale('sidebar.themeTitle.' + theme)}
+      title={tLocale('sidebar.themeTitle.' + theme)}
+      on:click={cycleTheme}
+    />
+    <!-- 窗口控制（仅 Windows/Linux，macOS 用原生控件） -->
     {#if platform && platform !== 'macos'}
-    <!-- Windows 风格窗口控制按钮 (右上角) -->
-    <div class="app-shell-window-controls absolute end-0 top-0 flex items-stretch h-7" style="-webkit-app-region: no-drag;">
-      <!-- Minimize -->
-      <button
-        on:click={minimizeWindow}
-        class="app-shell-window-btn"
-        title={t('window.minimize')}
-      >
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14" />
-        </svg>
-      </button>
-
-      <!-- Maximize -->
-      <button
-        on:click={maximizeWindow}
-        class="app-shell-window-btn"
-        title={windowMaximized ? t('window.restore') : t('window.maximize')}
-      >
-        {#if windowMaximized}
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linejoin="round" d="M8 8h10v10H8z" />
-            <path stroke-linejoin="round" d="M6 14V6h8" />
+      <div class="shell-window-controls" role="group" aria-label="Window">
+        <button class="shell-window-btn" on:click={minimizeWindow} title={t('window.minimize')} aria-label={t('window.minimize')}>
+          <SubtractIcon size={14} />
+        </button>
+        <button class="shell-window-btn" on:click={maximizeWindow} title={windowMaximized ? t('window.restore') : t('window.maximize')} aria-label={windowMaximized ? t('window.restore') : t('window.maximize')}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+            {#if windowMaximized}
+              <rect x="5" y="3" width="8" height="8" />
+              <path d="M3 6V13h8" />
+            {:else}
+              <rect x="3" y="3" width="10" height="10" />
+            {/if}
           </svg>
-        {:else}
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <rect x="4" y="4" width="16" height="16" rx="1" />
-          </svg>
-        {/if}
-      </button>
+        </button>
+        <button class="shell-window-btn shell-window-btn-close" on:click={closeWindow} title={t('window.close')} aria-label={t('window.close')}>
+          <CloseIcon size={14} />
+        </button>
+      </div>
+    {/if}
+  </Header>
 
-      <!-- Close -->
-      <button
-        on:click={closeWindow}
-        class="app-shell-window-btn app-shell-window-btn-close"
-        title={t('window.close')}
-      >
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+  <SideNav ariaLabel={tLocale('common.appName')} isOpen={isSideNavOpen} border={true}>
+    <SideNavItems>
+      {#each shellNavItems as item (item.path)}
+        <SideNavLink
+          href={'#' + item.path}
+          icon={item.icon}
+          isSelected={shellActiveStates[item.path]}
+          text={tLocale(item.labelKey)}
+        >
+          {tLocale(item.labelKey)}
+        </SideNavLink>
+      {/each}
+    </SideNavItems>
+  </SideNav>
+
+  <Content>
+    <!-- 背景图层（设置-外观配置；图片全强度 + 半透明遮罩控制显隐） -->
+    {#if backgroundImage}
+      <div class="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div
+          class="absolute inset-[-20px] bg-cover bg-center bg-no-repeat"
+          style="background-image: url({backgroundImage}); filter: blur({backgroundBlur === 0 ? 0 : backgroundBlur === 1 ? 8 : 16}px);"
+        ></div>
+        <div
+          class="absolute inset-0 transition-opacity duration-300"
+          style="opacity: {Math.max(0, 1 - backgroundOpacity)}; background: var(--cds-background);"
+        ></div>
+      </div>
+    {/if}
+
+    <div class="relative z-10 flex min-h-full flex-col">
+      {#if authGate === 'grace'}
+        <div class="px-4 pt-3">
+          <InlineNotification kind="warning" title={tLocale('auth.graceNotice')} hideCloseButton={true} timeout={0}>
+            <NotificationActionButton slot="actions" on:click={() => push('/auth')}>
+              {tLocale('auth.reloginAction')}
+            </NotificationActionButton>
+          </InlineNotification>
+        </div>
+      {/if}
+      <div class="min-h-0 flex-1">
+        {#key currentLocale}
+          <Router {routes} />
+        {/key}
+      </div>
     </div>
-    {/if}
-  </div>
+  </Content>
+  <Toast />
+  <ConfirmDialog />
+{/if}
 
-  <!-- 注意：这里不能加 z-index（如 z-10），否则会形成层叠上下文，
-       把内部弹窗/Toast（z-[100..210]）整体压到拖拽条 z-50 之下，
-       导致弹窗顶部 28px 被拖拽层拦截成"点击变拖动窗口"。 -->
-  <div class="app-shell-stage relative flex-1 grid grid-cols-[13.5rem_minmax(0,1fr)] gap-3 m-2 {platform !== 'macos' ? 'app-shell-stage--windowbar' : 'app-shell-stage--macos'} {isAuthRoute ? 'app-shell-stage--auth' : ''}">
-    <!-- 左侧边栏（登录页隐藏，登录页独占整行） -->
-    {#if !isAuthRoute}
-    <aside class="app-shell-sidebar-frame min-h-0">
-      <div class="app-shell-sidebar h-full flex flex-col overflow-hidden">
-        <Sidebar {isRecording} {isPaused} {theme} on:themeChange={handleThemeChange} />
-      </div>
-    </aside>
-    {/if}
+<style>
+  /* 壳层窗口控制按钮：置于 Carbon Header 内右侧，主区可点、不可触发拖拽 */
+  .shell-window-controls {
+    display: flex;
+    align-items: stretch;
+    align-self: stretch;
+    height: 3rem;
+    margin-left: auto;
+    -webkit-app-region: no-drag;
+  }
 
-    <!-- 右侧主内容区域 -->
-    <section class="app-shell-main-frame min-h-0">
-      <div class="app-shell-main relative h-full flex flex-col overflow-hidden">
-        {#if authGate === 'grace' && !isAuthRoute}
-          <div class="mx-2 mt-2 flex items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-            <span>{t('auth.graceNotice')}</span>
-            <button
-              type="button"
-              on:click={() => push('/auth')}
-              class="shrink-0 rounded-lg border border-amber-400 px-2 py-1 font-medium hover:bg-amber-100 dark:hover:bg-amber-500/20"
-            >
-              {t('auth.reloginAction')}
-            </button>
-          </div>
-        {/if}
-        <main class="app-shell-main-scroll flex-1 overflow-auto">
-          {#key currentLocale}
-            <Router {routes} />
-          {/key}
-        </main>
-        <Toast />
-        <ConfirmDialog />
-      </div>
-    </section>
-  </div>
-</div>
+  .shell-window-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    border: none;
+    background: transparent;
+    color: var(--cds-text-primary, #161616);
+    cursor: pointer;
+  }
+
+  .shell-window-btn:hover {
+    background: var(--cds-layer-hover, rgba(0, 0, 0, 0.06));
+  }
+
+  .shell-window-btn-close:hover {
+    background: #da1e28;
+    color: #fff;
+  }
+
+  /* 登录页窗口按钮（浅底） */
+  header .shell-window-btn {
+    width: 2.75rem;
+    height: 1.75rem;
+  }
+</style>
