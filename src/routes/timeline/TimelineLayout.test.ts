@@ -193,10 +193,12 @@ test('时间线工具栏图标应统一放大且不改变按钮容器', async ()
   const toolbarSource = source.slice(toolbarStart, toolbarEnd);
 
   assert.ok(toolbarStart >= 0 && toolbarEnd > toolbarStart);
-  assert.equal((toolbarSource.match(/timeline-toolbar-icon/g) || []).length, 4);
-  assert.match(toolbarSource, /timeline-toolbar-icon h-\[1\.125rem\] w-\[1\.125rem\]/);
-  assert.doesNotMatch(toolbarSource, /(?:w-4 h-4|h-4 w-4)/);
-  assert.equal((toolbarSource.match(/page-control-btn-icon/g) || []).length, 3);
+  // Carbon 迁移后工具栏图标按钮为 icon-only Button（icon=Carbon 图标、iconDescription 提供名称）
+  assert.equal((toolbarSource.match(/<Button/g) || []).length, 6);
+  assert.match(toolbarSource, /icon=\{TrashIcon\}/);
+  assert.match(toolbarSource, /icon=\{RenewIcon\}/);
+  assert.match(toolbarSource, /icon=\{ExportIcon\}/);
+  assert.equal((toolbarSource.match(/iconDescription=\{t\(/g) || []).length, 3);
 });
 
 test('时间线应使用按钮打开小时摘要右侧抽屉，并保留无障碍状态', async () => {
@@ -328,10 +330,10 @@ test('640px 及以下活动详情抽屉应全屏展示并移除圆角', async ()
 test('时间线工具栏应有日报同款日期快捷按钮（上一天/今天/昨天 + 选中高亮）', async () => {
   const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
 
-  // 三按钮复用日报既有键与 page-control-btn 样式（不新增 i18n 键）
-  assert.match(source, /page-control-btn[\s\S]*?t\('report\.previousDay'\)/);
-  assert.match(source, /page-control-btn \{selectedDate === getLocalDateString\(\) \? 'page-control-btn-active' : ''\}"\s*\n?\s*on:click=\{\(\) => \(selectedDate = getLocalDateString\(\)\)\}/);
-  assert.match(source, /page-control-btn \{selectedDate === getTimelineYesterdayDateString\(\) \? 'page-control-btn-active' : ''\}/);
+  // 三按钮复用日报既有键，迁移后为 Carbon Button（选中态用 isSelected 表达）
+  assert.match(source, /<Button[\s\S]*?t\('report\.previousDay'\)/);
+  assert.match(source, /isSelected=\{selectedDate === getLocalDateString\(\)\}/);
+  assert.match(source, /isSelected=\{selectedDate === getTimelineYesterdayDateString\(\)\}/);
   assert.match(source, /t\('report\.today'\)/);
   assert.match(source, /t\('report\.yesterday'\)/);
   // 上一天为相对操作：连点可一直往前翻（selectedDate 前移一天）

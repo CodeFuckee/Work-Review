@@ -62,6 +62,15 @@
   import HourlySummaryDrawer from './HourlySummaryDrawer.svelte';
   import TimelineProjectsCard from './TimelineProjectsCard.svelte';
   import { confirm } from '../../lib/stores/confirm.ts';
+  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
+  import TrashIcon from 'carbon-icons-svelte/lib/TrashCan.svelte';
+  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
+  import ExportIcon from 'carbon-icons-svelte/lib/Export.svelte';
+  import Modal from 'carbon-components-svelte/src/Modal/Modal.svelte';
+  import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
+  import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
+  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
+  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
 
   type PrivacyLevel = 'full' | 'anonymized' | 'ignored';
   type CleanupMode = 'date' | 'range' | 'app';
@@ -1842,25 +1851,25 @@
       </div>
     </div>
     <div class="page-toolbar">
-      <button
-        type="button"
-        class="page-control-btn"
-        on:click={() => (selectedDate = shiftIsoDate(selectedDate, -1))}
-      >
+      <Button kind="secondary" size="small" on:click={() => (selectedDate = shiftIsoDate(selectedDate, -1))}>
         {t('report.previousDay')}
-      </button>
-      <button
-        class="page-control-btn {selectedDate === getLocalDateString() ? 'page-control-btn-active' : ''}"
+      </Button>
+      <Button
+        kind="secondary"
+        size="small"
+        isSelected={selectedDate === getLocalDateString()}
         on:click={() => (selectedDate = getLocalDateString())}
       >
         {t('report.today')}
-      </button>
-      <button
-        class="page-control-btn {selectedDate === getTimelineYesterdayDateString() ? 'page-control-btn-active' : ''}"
+      </Button>
+      <Button
+        kind="secondary"
+        size="small"
+        isSelected={selectedDate === getTimelineYesterdayDateString()}
         on:click={() => (selectedDate = getTimelineYesterdayDateString())}
       >
         {t('report.yesterday')}
-      </button>
+      </Button>
       {#key `timeline-date-${currentLocale}`}
         <LocalizedDatePicker
           bind:value={selectedDate}
@@ -1868,34 +1877,9 @@
           triggerClass="page-control-input w-auto"
         />
       {/key}
-      <button
-        class="page-control-btn-icon text-rose-500 hover:text-rose-600 dark:text-rose-400"
-        on:click={() => (showCleanupPanel = true)}
-        title={t('timeline.cleanupRecords')}
-      >
-        <svg class="timeline-toolbar-icon h-[1.125rem] w-[1.125rem]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
-        </svg>
-      </button>
-      <button class="page-control-btn-icon" on:click={loadTimeline} title={t('timeline.refreshTitle')}>
-        <svg class="timeline-toolbar-icon h-[1.125rem] w-[1.125rem] text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-      </button>
-      <button
-        class="page-control-btn-icon"
-        on:click={exportTimelineJson}
-        disabled={exportingTimeline || !activities.length}
-        title={t('timeline.exportTitle')}
-      >
-        {#if exportingTimeline}
-          <div class="timeline-toolbar-icon h-[1.125rem] w-[1.125rem] animate-spin rounded-full border-2 border-current border-t-transparent"></div>
-        {:else}
-          <svg class="timeline-toolbar-icon h-[1.125rem] w-[1.125rem] text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M5 20h14a2 2 0 002-2V9a2 2 0 00-2-2h-4l-2-2H5a2 2 0 00-2 2v11a2 2 0 002 2z" />
-          </svg>
-        {/if}
-      </button>
+      <Button kind="danger-ghost" size="small" icon={TrashIcon} iconDescription={t('timeline.cleanupRecords')} tooltipPosition="bottom" on:click={() => (showCleanupPanel = true)} />
+      <Button kind="ghost" size="small" icon={RenewIcon} iconDescription={t('timeline.refreshTitle')} tooltipPosition="bottom" on:click={loadTimeline} />
+      <Button kind="ghost" size="small" icon={ExportIcon} iconDescription={t('timeline.exportTitle')} tooltipPosition="bottom" disabled={exportingTimeline || !activities.length} on:click={exportTimelineJson} />
     </div>
   </div>
 
@@ -2683,104 +2667,72 @@
   </div>
 {/if}
 
-<!-- 批量清理记录面板（z-index 高于详情弹窗） -->
+<!-- 批量清理记录面板（Carbon Modal，danger 语义） -->
 {#if showCleanupPanel}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="fixed inset-0 z-[150] bg-slate-950/40 backdrop-blur-sm flex items-center justify-center animate-fadeIn p-4"
-    role="button"
-    tabindex="0"
-    on:click|self={() => !cleanupBusy && (showCleanupPanel = false)}
-    on:keydown={(e) => e.key === 'Escape' && !cleanupBusy && (showCleanupPanel = false)}
+  <Modal
+    open={true}
+    modalHeading={t('timeline.cleanupRecordsTitle')}
+    modalAriaLabel={t('timeline.cleanupRecordsTitle')}
+    danger={true}
+    alert={true}
+    primaryButtonText={cleanupMode === 'date' ? t('timeline.deleteByDate') : cleanupMode === 'range' ? t('timeline.deleteByRange') : t('timeline.deleteByApp')}
+    primaryButtonDisabled={cleanupBusy
+      || (cleanupMode === 'range' && (!cleanupRangeStart || !cleanupRangeEnd))
+      || (cleanupMode === 'app' && !cleanupApp)}
+    secondaryButtonText={t('common.cancel')}
+    on:submit={() => {
+      if (cleanupMode === 'date') void doCleanupByDate();
+      else if (cleanupMode === 'range') void doCleanupByRange();
+      else void doCleanupByApp();
+    }}
+    on:close={() => { if (!cleanupBusy) showCleanupPanel = false; }}
   >
-    <div class="w-full max-w-lg rounded-[var(--radius-lg)] border border-slate-200 dark:border-[#30363d] bg-white dark:bg-[#161b22] shadow-2xl">
-      <div class="flex items-center justify-between p-5 border-b border-slate-200 dark:border-[#30363d]">
-        <h3 class="text-base font-semibold text-slate-900 dark:text-[#e6edf3]">{t('timeline.cleanupRecordsTitle')}</h3>
-        <button class="btn btn-ghost" on:click={() => (showCleanupPanel = false)} disabled={cleanupBusy} aria-label={t('window.close')}>
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div class="p-5 space-y-4">
-        <p class="text-xs text-slate-500 dark:text-[#7d8590] leading-relaxed">{t('timeline.cleanupRecordsHint')}</p>
+    <div class="cleanup-carbon-body">
+      <p class="cleanup-hint">{t('timeline.cleanupRecordsHint')}</p>
 
-        <div class="flex gap-2">
-          {#each [{ key: 'date', label: t('timeline.deleteByDate') }, { key: 'range', label: t('timeline.deleteByRange') }, { key: 'app', label: t('timeline.deleteByApp') }] as tab}
-            <button
-              class="flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors {cleanupMode === tab.key ? 'border-rose-400 bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-700' : 'border-slate-200 dark:border-[#30363d] text-slate-600 dark:text-[#adbac7] hover:bg-slate-50 dark:hover:bg-[#21262d]'}"
-              on:click={() => selectCleanupMode(tab.key)}
-            >
-              {tab.label}
-            </button>
-          {/each}
+      <ContentSwitcher
+        selectedIndex={cleanupMode === 'date' ? 0 : cleanupMode === 'range' ? 1 : 2}
+        on:change={(e) => selectCleanupMode(e.detail === 0 ? 'date' : e.detail === 1 ? 'range' : 'app')}
+      >
+        <Switch text={t('timeline.deleteByDate')} id="date" />
+        <Switch text={t('timeline.deleteByRange')} id="range" />
+        <Switch text={t('timeline.deleteByApp')} id="app" />
+      </ContentSwitcher>
+
+      {#if cleanupMode === 'date'}
+        <p class="cleanup-note">{t('timeline.deleteByDateMessage', { date: selectedDate })}</p>
+      {:else if cleanupMode === 'range'}
+        <LocalizedDatePicker
+          mode="range"
+          bind:startDate={cleanupRangeStart}
+          bind:endDate={cleanupRangeEnd}
+          localeCode={currentLocale}
+          triggerClass="page-control-input w-auto"
+        />
+        <div class="cleanup-time-grid">
+          <label class="cleanup-time-field">
+            <span>{t('datePicker.startDate')}</span>
+            <input type="time" bind:value={cleanupRangeStartTime} class="page-control-input" />
+          </label>
+          <label class="cleanup-time-field">
+            <span>{t('datePicker.endDate')}</span>
+            <input type="time" bind:value={cleanupRangeEndTime} class="page-control-input" />
+          </label>
         </div>
-
-        {#if cleanupMode === 'date'}
-          <div class="space-y-3">
-            <p class="text-sm text-slate-700 dark:text-[#adbac7] leading-relaxed">
-              {t('timeline.deleteByDateMessage', { date: selectedDate })}
-            </p>
-            <button
-              class="w-full px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-              on:click={doCleanupByDate}
-              disabled={cleanupBusy}
-            >
-              {t('timeline.deleteByDate')}
-            </button>
-          </div>
-        {:else if cleanupMode === 'range'}
-          <div class="space-y-3">
-            <LocalizedDatePicker
-              mode="range"
-              bind:startDate={cleanupRangeStart}
-              bind:endDate={cleanupRangeEnd}
-              localeCode={currentLocale}
-              triggerClass="page-control-input w-auto"
-            />
-            <div class="grid grid-cols-2 gap-3">
-              <label class="text-xs text-slate-500 dark:text-[#7d8590] flex flex-col gap-1">
-                <span>{t('datePicker.startDate')}</span>
-                <input type="time" bind:value={cleanupRangeStartTime} class="page-control-input" />
-              </label>
-              <label class="text-xs text-slate-500 dark:text-[#7d8590] flex flex-col gap-1">
-                <span>{t('datePicker.endDate')}</span>
-                <input type="time" bind:value={cleanupRangeEndTime} class="page-control-input" />
-              </label>
-            </div>
-            <button
-              class="w-full px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-              on:click={doCleanupByRange}
-              disabled={cleanupBusy || !cleanupRangeStart || !cleanupRangeEnd}
-            >
-              {t('timeline.deleteByRange')}
-            </button>
-          </div>
+      {:else}
+        {#if cleanupAppCandidates.length === 0}
+          <p class="cleanup-note">{t('timeline.noActivitiesToDelete')}</p>
         {:else}
-          <div class="space-y-3">
-            {#if cleanupAppCandidates.length === 0}
-              <p class="text-sm text-slate-500 dark:text-[#7d8590]">{t('timeline.noActivitiesToDelete')}</p>
-            {:else}
-              <select class="page-control-input w-full" bind:value={cleanupApp}>
-                <option value="">{t('timeline.selectApp')}</option>
-                {#each cleanupAppCandidates as app}
-                  <option value={app}>{app}</option>
-                {/each}
-              </select>
-              <button
-                class="w-full px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                on:click={doCleanupByApp}
-                disabled={cleanupBusy || !cleanupApp}
-              >
-                {t('timeline.deleteByApp')}
-              </button>
-            {/if}
-          </div>
+          <Select labelText={t('timeline.selectApp')} hideLabel={true} bind:selected={cleanupApp}>
+            <SelectItem value="" text={t('timeline.selectApp')} />
+            {#each cleanupAppCandidates as app (app)}
+              <SelectItem value={app} text={app} />
+            {/each}
+          </Select>
         {/if}
-      </div>
+      {/if}
     </div>
-  </div>
+  </Modal>
 {/if}
 
 <!-- 分类修改确认（页面顶层，z-index 高于详情弹窗 z-[140]） -->
@@ -4447,5 +4399,31 @@
     .timeline-load-more {
       padding: 0 0.5rem 1rem;
     }
+  }
+  .cleanup-carbon-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+
+  .cleanup-hint,
+  .cleanup-note {
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--cds-text-secondary);
+  }
+
+  .cleanup-time-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .cleanup-time-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--cds-text-secondary);
   }
 </style>
