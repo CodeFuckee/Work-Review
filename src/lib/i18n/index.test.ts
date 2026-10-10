@@ -372,7 +372,7 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   // editLabel/removeLabel/empty）；
   // 手动触发归因按钮每语言新增 2 键（timeline.projects.recomputeTitle /
   // recomputeFailed）
-  assert.equal(expected.length, 1_296);
+  assert.equal(expected.length, 1_321);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

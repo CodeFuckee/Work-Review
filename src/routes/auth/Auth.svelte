@@ -17,6 +17,7 @@
     findLoginValidationError,
     findRegisterValidationError,
   } from './authLogic.ts';
+  import { deriveSyncKey, storeSyncKey } from '$lib/utils/configSync.ts';
   import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
   import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
   import TextInput from 'carbon-components-svelte/src/TextInput/TextInput.svelte';
@@ -96,6 +97,12 @@
         errorMessage = describeFailure(result, 'auth.loginFailed');
         return;
       }
+      // 派生并缓存同步密钥（跨设备配置同步用；登出时清除）
+      try {
+        await storeSyncKey(await deriveSyncKey(password, userName.trim()));
+      } catch (e) {
+        console.warn('派生同步密钥失败:', e);
+      }
       finishAuth(result, '');
       return;
     }
@@ -123,6 +130,11 @@
       return;
     }
     // 服务端注册成功即返回 token，直接自动登录
+    try {
+      await storeSyncKey(await deriveSyncKey(password, userName.trim()));
+    } catch (e) {
+      console.warn('派生同步密钥失败:', e);
+    }
     finishAuth(registerResult, name.trim());
   }
 </script>

@@ -8,6 +8,7 @@
   import { formatUserError } from '$lib/utils/errorDisplay.ts';
   import { showToast } from '../../lib/stores/toast.ts';
   import { clearAuth, getAdminUrl, getAuth, setAdminUrl, type AuthState } from '$lib/stores/auth.ts';
+  import { clearStoredSyncKey } from '$lib/utils/configSync.ts';
 
   import SettingsGeneral from './components/SettingsGeneral.svelte';
   import SettingsAppearance from './components/SettingsAppearance.svelte';
@@ -15,6 +16,7 @@
   import SettingsGitlab from './components/SettingsGitlab.svelte';
   import SettingsPlane from './components/SettingsPlane.svelte';
   import SettingsFileMonitor from './components/SettingsFileMonitor.svelte';
+  import SettingsSync from './components/SettingsSync.svelte';
   import Tabs from 'carbon-components-svelte/src/Tabs/Tabs.svelte';
   import Tab from 'carbon-components-svelte/src/Tabs/Tab.svelte';
   import Button from 'carbon-components-svelte/src/Button/Button.svelte';
@@ -428,6 +430,7 @@
 
   function handleAccountLogout(): void {
     clearAuth();
+    clearStoredSyncKey();
     refreshAccountState();
     // 通知 App.svelte 刷新认证门（无凭证会强制跳回登录页）
     window.dispatchEvent(new CustomEvent('auth-changed'));
@@ -546,6 +549,7 @@
             {#if activeTab === tab.id}
               <div class="settings-carbon-panel">
               {#if activeTab === 'general'}
+                <SettingsSync bind:config on:change={() => dirty = true} />
                 <SettingsGeneral bind:config on:change={() => dirty = true} />
               {:else if activeTab === 'appearance'}
                 <SettingsAppearance bind:config on:change={handleSettingsChange} />

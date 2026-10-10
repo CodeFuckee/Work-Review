@@ -41,10 +41,22 @@ impl ClientHttpPostJsonResult {
 ///
 /// 不在此处解析业务响应：保持纯 HTTP 透传，JSON 解包沿用前端既有逻辑，
 /// 避免两端各持一份 Admin.Core 包装结构的映射。
+/// 为请求附加 Authorization 头（配置同步 API 需登录 JWT）
+fn apply_auth_header(
+    builder: reqwest::RequestBuilder,
+    auth_token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    match auth_token {
+        Some(token) if !token.trim().is_empty() => builder.bearer_auth(token.trim()),
+        _ => builder,
+    }
+}
+
+/// 在 Rust 侧发起 GET 请求（配置拉取等只读场景），返回 HTTP 透传结果
 #[tauri::command]
-pub async fn client_http_post_json(
+pub async fn client_http_get_json(
     url: String,
-    body: Value,
+    auth_token: Option<String>,
 ) -> Result<ClientHttpPostJsonResult, String> {
     if url.trim().is_empty() {
         return Ok(ClientHttpPostJsonResult::network_failure(
@@ -57,7 +69,8 @@ pub async fn client_http_post_json(
         .build()
         .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?;
 
-    let send = async { client.post(&url).json(&body).send().await };
+    let request = apply_auth_header(client.get(&url), auth_token.as_deref());
+    let send = async { request.send().await };
     let response = match tokio::time::timeout(
         std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS + 1),
         send,
@@ -87,5 +100,91 @@ pub async fn client_http_post_json(
             body: None,
             error: Some(format!("读取响应失败: {e}")),
         }),
+    }
+}
+
+#[tauri::command]
+pub async fn client_http_post_json(
+    url: String,
+    body: Value,
+    auth_token: Option<String>,
+) -> Result<ClientHttpPostJsonResult, String> {
+    if url.trim().is_empty() {
+        return Ok(ClientHttpPostJsonResult::network_failure(
+            "服务器地址为空".to_string(),
+        ));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?;
+
+    let request = apply_auth_header(client.post(&url).json(&body), auth_token.as_deref());
+    let send = async { request.send().await };
+    let response = match tokio::time::timeout(
+        std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS + 1),
+        send,
+    )
+    .await
+    {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Ok(ClientHttpPostJsonResult::network_failure(e.to_string())),
+        Err(_) => {
+            return Ok(ClientHttpPostJsonResult::network_failure(format!(
+                "连接超时（{REQUEST_TIMEOUT_SECS} 秒）"
+            )))
+        }
+    };
+
+    let status = response.status().as_u16();
+    match response.text().await {
+        Ok(text) => Ok(ClientHttpPostJsonResult {
+            delivered: true,
+            status: Some(status),
+            body: Some(text),
+            error: None,
+        }),
+        Err(e) => Ok(ClientHttpPostJsonResult {
+            delivered: true,
+            status: Some(status),
+            body: None,
+            error: Some(format!("读取响应失败: {e}")),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_auth_header_should_attach_bearer_token() {
+        let client = reqwest::Client::new();
+        let request = apply_auth_header(client.get("http://localhost/x"), Some("tok-1".into()))
+            .build()
+            .unwrap();
+        assert_eq!(
+            request.headers().get("authorization").unwrap(),
+            "Bearer tok-1"
+        );
+    }
+
+    #[test]
+    fn apply_auth_header_should_skip_empty_token() {
+        let client = reqwest::Client::new();
+        let request = apply_auth_header(client.get("http://localhost/x"), Some("  ".into()))
+            .build()
+            .unwrap();
+        assert!(request.headers().get("authorization").is_none());
+    }
+
+    #[test]
+    fn apply_auth_header_should_skip_missing_token() {
+        let client = reqwest::Client::new();
+        let request = apply_auth_header(client.get("http://localhost/x"), None)
+            .build()
+            .unwrap();
+        assert!(request.headers().get("authorization").is_none());
     }
 }
