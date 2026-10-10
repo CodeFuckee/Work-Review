@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增
+- **跨设备配置同步**：设置-常规新增「配置同步（跨设备）」卡——把 GitLab、Plane、AI 模型与提示词、机器人凭证、localhost API 等连接类配置**整包一键推送到服务端**（按账号加密存储），在其他设备登录同一账号后**一键拉取应用**（拉取前逐块差异预览：仅本机有/仅云端有/内容不同/一致）。凭据安全性：payload 经 PBKDF2(登录密码+账号，150k 迭代) 派生密钥 AES-GCM 加密后才上传，服务端仅存密文不可读；同步密钥登录时自动派生、登出自动清除；HTTP 全程经 Rust 命令发出（新增 `client_http_get_json` 与 Bearer 认证头支持）。管理后台新增按用户隔离的配置存取 API（`client_sync_config` 表，仅存密文）。新机器空白配置误覆盖风险由差异预览（仅云端有→直接填充）规避。
+
 ### 变更
 - **CI：macOS 作业全部脱离 MacBook（package-daily-macos-arm64/x64 与 tauri-package-macos-x64 补齐迁移）**：`ci/macos/package.sh` 泛化为四打包作业共用（arm64/x64 目标三元组经 `TAURI_TARGET_TRIPLE` 透传切换），夜间产包与（启用时的）x64 交叉编译打包均由 GitHub 托管 runner 代跑；夜间作业保留 latest 下载链接依赖的 artifacts 声明（`MACOS_FETCH_ARTIFACTS` 拉回还原后照常上传），rules/needs/resource_group/过期策略逐一对齐原定义。smoke 作业新增 `ci/registry-roundtrip.sh` 常驻回环检查（Job-Token 从 package registry 读回桥接产物并校验 tar 结构），守护 `MACOS_FETCH_ARTIFACTS` 还原路径的认证依赖——失效在每次 push 立即暴露而非等到发版。实测（Apple Silicon 冷构建）：verify 7 分钟、release 15 分钟、tauri 打包全流程 21 分钟，公开仓库 macOS runner 免费。设计文档 `docs/ci/macos-bridge.md`。
 - **CI：macOS 作业全面桥接 GitHub Actions（rust-verify-macos / build-release-macos / tauri-package-macos-arm64 三作业迁离 MacBook）**：在 smoke 试点基础上扩展三个桥接语义——`MACOS_ENV_PASSTHROUGH`（按名整值透传 GitLab 变量到 macOS 侧，值可含空格，RUST_VERSION/RUSTFLAGS 使用）、`MACOS_FETCH_ARTIFACTS`（macOS 产物按仓库相对路径镜像进 dist/，桥接作业经 Job-Token 从 package registry 拉回 strip 解包还原 `target/...` 原路径——version-bump/publish-release 的 artifacts 声明与全量 glob 零改动）、`.macos-bridge` 模板禁用流水线 npm cache（桥接作业拉推持久缓存纯浪费）。Tauri 更新器签名私钥不进 payload：复制到桥接仓库 secrets `GL131_TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`（tauri-cli v2.12 环境变量名与 GitLab 变量一致），workflow 注入 macOS 环境。超时链 GitHub 175m < GitLab 轮询 170m < 作业 3h；一次性 VM 无增量，verify 每次全量冷构建约 1.5–2.5h（公开仓库 macOS runner 免费）。`package-daily-macos-*` 与 `tauri-package-macos-x64` 暂留 MacBook。设计文档 `docs/ci/macos-bridge.md`。
