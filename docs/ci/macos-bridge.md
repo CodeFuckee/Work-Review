@@ -34,6 +34,24 @@ GitLab main push → 流水线
 `GH_BRIDGE_TOKEN` 未配置时 `macos-bridge-smoke` 自动跳过（`when: never`），
 流水线不受影响。
 
+## 迁移状态（2026-10-10）
+
+| 作业 | 执行体 | 状态 |
+| --- | --- | --- |
+| `macos-bridge-smoke` | `ci/macos-smoke.sh` | 桥接（常驻冒烟） |
+| `rust-verify-macos` | `ci/macos/verify.sh` | 桥接（全量冷构建 1.5–2.5h） |
+| `build-release-macos` | `ci/macos/release-build.sh` | 桥接（产物拉回还原 `target/release/Yue_Review`） |
+| `tauri-package-macos-arm64` | `ci/macos/package.sh` | 桥接（签名走桥接仓库 secrets，产物还原 bundle 路径供 publish） |
+| `package-daily-macos-arm64/x64`、`tauri-package-macos-x64` | — | 仍在 MacBook（夜间/未启用，按需再迁） |
+
+重型作业语义：
+
+- **超时链**：GitHub `timeout-minutes: 175m` < GitLab 轮询 `GH_POLL_TIMEOUT_MIN: 170` < GitLab 作业 `timeout: 3h`。改任何一侧都要同步检查另外两侧。
+- **冷构建代价**：一次性 VM 无跨流水线增量，每次 push 的 verify 约 1.5–2.5h（此前 MacBook 靠持久构建目录增量）。公开仓库 macOS runner 免费，代价是时间不是钱。
+- **产物还原**：macOS 脚本把产物按仓库相对路径镜像进 `dist/`（如 `dist/target/release/Yue_Review`），桥接作业（`MACOS_FETCH_ARTIFACTS: "true"`）从 package registry 拉回、strip `dist/` 解包，下游 artifacts/publish 的 glob 零改动。
+- **变量透传**：`MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS"` 按名整值透传（值可含空格）。**密钥绝不进 payload**：Tauri 签名私钥放在桥接仓库 secrets `GL131_TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`（值取自本项目同名变量，改名需两侧同步），workflow 注入 macOS 环境后 tauri-cli v2.12 直接读取。
+- **透明度**：GitHub Actions run 页面即 macOS 侧完整日志；桥接作业日志里有每 15s 的轮询轨迹与最终 run 链接。
+
 ## 怎么再加一个 macOS 作业
 
 ```yaml
@@ -61,14 +79,13 @@ my-macos-job:
 - 桥接仓库 allowlist 未登记的项目一律拒跑（防伪造 dispatch）。
 - 详细威胁模型见桥接仓库 `README.md`。
 
-## 已知取舍（试点阶段）
+## 已知取舍
 
 - **不回传 GitLab commit status**：该 API 在本实例（GitLab 19.4.1）实测需要
   Maintainer 级 token，而 GitHub 侧持有的项目 token 是 Developer 级（最小权限，
   泄露也不能写代码）。代价仅是 MR 提交挂件少一个外链；门禁不受影响
   （靠 bridge.sh 轮询镜像）。后续如需，把 `GL_PAT_131` 换成 Maintainer 级并在
   桥接仓库 PROJECTS 里开 `status: true`。
-- GitHub 侧 `timeout-minutes: 30`，GitLab 侧作业 `timeout: 45m`——迁移真实
-  编译作业（冷编译可超 1h）时两边都要调大。
 - macOS runner 计费：桥接仓库为公开仓库时标准 macOS runner 免费；改私有则按
   10× 费率计分钟（GitHub Free 2000 分钟/月 → 约 200 macOS 分钟）。
+- 桥接作业占用 linux-x64 runner 槽位整段时长（多为 sleep 轮询，CPU/内存开销可忽略）。

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# ci/macos/package.sh — tauri-package-macos-arm64 的桥接执行体（tag 发版打包）。
+# 签名：TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD 由桥接
+# workflow 从 GitHub secrets（GL131_ 前缀）注入环境——tauri-cli v2.12 直接读
+# 这两个环境变量（名字与 GitLab 变量一致），密钥绝不进 payload（公开数据）。
+# 产物按仓库相对路径镜像进 dist/target/<triple>/release/bundle，拉回还原后
+# publish-release 的 target/**/release/bundle 全量 glob 原样命中，publish 零改动。
+set -euo pipefail
+cd "${CI_PROJECT_DIR:?CI_PROJECT_DIR 未注入}"
+
+TARGET_TRIPLE="aarch64-apple-darwin"   # 对齐原作业 TAURI_BUILD_ARGS
+export APPLE_SIGNING_IDENTITY="-"      # ad-hoc 签名（对齐原作业变量）
+
+: "${RUST_VERSION:?RUST_VERSION 未透传（检查作业 MACOS_ENV_PASSTHROUGH）}"
+for attempt in 1 2 3; do
+  if rustup toolchain install "$RUST_VERSION" --profile minimal; then
+    break
+  fi
+  [ "$attempt" = 3 ] && { echo "rustup 工具链安装三连败（对齐 .rust-node 重试策略）" >&2; exit 1; }
+  echo "rustup 第 ${attempt} 次失败，15s 后重试…"
+  sleep 15
+done
+rustup default "$RUST_VERSION"
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+# GitHub 托管 runner 的 SDK 由 xcode-select 统一管理，无 CLT 残留 SDKROOT 问题；
+# 导出对齐 xcrun 当前选择（对齐原作业 2026-09-14 修复，无害）
+export SDKROOT="$(xcrun --show-sdk-path)"
+
+[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] \
+  || { echo "TAURI_SIGNING_PRIVATE_KEY 未注入（检查桥接仓库 secrets GL131_TAURI_SIGNING_*）" >&2; exit 1; }
+
+npm ci --prefer-offline
+# 打包前清理 bundle：publish 的全量 glob 防历史版本包混入（2026-09-16 更新失效根因；
+# 一次性 VM 本无残留，保留防线对齐 .tauri-package）
+rm -rf target/release/bundle target/*/release/bundle
+npm run tauri build -- --target "$TARGET_TRIPLE"
+
+mkdir -p "dist/target/${TARGET_TRIPLE}/release"
+cp -R "target/${TARGET_TRIPLE}/release/bundle" "dist/target/${TARGET_TRIPLE}/release/bundle"

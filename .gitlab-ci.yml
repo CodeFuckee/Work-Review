@@ -284,8 +284,19 @@ rust-verify-linux:
       when: never
     - when: on_success
 rust-verify-macos:
-  extends: .rust-verify
-  tags: ["$MACOS_RUNNER_TAG"]
+  # macOS 桥接（.macos-bridge）：script 体在 ci/macos/verify.sh，由 GitHub 托管
+  # runner 代跑，MacBook 不再参与。一次性 VM 无跨流水线增量，每次全量冷构建
+  # （预计 1.5-2.5h）；timeout/poll 必须大于 GitHub 侧 timeout-minutes(175m)
+  extends: .macos-bridge
+  variables:
+    MACOS_SCRIPT: "ci/macos/verify.sh"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS"
+    GH_POLL_TIMEOUT_MIN: "170"
+  timeout: 3h
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
 
 # This runner uses PowerShell. It must not inherit .rust-verify/.rust-node,
 # because those templates contain POSIX shell commands such as `set -euo pipefail`.
@@ -305,19 +316,28 @@ rust-verify-windows:
       when: never
     - when: on_success
 
-# ---- macOS 作业桥接试点（GitHub Actions 代跑，docs/ci/macos-bridge.md）----
-# macos-bridge-smoke 验证桥接链路：bridge.sh 发 repository_dispatch → GitHub
-# macOS runner 按 SHA 克隆本仓库并执行 ci/macos-smoke.sh → dist/* 回传
-# package registry → bridge.sh 轮询终态镜像为退出码。链路稳定后
-# rust-verify-macos / build-release-macos 等可逐个套用同一模式
-# （variables 换掉 MACOS_SCRIPT 即可）。
-# GH_BRIDGE_TOKEN 未配置时本作业自动跳过（when: never），不影响流水线。
+# ---- macOS 作业桥接（GitHub Actions 代跑，docs/ci/macos-bridge.md）----
+# 桥接作业跑在 linux-x64 shell runner：bridge.sh 发 repository_dispatch → GitHub
+# macOS runner 按 SHA 克隆本仓库并执行 MACOS_SCRIPT → dist/* 回传 package
+# registry → bridge.sh 轮询终态镜像为退出码。已迁移：rust-verify-macos、
+# build-release-macos、tauri-package-macos-arm64（smoke 链路常驻验证）。
+# 仍在 MacBook（MACOS_RUNNER_TAG）：package-daily-macos-*、tauri-package-macos-x64。
+# 作业级变量：
+#   MACOS_SCRIPT           必填，macOS 侧执行的仓库内脚本（自包含）
+#   MACOS_ENV_PASSTHROUGH  按名透传 GitLab 变量（值可含空格；只放非敏感配置，
+#                          密钥绝不进 payload——签名走桥接仓库 GL131_ secrets）
+#   MACOS_FETCH_ARTIFACTS  true 时把 dist/*.tgz 拉回并还原 target/... 原路径，
+#                          供本作业 artifacts 声明与下游 publish 消费
+#   GH_POLL_TIMEOUT_MIN    轮询上限，必须 < 本作业 timeout 且 > GitHub 侧执行时长
+# GH_BRIDGE_TOKEN 未配置时桥接作业自动跳过（见各作业 rules），不影响流水线。
 .macos-bridge:
   stage: verify
   tags: ["$LINUX_X64_RUNNER_TAG"]
   # 作业级 timeout：本实例 default: timeout 不生效（见 .release-compile 注释）；
-  # 须大于 GitHub 侧 timeout-minutes(30m) + 轮询余量
+  # 须大于 GitHub 侧 timeout-minutes(175m) + 轮询余量
   timeout: 45m
+  # 流水线级 npm cache 是 linux runner 的持久缓存，桥接作业拉/推纯浪费，禁用
+  cache: []
   variables:
     GH_BRIDGE_REPO: "CodeFuckee/gl-macos-bridge"
     GH_POLL_TIMEOUT_MIN: "35"
@@ -365,15 +385,27 @@ build-release-linux:
       - target/release/Yue_Review
 
 build-release-macos:
-  extends: .release-compile
+  # macOS 桥接（.macos-bridge）：ci/macos/release-build.sh，产物经 package
+  # registry 拉回还原 target/release/Yue_Review 原路径（下游零改动）
+  extends: .macos-bridge
+  stage: compile
   needs: [rust-verify-macos]
-  tags: ["$MACOS_RUNNER_TAG"]
+  variables:
+    MACOS_SCRIPT: "ci/macos/release-build.sh"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS"
+    GH_POLL_TIMEOUT_MIN: "170"
+    MACOS_FETCH_ARTIFACTS: "true"
+  timeout: 3h
   artifacts:
     name: "$CI_JOB_NAME"
     when: always
     expire_in: 1 week
     paths:
       - target/release/Yue_Review
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
 
 build-release-windows:
   extends: .powershell-toolchain
@@ -793,18 +825,30 @@ release-preflight:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
 
 tauri-package-macos-arm64:
-  extends: .tauri-package
-  tags: ["$MACOS_RUNNER_TAG"]
+  # macOS 桥接（.macos-bridge）：ci/macos/package.sh。签名私钥不走 payload——
+  # 由桥接仓库 secrets（GL131_TAURI_SIGNING_*，值取自本项目同名变量）经 workflow
+  # env 注入 macOS 侧，tauri-cli v2.12 直接读取。产物拉回还原 target/**/release/
+  # bundle 原路径，publish-release 全量 glob 零改动
+  extends: .macos-bridge
+  stage: package
+  needs: [release-preflight]
   resource_group: macos-package
-  before_script:
-    - !reference [.rust-node, before_script]
-    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
-    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
-    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
-    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
-    TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
-    APPLE_SIGNING_IDENTITY: "-"
+    MACOS_SCRIPT: "ci/macos/package.sh"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS"
+    GH_POLL_TIMEOUT_MIN: "170"
+    MACOS_FETCH_ARTIFACTS: "true"
+  timeout: 3h
+  artifacts:
+    name: "$CI_COMMIT_TAG-$CI_JOB_NAME"
+    when: always
+    expire_in: never
+    paths:
+      - target/**/release/bundle/dmg/*.dmg
+      - target/**/release/bundle/macos/*.app.tar.gz
+      - target/**/release/bundle/macos/*.app.tar.gz.sig
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
 
 tauri-package-macos-x64:
   extends: .tauri-package

@@ -106,6 +106,14 @@ for kv in os.environ.get("MACOS_EXTRA_ENV", "").split():
         k, _, v = kv.partition("=")
         env_whitelist[k] = v
 
+# MACOS_ENV_PASSTHROUGH="NAME1 NAME2"：按名字整值透传 GitLab 变量（值可含空格，
+# 补 MACOS_EXTRA_ENV 的空白切分短板）。只允许透传非敏感构建配置（RUST_VERSION/
+# RUSTFLAGS 等）；密钥类变量绝不进 payload——payload 是公开数据，签名密钥走
+# GitHub secrets（GL131_ 前缀）由 workflow 注入 macOS 环境
+for _name in os.environ.get("MACOS_ENV_PASSTHROUGH", "").split():
+    if _name in os.environ:
+        env_whitelist[_name] = os.environ[_name]
+
 payload = {
     "correlation_id": "gl{pid}-p{pl}j{jb}".format(
         pid=env("CI_PROJECT_ID"), pl=env("CI_PIPELINE_ID"), jb=env("CI_JOB_ID")),
@@ -146,6 +154,24 @@ while :; do
       if [ "$concl" = "success" ]; then
         echo "bridge: ✓ macOS 作业成功；产物（如有）已回传 package registry："
         echo "  https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
+        # MACOS_FETCH_ARTIFACTS=true 时拉回产物并按仓库相对路径还原
+        # （macOS 脚本把产物镜像进 dist/target/...，解包 strip dist/ 后即恢复
+        # target/... 原路径，下游 GitLab artifacts/publish 的 glob 零改动）
+        if [ "${MACOS_FETCH_ARTIFACTS:-false}" = "true" ]; then
+          ART_URL="https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
+          echo "bridge: 拉回 macOS 产物 → ${CI_PROJECT_DIR}"
+          if ! curl -sS --fail --max-time 1800 -H "Job-Token: ${CI_JOB_TOKEN}" \
+              -o /tmp/bridge-artifacts.tgz "$ART_URL"; then
+            # Job-Token 下载失败时回退项目内 read_api token（updater 下载用）
+            [ -n "${WORK_REVIEW_UPDATER_GITLAB_TOKEN:-}" ] \
+              || fail "产物下载失败且无 WORK_REVIEW_UPDATER_GITLAB_TOKEN 可回退: $ART_URL"
+            curl -sS --fail --max-time 1800 -H "PRIVATE-TOKEN: ${WORK_REVIEW_UPDATER_GITLAB_TOKEN}" \
+              -o /tmp/bridge-artifacts.tgz "$ART_URL" || fail "产物下载失败: $ART_URL"
+          fi
+          tar -tzf /tmp/bridge-artifacts.tgz | sed 's/^dist\///' | sed 's/^/  还原: /'
+          tar -xzf /tmp/bridge-artifacts.tgz -C "$CI_PROJECT_DIR" --strip-components=1
+          rm -f /tmp/bridge-artifacts.tgz
+        fi
         exit 0
       fi
       echo "bridge: ✗ macOS 作业失败（${concl}），日志：${url}" >&2
