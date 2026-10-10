@@ -305,6 +305,37 @@ rust-verify-windows:
       when: never
     - when: on_success
 
+# ---- macOS 作业桥接试点（GitHub Actions 代跑，docs/ci/macos-bridge.md）----
+# macos-bridge-smoke 验证桥接链路：bridge.sh 发 repository_dispatch → GitHub
+# macOS runner 按 SHA 克隆本仓库并执行 ci/macos-smoke.sh → dist/* 回传
+# package registry → bridge.sh 轮询终态镜像为退出码。链路稳定后
+# rust-verify-macos / build-release-macos 等可逐个套用同一模式
+# （variables 换掉 MACOS_SCRIPT 即可）。
+# GH_BRIDGE_TOKEN 未配置时本作业自动跳过（when: never），不影响流水线。
+.macos-bridge:
+  stage: verify
+  tags: ["$LINUX_X64_RUNNER_TAG"]
+  # 作业级 timeout：本实例 default: timeout 不生效（见 .release-compile 注释）；
+  # 须大于 GitHub 侧 timeout-minutes(30m) + 轮询余量
+  timeout: 45m
+  variables:
+    GH_BRIDGE_REPO: "CodeFuckee/gl-macos-bridge"
+    GH_POLL_TIMEOUT_MIN: "35"
+
+macos-bridge-smoke:
+  extends: .macos-bridge
+  variables:
+    MACOS_SCRIPT: "ci/macos-smoke.sh"
+  script:
+    - bash ci/bridge.sh
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    # masked+protected 变量缺失/为空 → 静默跳过（配置好 GH_BRIDGE_TOKEN 后自动启用）
+    - if: '$GH_BRIDGE_TOKEN == null || $GH_BRIDGE_TOKEN == ""'
+      when: never
+    - when: on_success
+
 # ---- 三平台 release 编译验证（按平台 needs 链式并行，慢平台不再阻塞其他平台）----
 .release-compile:
   extends: .rust-node
