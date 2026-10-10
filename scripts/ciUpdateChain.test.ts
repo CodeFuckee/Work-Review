@@ -45,8 +45,14 @@ test('打包作业必须在构建前清理 bundle 目录（防历史版本产物
   ).length;
   assert.equal(
     cleanupCount,
-    7,
-    '七个打包作业（.tauri-package/tauri-package-windows/.package-daily 系列与 windows 日常包）都应有构建前清理',
+    5,
+    'yaml 内五个打包作业（.tauri-package/tauri-package-windows/.package-daily 系列与 windows 日常包）都应有构建前清理；桥接的 mac 打包作业清理收进 ci/macos/package.sh',
+  );
+  const packageSh = read(fileURLToPath(new URL('../ci/macos/package.sh', import.meta.url)));
+  assert.match(
+    packageSh,
+    /rm -rf target\/release\/bundle target\/\*\/release\/bundle/,
+    '桥接 mac 打包脚本同样构建前清理（一次性 VM 虽无残留，保留防线对齐 publish 全量 glob）',
   );
   assert.match(yaml, /GIT_CLEAN_FLAGS: -ffdx --exclude=target/);
 });

@@ -43,12 +43,26 @@ test('应存在五个夜间安装包 job（Windows/macOS×2/Linux×2），rules 
   // 发布 needs 对可跳过平台使用 optional
   assert.match(yaml, /- job: tauri-package-macos-x64[\s\S]*?optional: true/);
   assert.match(yaml, /- job: tauri-package-linux-arm64[\s\S]*?optional: true/);
-  // 每个 job 的上传 artifact 保留 30 天
+  // mac 夜间作业已桥接（.macos-bridge）：schedule 规则内联在作业上，构建在
+  // ci/macos/package.sh（GitHub macOS runner 执行），产物经 MACOS_FETCH_ARTIFACTS
+  // 拉回还原后仍声明为作业 artifacts（latest 下载链接依赖）
+  const packageSh = readFileSync(new URL('../ci/macos/package.sh', import.meta.url), 'utf8');
+  assert.match(packageSh, /npm run tauri build/, '桥接打包脚本必须产出安装包');
+  assert.match(packageSh, /TAURI_TARGET_TRIPLE/, '桥接打包脚本应按透传的三元组构建');
   const jobSlices = yaml.split(/^(?=package-daily-)/m);
   for (const slice of jobSlices) {
     if (/^package-daily-/.test(slice)) {
       assert.match(slice, /expire_in: 30 days/, '日常 artifact 保留 30 天');
-      assert.match(slice, /npm run tauri build/, '必须产出安装包');
+      if (/MACOS_SCRIPT: "ci\/macos\/package\.sh"/.test(slice)) {
+        assert.match(
+          slice,
+          /if: '\$CI_PIPELINE_SOURCE == "schedule"( && \$PACKAGE_MACOS_X64 == "true")?'/,
+          'mac 夜间作业仍仅 schedule 触发',
+        );
+        assert.match(slice, /MACOS_FETCH_ARTIFACTS: "true"/, '桥接作业须拉回产物供 latest 链接');
+      } else {
+        assert.match(slice, /npm run tauri build/, '必须产出安装包');
+      }
     }
   }
 });

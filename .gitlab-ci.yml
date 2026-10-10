@@ -320,8 +320,8 @@ rust-verify-windows:
 # 桥接作业跑在 linux-x64 shell runner：bridge.sh 发 repository_dispatch → GitHub
 # macOS runner 按 SHA 克隆本仓库并执行 MACOS_SCRIPT → dist/* 回传 package
 # registry → bridge.sh 轮询终态镜像为退出码。已迁移：rust-verify-macos、
-# build-release-macos、tauri-package-macos-arm64（smoke 链路常驻验证）。
-# 仍在 MacBook（MACOS_RUNNER_TAG）：package-daily-macos-*、tauri-package-macos-x64。
+# build-release-macos、tauri-package-macos-arm64/x64、package-daily-macos-arm64/x64
+# ——macOS 作业全部脱离 MacBook（MACOS_RUNNER_TAG 暂保留给未来用途）。
 # 作业级变量：
 #   MACOS_SCRIPT           必填，macOS 侧执行的仓库内脚本（自包含）
 #   MACOS_ENV_PASSTHROUGH  按名透传 GitLab 变量（值可含空格；只放非敏感配置，
@@ -563,27 +563,20 @@ package-daily-linux-arm64:
       - target/**/release/bundle/rpm/*.rpm
 
 package-daily-macos-arm64:
-  extends: [.rust-node, .package-daily]
-  # mac 冷缓存全量打包可超 1h（runner 另有 1h 运行上限属基础设施问题，无法在此解）
+  # macOS 桥接（.macos-bridge）：ci/macos/package.sh，夜间产包不再依赖 MacBook。
+  # 固定 latest 下载链接指向本作业 artifacts，故 MACOS_FETCH_ARTIFACTS 拉回还原
+  # target/**/release/bundle 原路径供 artifacts 声明
+  extends: .macos-bridge
+  stage: daily-package
   timeout: 3h
   needs: [nightly-gate, rust-verify-macos]
-  tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
-  before_script:
-    - !reference [.rust-node, before_script]
-    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
-    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
-    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
-    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
-    TAURI_BUILD_ARGS: "--target aarch64-apple-darwin"
-    APPLE_SIGNING_IDENTITY: "-"
-  script:
-    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
-    # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
-    - rm -rf target/release/bundle target/*/release/bundle
-    - npm run tauri build -- $TAURI_BUILD_ARGS
+    MACOS_SCRIPT: "ci/macos/package.sh"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS TAURI_TARGET_TRIPLE"
+    TAURI_TARGET_TRIPLE: "aarch64-apple-darwin"
+    GH_POLL_TIMEOUT_MIN: "170"
+    MACOS_FETCH_ARTIFACTS: "true"
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
     when: always
@@ -591,38 +584,33 @@ package-daily-macos-arm64:
     paths:
       - target/**/release/bundle/dmg/*.dmg
       - target/**/release/bundle/dmg/*.sig
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: never
 
 package-daily-macos-x64:
-  extends: [.rust-node, .package-daily]
+  # macOS 桥接（同上）；x64 为 arm64 runner 交叉编译，随 PACKAGE_MACOS_X64 启用
+  extends: .macos-bridge
+  stage: daily-package
   timeout: 3h
   needs: [nightly-gate, rust-verify-macos]
-  tags: ["$MACOS_RUNNER_TAG"]
   resource_group: macos-package
+  variables:
+    MACOS_SCRIPT: "ci/macos/package.sh"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS TAURI_TARGET_TRIPLE"
+    TAURI_TARGET_TRIPLE: "x86_64-apple-darwin"
+    GH_POLL_TIMEOUT_MIN: "170"
+    MACOS_FETCH_ARTIFACTS: "true"
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/**/release/bundle/dmg/*.dmg
+      - target/**/release/bundle/dmg/*.sig
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $PACKAGE_MACOS_X64 == "true"'
     - when: never
-  before_script:
-    - !reference [.rust-node, before_script]
-    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
-    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
-    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
-    - export SDKROOT="$(xcrun --show-sdk-path)"
-  variables:
-    TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
-    APPLE_SIGNING_IDENTITY: "-"
-  script:
-    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
-    # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
-    - rm -rf target/release/bundle target/*/release/bundle
-    - npm run tauri build -- $TAURI_BUILD_ARGS
-  artifacts:
-    name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
-    when: always
-    expire_in: 30 days
-    paths:
-      - target/**/release/bundle/dmg/*.dmg
-      - target/**/release/bundle/dmg/*.sig
 
 # ---- 版本自增：verify + compile 全部成功后自动 bump 版本并打 tag 发布 ----
 # 规则：末位 +1，逢 100 进位（1.2.99 → 1.3.0）。同步 5 处版本源
@@ -840,7 +828,8 @@ tauri-package-macos-arm64:
   resource_group: macos-package
   variables:
     MACOS_SCRIPT: "ci/macos/package.sh"
-    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS TAURI_TARGET_TRIPLE"
+    TAURI_TARGET_TRIPLE: "aarch64-apple-darwin"
     GH_POLL_TIMEOUT_MIN: "170"
     MACOS_FETCH_ARTIFACTS: "true"
   timeout: 3h
@@ -856,18 +845,27 @@ tauri-package-macos-arm64:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/'
 
 tauri-package-macos-x64:
-  extends: .tauri-package
-  tags: ["$MACOS_RUNNER_TAG"]
+  # macOS 桥接（.macos-bridge）：ci/macos/package.sh 交叉编译 x64，
+  # 随 PACKAGE_MACOS_X64 启用；签名与产物还原同 arm64 作业
+  extends: .macos-bridge
+  stage: package
+  needs: [release-preflight]
   resource_group: macos-package
-  before_script:
-    - !reference [.rust-node, before_script]
-    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
-    # clang(Xcode 26.5)解析不了 CLT 27.0 SDK 的 tbd,而 runner 用户 shell 可能
-    # 残留 SDKROOT 指向 CLT——强制对齐 xcrun 当前选择的 SDK(2026-09-14 mac 打包失败)。
-    - export SDKROOT="$(xcrun --show-sdk-path)"
   variables:
-    TAURI_BUILD_ARGS: "--target x86_64-apple-darwin"
-    APPLE_SIGNING_IDENTITY: "-"
+    MACOS_SCRIPT: "ci/macos/package.sh"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS TAURI_TARGET_TRIPLE"
+    TAURI_TARGET_TRIPLE: "x86_64-apple-darwin"
+    GH_POLL_TIMEOUT_MIN: "170"
+    MACOS_FETCH_ARTIFACTS: "true"
+  timeout: 3h
+  artifacts:
+    name: "$CI_COMMIT_TAG-$CI_JOB_NAME"
+    when: always
+    expire_in: never
+    paths:
+      - target/**/release/bundle/dmg/*.dmg
+      - target/**/release/bundle/macos/*.app.tar.gz
+      - target/**/release/bundle/macos/*.app.tar.gz.sig
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ && $PACKAGE_MACOS_X64 == "true"'
 

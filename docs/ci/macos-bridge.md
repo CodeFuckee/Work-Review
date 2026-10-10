@@ -34,15 +34,19 @@ GitLab main push → 流水线
 `GH_BRIDGE_TOKEN` 未配置时 `macos-bridge-smoke` 自动跳过（`when: never`），
 流水线不受影响。
 
-## 迁移状态（2026-10-10）
+## 迁移状态（2026-10-10，macOS 作业已全部脱离 MacBook）
 
 | 作业 | 执行体 | 状态 |
 | --- | --- | --- |
-| `macos-bridge-smoke` | `ci/macos-smoke.sh` | 桥接（常驻冒烟） |
-| `rust-verify-macos` | `ci/macos/verify.sh` | 桥接（全量冷构建 1.5–2.5h） |
-| `build-release-macos` | `ci/macos/release-build.sh` | 桥接（产物拉回还原 `target/release/Yue_Review`） |
-| `tauri-package-macos-arm64` | `ci/macos/package.sh` | 桥接（签名走桥接仓库 secrets，产物还原 bundle 路径供 publish） |
-| `package-daily-macos-arm64/x64`、`tauri-package-macos-x64` | — | 仍在 MacBook（夜间/未启用，按需再迁） |
+| `macos-bridge-smoke` | `ci/macos-smoke.sh` | 桥接（常驻冒烟 + registry 回环守护） |
+| `rust-verify-macos` | `ci/macos/verify.sh` | 桥接（实测 ~7 分钟） |
+| `build-release-macos` | `ci/macos/release-build.sh` | 桥接（实测 ~15 分钟，产物还原真实二进制名 `work-review`） |
+| `tauri-package-macos-arm64` | `ci/macos/package.sh`（triple 透传） | 桥接（实测 ~21 分钟；签名/产物结构已 dry-run 验证） |
+| `tauri-package-macos-x64` | `ci/macos/package.sh`（交叉编译） | 桥接（随 `PACKAGE_MACOS_X64` 启用，当前关） |
+| `package-daily-macos-arm64` | `ci/macos/package.sh` | 桥接（夜间 schedule；latest 下载链接依赖的 artifacts 已保留） |
+| `package-daily-macos-x64` | `ci/macos/package.sh` | 桥接（随 `PACKAGE_MACOS_X64` 启用，当前关） |
+
+四个打包作业共用 `ci/macos/package.sh`，目标三元组经 `TAURI_TARGET_TRIPLE` 透传切换。
 
 重型作业语义：
 
@@ -57,10 +61,13 @@ GitLab main push → 流水线
 ```yaml
 my-macos-job:
   extends: .macos-bridge
+  stage: compile                        # 模板默认 verify，按需覆盖
   variables:
-    MACOS_SCRIPT: "ci/我的脚本.sh"     # 脚本须自包含；产物放 dist/
-  script:
-    - bash ci/bridge.sh
+    MACOS_SCRIPT: "ci/macos/我的脚本.sh"  # 脚本须自包含；产物放 dist/
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS"  # 按名透传非敏感变量
+    GH_POLL_TIMEOUT_MIN: "170"          # < 本作业 timeout，> GitHub 侧执行时长
+  timeout: 3h
+  rules: [...]
 ```
 
 脚本可用的注入变量（白名单）：`CI_PROJECT_PATH/NAME`、`CI_COMMIT_REF_NAME/SHA`、

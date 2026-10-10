@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# ci/macos/package.sh — tauri-package-macos-arm64 的桥接执行体（tag 发版打包）。
-# 签名：TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD 由桥接
+# ci/macos/package.sh — 全部 macOS 打包作业的桥接执行体（tag 发版 + 夜间产包，
+# arm64/x64 共用，目标三元组经 MACOS_ENV_PASSTHROUGH 的 TAURI_TARGET_TRIPLE
+# 传入，缺省 aarch64）。签名：TAURI_SIGNING_PRIVATE_KEY(_PASSWORD) 由桥接
 # workflow 从 GitHub secrets（GL131_ 前缀）注入环境——tauri-cli v2.12 直接读
 # 这两个环境变量（名字与 GitLab 变量一致），密钥绝不进 payload（公开数据）。
 # 产物按仓库相对路径镜像进 dist/target/<triple>/release/bundle，拉回还原后
@@ -8,7 +9,7 @@
 set -euo pipefail
 cd "${CI_PROJECT_DIR:?CI_PROJECT_DIR 未注入}"
 
-TARGET_TRIPLE="aarch64-apple-darwin"   # 对齐原作业 TAURI_BUILD_ARGS
+TARGET_TRIPLE="${TAURI_TARGET_TRIPLE:-aarch64-apple-darwin}"
 export APPLE_SIGNING_IDENTITY="-"      # ad-hoc 签名（对齐原作业变量）
 
 : "${RUST_VERSION:?RUST_VERSION 未透传（检查作业 MACOS_ENV_PASSTHROUGH）}"
