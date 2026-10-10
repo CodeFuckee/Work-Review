@@ -333,6 +333,8 @@ rust-verify-windows:
 .macos-bridge:
   stage: verify
   tags: ["$LINUX_X64_RUNNER_TAG"]
+  script:
+    - bash ci/bridge.sh
   # 作业级 timeout：本实例 default: timeout 不生效（见 .release-compile 注释）；
   # 须大于 GitHub 侧 timeout-minutes(175m) + 轮询余量
   timeout: 45m
@@ -346,8 +348,6 @@ macos-bridge-smoke:
   extends: .macos-bridge
   variables:
     MACOS_SCRIPT: "ci/macos-smoke.sh"
-  script:
-    - bash ci/bridge.sh
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
