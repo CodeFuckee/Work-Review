@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn apply_auth_header_should_attach_bearer_token() {
         let client = reqwest::Client::new();
-        let request = apply_auth_header(client.get("http://localhost/x"), Some("tok-1".into()))
+        let request = apply_auth_header(client.get("http://localhost/x"), Some("tok-1"))
             .build()
             .unwrap();
         assert_eq!(
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn apply_auth_header_should_skip_empty_token() {
         let client = reqwest::Client::new();
-        let request = apply_auth_header(client.get("http://localhost/x"), Some("  ".into()))
+        let request = apply_auth_header(client.get("http://localhost/x"), Some("  "))
             .build()
             .unwrap();
         assert!(request.headers().get("authorization").is_none());
