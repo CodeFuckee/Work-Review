@@ -22,4 +22,8 @@ npm run build
 cargo build --release -p work-review
 
 mkdir -p dist/target/release
-cp target/release/Yue_Review dist/target/release/Yue_Review
+# 二进制名 = cargo 包名 work-review（无 [[bin]] 重命名；tauri 打包时才用
+# --binary-name 改名）。原作业声明的 Yue_Review 产物路径在 macOS 上一直是空产物
+# （GitLab 对缺失路径仅警告），此处按真实产物名镜像
+[ -f target/release/work-review ] || { echo "release 二进制不存在：target/release/work-review" >&2; exit 1; }
+cp target/release/work-review dist/target/release/work-review

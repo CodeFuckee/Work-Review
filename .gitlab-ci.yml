@@ -386,7 +386,8 @@ build-release-linux:
 
 build-release-macos:
   # macOS 桥接（.macos-bridge）：ci/macos/release-build.sh，产物经 package
-  # registry 拉回还原 target/release/Yue_Review 原路径（下游零改动）
+  # registry 拉回还原原路径。产物路径用真实二进制名 work-review（cargo 包名，
+  # 无 [[bin]] 重命名；原 Yue_Review 声明在 macOS 上一直是空产物，潜伏 bug 顺手修正）
   extends: .macos-bridge
   stage: compile
   needs: [rust-verify-macos]
@@ -401,7 +402,7 @@ build-release-macos:
     when: always
     expire_in: 1 week
     paths:
-      - target/release/Yue_Review
+      - target/release/work-review
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
