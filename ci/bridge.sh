@@ -36,6 +36,12 @@ CORR="gl${CI_PROJECT_ID}-p${CI_PIPELINE_ID}j${CI_JOB_ID}"
 INTERVAL="${GH_POLL_INTERVAL:-15}"
 DEADLINE=$(( $(date +%s) + ${GH_POLL_TIMEOUT_MIN:-40} * 60 ))
 API="https://api.github.com/repos/${GH_BRIDGE_REPO}"
+# CI_SERVER_HOST 不含端口：非标端口实例须拼 CI_SERVER_PORT（与 payload 构造保持一致）
+if [ "${CI_SERVER_PORT:-443}" = "443" ]; then
+  GL_SERVER="${CI_SERVER_HOST}"
+else
+  GL_SERVER="${CI_SERVER_HOST}:${CI_SERVER_PORT}"
+fi
 
 gh_curl() {
   curl -sS -m 30 \
@@ -78,6 +84,12 @@ import base64, json, os
 def env(k, d=""):
     return os.environ.get(k, d)
 
+# CI_SERVER_HOST 不含端口（非标端口实例必须拼上 CI_SERVER_PORT，否则
+# GitHub 侧克隆/回传会打到 443 上 404——首条真实流水线实测踩坑）
+host = env("CI_SERVER_HOST")
+port = env("CI_SERVER_PORT", "443")
+server = host if port == "443" else f"{host}:{port}"
+
 env_whitelist = {
     "CI_PROJECT_PATH": env("CI_PROJECT_PATH"),
     "CI_PROJECT_NAME": env("CI_PROJECT_NAME"),
@@ -85,7 +97,8 @@ env_whitelist = {
     "CI_COMMIT_SHA": env("CI_COMMIT_SHA"),
     "CI_PIPELINE_IID": env("CI_PIPELINE_IID"),
     "CI_JOB_NAME": env("CI_JOB_NAME"),
-    "CI_SERVER_HOST": env("CI_SERVER_HOST"),
+    # 传修正后的带端口地址，macOS 侧脚本用它拼 URL
+    "CI_SERVER_HOST": server,
 }
 # MACOS_EXTRA_ENV="K1=V1 K2=V2"（值不含空格；复杂需求改此处白名单）
 for kv in os.environ.get("MACOS_EXTRA_ENV", "").split():
@@ -99,7 +112,7 @@ payload = {
     # GitHub repository_dispatch 的 client_payload 顶层属性上限 10 个：
     # GitLab 上下文收进嵌套对象（嵌套算 1 个属性），顶层固定 4 个。
     "gl": {
-        "server": env("CI_SERVER_HOST"),
+        "server": server,
         "project": env("CI_PROJECT_PATH"),
         "project_id": env("CI_PROJECT_ID"),
         "ref": env("CI_COMMIT_REF_NAME"),
@@ -132,7 +145,7 @@ while :; do
       trap - EXIT
       if [ "$concl" = "success" ]; then
         echo "bridge: ✓ macOS 作业成功；产物（如有）已回传 package registry："
-        echo "  https://${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
+        echo "  https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
         exit 0
       fi
       echo "bridge: ✗ macOS 作业失败（${concl}），日志：${url}" >&2
