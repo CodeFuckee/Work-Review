@@ -28,9 +28,7 @@ case "$*" in *aarch64*) TAURI_ARCH=aarch64 ;; esac
 case "$TAURI_ARCH" in
   x86_64)
     APPRUN_SHA="f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f"
-    # tauri 2.10.3 起缓存名带 commit 钉版（linuxdeploy-07333c6-x86_64.AppImage），
-    # 旧 continuous 名不再被读取；sha 于首次运行回填（见 fetch_tool 失败分支输出）
-    LINUXDEPLOY_SHA="0000000000000000000000000000000000000000000000000000000000000000"
+    LINUXDEPLOY_SHA="e762bea85c8eb0d4b3508d46e5c1f037f717d0f9303ae3b4aafc8b04991fa1ef"
     PLUGIN_APPIMAGE_SHA="0441769ab38009504d2678c38cd7e526955388dd30a215b4a20afaa5471652f2"
     # AppImage type2 runtime（linuxdeploy-plugin-appimage 生成镜像时使用；
     # 不预提供时插件自行从 GitHub 下载——家庭 runner 对 Hub 系两连败根因）
@@ -38,7 +36,7 @@ case "$TAURI_ARCH" in
     ;;
   aarch64)
     APPRUN_SHA="072f17c0895a85c490282fe5395c5007e5fc75da727e553b3b8fb680feb11578"
-    LINUXDEPLOY_SHA="0000000000000000000000000000000000000000000000000000000000000000"
+    LINUXDEPLOY_SHA="b12b5cc57bd0921e1f98d73f58aa364503bc1a27f54b7a69fd2870bce7fa2f55"
     PLUGIN_APPIMAGE_SHA="ce574719bcf9cc1fb12728d60b17e48cc87d9b6c40f6f48b04cff7d273b5eb24"
     RUNTIME_SHA="b4ff0030242d0c3bb12ce40541828303cf167493f4793456f0436edd6255c39d"
     ;;
@@ -83,7 +81,7 @@ fetch_tool() {
   exit 1
 }
 fetch_tool "$CACHE_DIR/AppRun-$TAURI_ARCH" "https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-$TAURI_ARCH" "$APPRUN_SHA"
-fetch_tool "$CACHE_DIR/linuxdeploy-07333c6-$TAURI_ARCH.AppImage" "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-$TAURI_ARCH.AppImage" "$LINUXDEPLOY_SHA"
+fetch_tool "$CACHE_DIR/linuxdeploy-$TAURI_ARCH.AppImage" "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-$TAURI_ARCH.AppImage" "$LINUXDEPLOY_SHA"
 # 注意：该插件的 bundler 缓存名不带架构后缀（tauri-bundler prepare_tools 约定）
 fetch_tool "$CACHE_DIR/linuxdeploy-plugin-appimage.AppImage" "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-$TAURI_ARCH.AppImage" "$PLUGIN_APPIMAGE_SHA"
 fetch_tool "$CACHE_DIR/linuxdeploy-plugin-gtk.sh" "$PLUGIN_GTK_URL" "$PLUGIN_GTK_SHA"
@@ -91,6 +89,14 @@ fetch_tool "$CACHE_DIR/linuxdeploy-plugin-gstreamer.sh" "$PLUGIN_GSTREAMER_URL" 
 # type2 runtime 预提供：经 APPIMAGE_TYPE2_RUNTIME_FILE 传给 linuxdeploy-plugin-appimage，
 # 插件不再自行访问 GitHub（v1.2.24 两连败根因：runtime 下载超时且插件无法走镜像）
 fetch_tool "$CACHE_DIR/runtime-$TAURI_ARCH" "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$TAURI_ARCH" "$RUNTIME_SHA"
+# tauri 2.10.3 的 bundler 改读 commit 钉版名（linuxdeploy-07333c6-<arch>.AppImage），
+# 白名单基准仍为 continuous 构建：把校验过的已知良好二进制复制为钉版名供其读取，
+# 避免 bundler 绕过 sha 门禁自行从 GitHub 下载（家庭 runner 对 Hub 系两连败根因）
+if [ -s "$CACHE_DIR/linuxdeploy-$TAURI_ARCH.AppImage" ]; then
+  cp -f "$CACHE_DIR/linuxdeploy-$TAURI_ARCH.AppImage" "$CACHE_DIR/linuxdeploy-07333c6-$TAURI_ARCH.AppImage"
+  chmod +x "$CACHE_DIR/linuxdeploy-07333c6-$TAURI_ARCH.AppImage"
+  echo "已为 tauri 钉版名提供 linuxdeploy 副本: linuxdeploy-07333c6-$TAURI_ARCH.AppImage"
+fi
 
 # 容器无 /dev/fuse，AppImage 形态的 linuxdeploy 及其插件必须走解包运行，
 # 否则 tauri 打包器在 AppImage 步骤报 "failed to run linuxdeploy"（v1.1.86 根因）
