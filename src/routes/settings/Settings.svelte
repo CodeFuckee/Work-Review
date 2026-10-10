@@ -534,53 +534,59 @@
       </section>
     {/if}
 
-    <!-- 设置页签（Carbon Tabs） -->
+    <!-- 设置页签（Carbon Tabs：0.113 重写版 —— 导航项 + slot="content" 面板区，
+         面板须为 role=tabpanel 直接子级并由 hidden 按索引切换，内容按需懒渲染） -->
     <Tabs selected={0} on:change={(e) => { activeTab = tabs[e.detail]?.id ?? 'general'; }}>
       {#each tabs as tab (tab.id)}
-        <Tab label={t(tab.labelKey) + (tab.beta ? ' · Beta' : '')}>
-          {#if activeTab === tab.id || true}
-            <div class="settings-carbon-panel">
-            {#if activeTab === 'general'}
-              <SettingsGeneral bind:config on:change={() => dirty = true} />
-            {:else if activeTab === 'appearance'}
-              <SettingsAppearance bind:config on:change={handleSettingsChange} />
-            {:else if activeTab === 'node'}
-              <SettingsNodeGateway bind:config {dataDir} on:change={() => dirty = true} />
-            {:else if activeTab === 'ai'}
-              <section class="settings-carbon-card">
-                <h3 class="cds--type-heading-02">{t('settings.aiCardTitle')}</h3>
-                <p class="settings-carbon-card-desc">{t('settings.aiCardDescription')}</p>
-                <SettingsAI bind:config {providers} on:change={() => dirty = true} />
-              </section>
-            {:else if activeTab === 'privacy'}
-              <SettingsPrivacy
-                bind:config
-                {runningApps}
-                {recentApps}
-                on:change={() => dirty = true}
-                on:refresh-apps={() => { loadRunningApps(); loadRecentApps(); }}
-              />
-            {:else if activeTab === 'storage'}
-              <SettingsStorage
-                bind:config
-                {storageStats}
-                {dataDir}
-                {defaultDataDir}
-                on:change={() => dirty = true}
-                on:clearCache={handleClearCache}
-                on:dataDirChanged={handleDataDirChanged}
-              />
-            {:else if activeTab === 'gitlab'}
-              <SettingsGitlab bind:config on:change={() => dirty = true} />
-            {:else if activeTab === 'plane'}
-              <SettingsPlane bind:config on:change={() => dirty = true} />
-            {:else if activeTab === 'filemonitor'}
-              <SettingsFileMonitor bind:config on:change={() => dirty = true} />
-            {/if}
-            </div>
-          {/if}
-        </Tab>
+        <Tab label={t(tab.labelKey) + (tab.beta ? ' · Beta' : '')} />
       {/each}
+      <svelte:fragment slot="content">
+        {#each tabs as tab (tab.id)}
+          <div role="tabpanel" hidden={activeTab !== tab.id}>
+            {#if activeTab === tab.id}
+              <div class="settings-carbon-panel">
+              {#if activeTab === 'general'}
+                <SettingsGeneral bind:config on:change={() => dirty = true} />
+              {:else if activeTab === 'appearance'}
+                <SettingsAppearance bind:config on:change={handleSettingsChange} />
+              {:else if activeTab === 'node'}
+                <SettingsNodeGateway bind:config {dataDir} on:change={() => dirty = true} />
+              {:else if activeTab === 'ai'}
+                <section class="settings-carbon-card">
+                  <h3 class="cds--type-heading-02">{t('settings.aiCardTitle')}</h3>
+                  <p class="settings-carbon-card-desc">{t('settings.aiCardDescription')}</p>
+                  <SettingsAI bind:config {providers} on:change={() => dirty = true} />
+                </section>
+              {:else if activeTab === 'privacy'}
+                <SettingsPrivacy
+                  bind:config
+                  {runningApps}
+                  {recentApps}
+                  on:change={() => dirty = true}
+                  on:refresh-apps={() => { loadRunningApps(); loadRecentApps(); }}
+                />
+              {:else if activeTab === 'storage'}
+                <SettingsStorage
+                  bind:config
+                  {storageStats}
+                  {dataDir}
+                  {defaultDataDir}
+                  on:change={() => dirty = true}
+                  on:clearCache={handleClearCache}
+                  on:dataDirChanged={handleDataDirChanged}
+                />
+              {:else if activeTab === 'gitlab'}
+                <SettingsGitlab bind:config on:change={() => dirty = true} />
+              {:else if activeTab === 'plane'}
+                <SettingsPlane bind:config on:change={() => dirty = true} />
+              {:else if activeTab === 'filemonitor'}
+                <SettingsFileMonitor bind:config on:change={() => dirty = true} />
+              {/if}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </svelte:fragment>
     </Tabs>
   {/if}
 </div>

@@ -1178,7 +1178,7 @@ export default {
       inputMonitoringPermission: '输入监控',
       inputMonitoringPermissionHint: 'macOS 15+ 键盘联动通常需要此项。',
       uiVisualStyle: '界面风格',
-      uiVisualStyleDesc: '在三套外观之间切换，不影响统计逻辑和数据记录',
+      uiVisualStyleDesc: '在浅色、深色与跟随系统之间切换界面主题',
       uiStyleATitle: '专业清爽',
       uiStyleADesc: '更克制的效率工具感，减少光效、圆角和玻璃感。',
       uiStyleABadge: 'A',

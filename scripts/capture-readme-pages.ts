@@ -881,6 +881,15 @@ async function main(): Promise<void> {
       console.log(`[${item.locale}] 截取助手`);
       await capturePage(page, '/#/ask', '.ask-workbench-shell', outputPath('助手'));
 
+      if (process.env.CAPTURE_DEBUG) {
+        console.log('[debug-tabs]', await page.evaluate(() => {
+          const tabs = document.querySelector('.bx--tabs');
+          if (!tabs) return 'NO .bx--tabs';
+          const items = [...document.querySelectorAll('.bx--tabs__nav-link')].map(a => a.textContent.trim());
+          const panels = document.querySelectorAll('[role=tabpanel]').length;
+          return JSON.stringify({ itemCount: items.length, items: items.slice(0, 9), panels, tabsH: (tabs as HTMLElement).offsetHeight });
+        }));
+      }
       console.log(`[${item.locale}] 截取设置页`);
       await capturePage(page, '/#/settings', '.settings-carbon-panel', outputPath('设置-通用'));
       // 索引对应 Settings.svelte tabs 数组（0=general 已随 /#/settings 首屏拍过）：

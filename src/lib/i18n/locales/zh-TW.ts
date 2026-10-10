@@ -1180,7 +1180,7 @@ export default {
       inputMonitoringPermission: '輸入監控',
       inputMonitoringPermissionHint: 'macOS 15 之後，鍵盤聯動通常還需要另外開啟輸入監控。',
       uiVisualStyle: '介面風格',
-      uiVisualStyleDesc: '在三套外觀之間切換，不影響統計邏輯與資料記錄',
+      uiVisualStyleDesc: '在淺色、深色與跟隨系統之間切換介面主題',
       uiStyleATitle: '專業清爽',
       uiStyleADesc: '更克制的效率工具感，減少光效、圓角與玻璃感。',
       uiStyleABadge: 'A',

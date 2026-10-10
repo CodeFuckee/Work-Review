@@ -1194,7 +1194,7 @@ export default {
       inputMonitoringPermission: 'Input Monitoring',
       inputMonitoringPermissionHint: 'Required for keyboard linkage on macOS 15+.',
       uiVisualStyle: 'Interface Style',
-      uiVisualStyleDesc: 'Switch between three visual styles without changing tracking or statistics.',
+      uiVisualStyleDesc: 'Switch the interface theme between light, dark, and system.',
       uiStyleATitle: 'Quiet Pro',
       uiStyleADesc: 'A calmer productivity-tool look with less glow, radius, and glass.',
       uiStyleABadge: 'A',

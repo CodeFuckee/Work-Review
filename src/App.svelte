@@ -948,7 +948,7 @@
       </div>
     {/if}
 
-    <div class="relative z-10 flex min-h-full flex-col">
+    <div class="app-content-scroll relative z-10 flex flex-col">
       {#if authGate === 'grace'}
         <div class="px-4 pt-3">
           <InlineNotification kind="warning" title={tLocale('auth.graceNotice')} hideCloseButton={true} timeout={0}>
@@ -958,7 +958,7 @@
           </InlineNotification>
         </div>
       {/if}
-      <div class="min-h-0 flex-1">
+      <div>
         {#key currentLocale}
           <Router {routes} />
         {/key}
@@ -970,6 +970,14 @@
 {/if}
 
 <style>
+  /* Content 内滚动容器：Carbon Header 固定 3rem，内容区独立滚动
+     （迁移时丢失了旧 .app-shell-main-scroll 的滚动职责，导致高页面被裁切） */
+  .app-content-scroll {
+    height: calc(100vh - 3rem);
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
   /* 壳层窗口控制按钮：置于 Carbon Header 内右侧，主区可点、不可触发拖拽 */
   .shell-window-controls {
     display: flex;

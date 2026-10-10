@@ -1186,7 +1186,7 @@ export default {
       inputMonitoringPermission: 'مراقبة الإدخال',
       inputMonitoringPermissionHint: 'مطلوب لربط لوحة المفاتيح في macOS 15+.',
       uiVisualStyle: 'نمط الواجهة',
-      uiVisualStyleDesc: 'بدّل بين ثلاثة أنماط بصرية دون تغيير سلوك التطبيق الأساسي.',
+      uiVisualStyleDesc: 'بدّل مظهر الواجهة بين الفاتح والداكن واتبع النظام.',
       uiStyleATitle: 'هادئ (Quiet Pro)',
       uiStyleADesc: 'مظهر احترافي وهادئ مع تقليل التوهج والزجاج.',
       uiStyleABadge: 'A',
