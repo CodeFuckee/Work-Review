@@ -21,6 +21,7 @@ npm ci --prefer-offline
 npm run build
 cargo build --release -p work-review
 
+rm -rf dist
 mkdir -p dist/target/release
 # 二进制名 = cargo 包名 work-review（无 [[bin]] 重命名；tauri 打包时才用
 # --binary-name 改名）。原作业声明的 Yue_Review 产物路径在 macOS 上一直是空产物
