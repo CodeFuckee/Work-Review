@@ -39,6 +39,20 @@ fi
 for deb in "$@"; do
   [ -f "$deb" ] || { echo "deb 不存在: $deb" >&2; exit 1; }
 done
+# 同名不同内容的 deb 拒发：共享 runner 工作区可能残留其他流水线写入的同名
+# 同版本 deb（v1.2.26 事故：夜间 daily 不带 --target 落 target/release/，与发版
+# 构建一起被全量 glob 捞入——Packages 索引双条各记一份、pool 单文件取其一，
+# apt 按第一条校验报「文件尺寸不符」）。同名必须逐字节一致，否则宁可失败。
+declare -A seen_sha
+for deb in "$@"; do
+  base="$(basename "$deb")"
+  cur="$(sha256sum "$deb" | cut -d' ' -f1)"
+  if [ -n "${seen_sha[$base]:-}" ] && [ "${seen_sha[$base]}" != "$cur" ]; then
+    echo "拒发: 同名 deb 内容不一致（跨流水线工作区残留？）: $deb" >&2
+    exit 1
+  fi
+  seen_sha[$base]="$cur"
+done
 command -v gpg >/dev/null || { echo "runner 缺少 gpg（apt install gnupg）" >&2; exit 1; }
 
 WORK="$(mktemp -d)"

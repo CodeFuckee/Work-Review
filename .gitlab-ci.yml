@@ -1117,7 +1117,12 @@ publish-release:
       UPLOAD_TOKEN_HEADER="$(mktemp)"
       trap 'rm -f "$UPLOAD_TOKEN_HEADER"' EXIT
       printf 'PRIVATE-TOKEN: %s\n' "${GIT_PUSH_TOKEN:-$CI_JOB_TOKEN}" > "$UPLOAD_TOKEN_HEADER"
-      for f in target/**/release/bundle/dmg/*"${VERSION}"*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*"${VERSION}"*.exe target/**/release/bundle/nsis/*"${VERSION}"*.exe.sig                target/**/Yue_Review_portable_*.zip target/**/release/bundle/appimage/*"${VERSION}"*.AppImage                target/**/release/bundle/deb/*"${VERSION}"*.deb target/**/release/bundle/rpm/*"${VERSION}"*.rpm updater.json; do
+      # linux 三件套（deb/rpm/AppImage）路径收窄到发版构建的确定目录
+      # target/x86_64-unknown-linux-gnu/...：不能 target/** 全量——共享工作区会被
+      # 其他流水线（夜间 daily 落 target/release/）写入同名同版本产物，后传者胜
+      # 只是侥幸一致（v1.2.26 apt 索引双条事故同源）。dmg/macos/nsis/portable
+      # 无跨流水线碰撞面（平台/产物形态独占），维持 ** 不动
+      for f in target/**/release/bundle/dmg/*"${VERSION}"*.dmg                target/**/release/bundle/macos/*.app.tar.gz target/**/release/bundle/macos/*.app.tar.gz.sig                target/**/release/bundle/nsis/*"${VERSION}"*.exe target/**/release/bundle/nsis/*"${VERSION}"*.exe.sig                target/**/Yue_Review_portable_*.zip target/x86_64-unknown-linux-gnu/release/bundle/appimage/*"${VERSION}"*.AppImage                target/x86_64-unknown-linux-gnu/release/bundle/deb/*"${VERSION}"*.deb target/x86_64-unknown-linux-gnu/release/bundle/rpm/*"${VERSION}"*.rpm updater.json; do
         [ -f "$f" ] || continue
         name="$(basename "$f")"
         code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT           --header @"$UPLOAD_TOKEN_HEADER" --data-binary "@$f"           --header 'Content-Type: application/octet-stream'           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/packages/generic/yue-review/$VERSION/$name")"
@@ -1171,7 +1176,13 @@ publish-apt-repo:
       printf '%s' "$APT_REPO_GPG_KEY" | base64 -d | gpg --batch --import
       gpg --batch --list-keys >/dev/null
     - shopt -s globstar
-    - mapfile -t debs < <(ls target/**/release/bundle/deb/*.deb)
+    # 收集路径收窄到发版构建的确定产物目录：tauri-package-linux-x64 固定
+    # --target x86_64-unknown-linux-gnu（deb 落 target/<triple>/release/...）。
+    # 不能用 target/** 全量 glob：共享 runner 工作区会被其他流水线写入同名同版本
+    # deb（夜间 daily 不带 --target 落 target/release/）——v1.2.26 发布时 macos
+    # 重试拉长发布窗口，夜间 deb 混入致 Packages 索引双条、pool 单文件取其一，
+    # apt 按 A 条校验 B 文件报「文件尺寸不符」
+    - mapfile -t debs < <(ls target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb)
     - |
       if [ ${#debs[@]} -eq 0 ]; then echo "工作区未找到 deb 产物" >&2; exit 1; fi
       printf '待发布 deb: %s\n' "${debs[@]}"
