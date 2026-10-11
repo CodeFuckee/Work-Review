@@ -160,17 +160,23 @@ while :; do
         if [ "${MACOS_FETCH_ARTIFACTS:-false}" = "true" ]; then
           ART_URL="https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
           echo "bridge: 拉回 macOS 产物 → ${CI_PROJECT_DIR}"
+          # 每作业唯一临时路径：shell runner 同机并发多个桥接作业（如夜间流水线
+          # build-release-macos 与 package-daily-macos-arm64 同段并发）共用固定
+          # /tmp 路径会互写覆盖——先完成者的完整 gzip 流 + 后者已写出的中间段，
+          # 恰好构成「decompression OK + trailing garbage」（3828 两连败根因，
+          # registry 里的文件经逐字节核验是干净的，损坏只发生在本机下载产物上）
+          TGZ="/tmp/bridge-artifacts.${CI_JOB_ID}.tgz"
           if ! curl -sS --fail --max-time 1800 -H "Job-Token: ${CI_JOB_TOKEN}" \
-              -o /tmp/bridge-artifacts.tgz "$ART_URL"; then
+              -o "$TGZ" "$ART_URL"; then
             # Job-Token 下载失败时回退项目内 read_api token（updater 下载用）
             [ -n "${WORK_REVIEW_UPDATER_GITLAB_TOKEN:-}" ] \
               || fail "产物下载失败且无 WORK_REVIEW_UPDATER_GITLAB_TOKEN 可回退: $ART_URL"
             curl -sS --fail --max-time 1800 -H "PRIVATE-TOKEN: ${WORK_REVIEW_UPDATER_GITLAB_TOKEN}" \
-              -o /tmp/bridge-artifacts.tgz "$ART_URL" || fail "产物下载失败: $ART_URL"
+              -o "$TGZ" "$ART_URL" || fail "产物下载失败: $ART_URL"
           fi
-          tar -tzf /tmp/bridge-artifacts.tgz | sed 's/^dist\///' | sed 's/^/  还原: /'
-          tar -xzf /tmp/bridge-artifacts.tgz -C "$CI_PROJECT_DIR" --strip-components=1
-          rm -f /tmp/bridge-artifacts.tgz
+          tar -tzf "$TGZ" | sed 's/^dist\///' | sed 's/^/  还原: /'
+          tar -xzf "$TGZ" -C "$CI_PROJECT_DIR" --strip-components=1
+          rm -f "$TGZ"
         fi
         exit 0
       fi

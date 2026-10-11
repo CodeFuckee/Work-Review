@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 修复
 - **CI：夜间 linux 产包在 AppImage 打包步骤超时失败（`timeout: global` 两连败）**：`package-daily-linux-x64/arm64` 一直在宿主 runner 裸跑 `tauri build`，linuxdeploy/插件/type2 runtime 由打包器运行时从 GitHub 下载，夜间 runner 直连 GitHub 完全挂起（2026-10-11 夜间流水线连续两次同因失败，与发版失败 v1.1.84/86、v1.2.24 同根因——发版打包作业此前的工具预热修复从未覆盖夜间作业）。发版打包脚本 `linux-package-inner.sh` 的工具预热段抽为共享 `scripts/ci/appimage-tools.sh`（sha256 白名单、gh-proxy 镜像优先、钉版名副本、runtime 预提供单点维护），夜间作业打包前 source 接入，`--verbose` 补齐（透传 linuxdeploy stderr 便于排查）。顺带发现并处理白名单过期：linuxdeploy-plugin-appimage 的 continuous 资产 2026-10-01 被上游重发致哈希漂移，双架构自 api.github.com 真源重算更新（type2-runtime 2026-09-28 重发为相同字节，哈希不变）。
+- **CI：macOS 桥接作业拉回产物步骤 `tar: trailing garbage` 失败（夜间流水线两个 macOS 作业同机并发时两连败）**：`bridge.sh` 用固定 `/tmp/bridge-artifacts.tgz` 接收产物，夜间流水线 `build-release-macos` 与 `package-daily-macos-arm64` 首次同段并发（同一 shell runner 的两个并发槽），两个下载互写同一文件——registry 里的文件逐字节核验干净，损坏只发生在本机下载产物上，时序恰好构成「先完成者的完整 gzip 流 + 后者的中间段字节」（gzip 报 decompression OK + trailing garbage，tar 退出 2）。临时路径改为每作业唯一（`bridge-artifacts.${CI_JOB_ID}.tgz`）。
 - **Linux 登录页连内网服务器地址仍报"无法连接服务器"（v1.2.22 白名单修复在 Linux 无效）**：WebView 页面源在 Linux 是 `tauri://localhost`（wry 注册为 secure），同样是安全上下文，页面 fetch 纯 HTTP 内网地址仍被混合内容拦截；Windows 的 `additionalBrowserArgs` 豁免在 WebKitGTK 不存在，平台各自打补丁不可持续。**根治**：登录/注册请求改由 Rust 侧 `client_http_post_json` 命令（reqwest，15s 超时）发出，完全绕开 WebView 网络栈——任意 http/https 服务器地址全平台可用，不再依赖 CSP/浏览器参数白名单；无 Tauri 运行时的浏览器预览（vite dev/README 截图）自动退回 fetch。临时绕过（本机 `systemd --user` 转发 127.0.0.1:4191→10.0.0.220:4191）可停用。
 
 ### 新增
