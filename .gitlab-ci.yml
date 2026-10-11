@@ -526,7 +526,12 @@ package-daily-linux-x64:
     # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
     # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
     - rm -rf target/release/bundle target/*/release/bundle
-    - npm run tauri build -- --bundles deb,rpm,appimage
+    # AppImage 工具预热 + sha256 门禁（与发版打包共用，白名单单点维护）：
+    # runner 直连 github 下载 linuxdeploy/runtime 挂起超时（夜间 2026-10-11 两连败，
+    # 与发版 v1.1.84/86、v1.2.24 同根因），source 会导出解包运行与 runtime 两个变量
+    - . scripts/ci/appimage-tools.sh x86_64
+    # --verbose：透传 linuxdeploy stderr（此前失败无工具输出可查）
+    - npm run tauri build -- --verbose --bundles deb,rpm,appimage
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
     when: always
@@ -552,7 +557,10 @@ package-daily-linux-arm64:
     # 打包前清理 bundle 目录：runner 构建目录跨流水线持久，不清理会让
     # 历史版本的安装包累积并被 publish 的全量 glob 选中（2026-09-16 更新失效根因）
     - rm -rf target/release/bundle target/*/release/bundle
-    - npm run tauri build -- --target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage
+    # AppImage 工具预热 + sha256 门禁（与发版打包共用，白名单单点维护），同 x64 注
+    - . scripts/ci/appimage-tools.sh aarch64
+    # --verbose：透传 linuxdeploy stderr（此前失败无工具输出可查）
+    - npm run tauri build -- --verbose --target aarch64-unknown-linux-gnu --bundles deb,rpm,appimage
   artifacts:
     name: "$CI_JOB_NAME-$CI_PIPELINE_ID"
     when: always
