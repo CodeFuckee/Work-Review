@@ -175,7 +175,10 @@ jobs = json.load(sys.stdin).get("jobs", [])
 run_jobs = [j["id"] for j in jobs if j.get("name") == "run"]
 print(run_jobs[0] if run_jobs else (jobs[0]["id"] if jobs else ""))') || gj=""
           if [ -n "$gj" ]; then
-            gh_curl -L "${API}/actions/jobs/${gj}/logs" | grep -aE "^TOTAL" || true
+            # 原始 job 日志每行带 runner 时间戳前缀，匹配后剥掉再回显
+            gh_curl -L "${API}/actions/jobs/${gj}/logs" \
+              | grep -aoE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z TOTAL.*" \
+              | sed -E 's/^[0-9T:.Z-]+Z //' || true
           fi
         fi
         # MACOS_FETCH_ARTIFACTS=true 时拉回产物并按仓库相对路径还原
