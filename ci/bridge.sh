@@ -172,7 +172,8 @@ while :; do
           gj=$(gh_curl "${API}/actions/runs/${rid}/jobs" | python3 -c '
 import json, sys
 jobs = json.load(sys.stdin).get("jobs", [])
-print(jobs[0]["id"] if jobs else "")') || gj=""
+run_jobs = [j["id"] for j in jobs if j.get("name") == "run"]
+print(run_jobs[0] if run_jobs else (jobs[0]["id"] if jobs else ""))') || gj=""
           if [ -n "$gj" ]; then
             gh_curl -L "${API}/actions/jobs/${gj}/logs" | grep -aE "^TOTAL" || true
           fi
