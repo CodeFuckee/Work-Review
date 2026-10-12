@@ -165,6 +165,18 @@ while :; do
       if [ "$concl" = "success" ]; then
         echo "bridge: ✓ macOS 作业成功；产物（如有）已回传 package registry："
         echo "  https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/${PKG_NAME}/${CORR}/${CORR}.tgz"
+        # BRIDGE_COVERAGE=true 时从 run 日志抓覆盖率 TOTAL 行回显到本作业日志——
+        # GitLab 的 coverage 正则只扫 GitLab 侧 trace，llvm-cov 的输出在 GitHub 侧，
+        # 不取回则流水线覆盖率指标停止更新（脚本输出在目标平台日志里）
+        if [ "${BRIDGE_COVERAGE:-false}" = "true" ]; then
+          gj=$(gh_curl "${API}/actions/runs/${rid}/jobs" | python3 -c '
+import json, sys
+jobs = json.load(sys.stdin).get("jobs", [])
+print(jobs[0]["id"] if jobs else "")') || gj=""
+          if [ -n "$gj" ]; then
+            gh_curl -L "${API}/actions/jobs/${gj}/logs" | grep -aE "^TOTAL" || true
+          fi
+        fi
         # MACOS_FETCH_ARTIFACTS=true 时拉回产物并按仓库相对路径还原
         # （macOS 脚本把产物镜像进 dist/target/...，解包 strip dist/ 后即恢复
         # target/... 原路径，下游 GitLab artifacts/publish 的 glob 零改动）
