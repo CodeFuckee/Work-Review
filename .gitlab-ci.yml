@@ -258,27 +258,19 @@ nightly-gate:
     - when: on_success
 
 rust-verify-linux:
-  extends: .rust-verify
-  tags: ["$LINUX_X64_RUNNER_TAG"]
-  # 覆盖率只在 linux 作业产出一次（三平台重复产出同一个数字没有意义）：
-  # llvm-cov 本身会跑全量 cargo test，等价替代原 cargo test 步骤。
-  # cargo-llvm-cov / llvm-tools 装进 runner 的持久 HOME（~/.cargo/bin 与
-  # rustup 组件目录），首跑安装后即缓存。
+  # Linux 桥接试点：ci/linux/verify.sh 在 GitHub Ubuntu runner 执行——一次性 VM、
+  # 可 sudo apt 自装依赖（check-linux-deps 预检退役）、cargo registry/bin 走桥接
+  # workflow 的 actions/cache。覆盖率语义保持（llvm-cov 替代 cargo test，coverage
+  # 正则解析桥接 job 日志里的 TOTAL 行）。回切自建 runner：改回 extends: .rust-verify
+  # + tags（混合路由的零成本回切）
+  extends: .linux-bridge
+  # 覆盖率只在 linux 作业产出一次（三平台重复产出同一个数字没有意义）
   coverage: '/^TOTAL\s+\d+\s+\d+\s+\d+\.\d+%\s+\d+\s+\d+\s+(\d+\.\d+)%/'
-  before_script:
-    - !reference [.rust-node, before_script]
-    - bash scripts/check-linux-deps.sh
-  script:
-    - npm ci --cache "$NPM_CONFIG_CACHE" --prefer-offline
-    - npm run build
-    - cargo fmt --all -- --check
-    - cargo clippy --workspace --all-targets -- -D warnings
-    # cargo install 落在 $CARGO_HOME/bin（项目内 .cargo/bin），而 cargo 子命令按
-    # PATH 查找：不把它加进 PATH 时，runner 预装缺失会导致每次流水线都重新编译安装
-    - export PATH="$CARGO_HOME/bin:$PATH"
-    - command -v cargo-llvm-cov >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
-    - rustup component add llvm-tools-preview
-    - cargo llvm-cov --workspace --all-targets --summary-only
+  variables:
+    MACOS_SCRIPT: "ci/linux/verify.sh"
+    MACOS_ENV_PASSTHROUGH: "RUST_VERSION RUSTFLAGS"
+    GH_POLL_TIMEOUT_MIN: "170"
+  timeout: 3h
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
@@ -344,6 +336,12 @@ rust-verify-windows:
     GH_BRIDGE_REPO: "CodeFuckee/gl-macos-bridge"
     GH_POLL_TIMEOUT_MIN: "35"
 
+.linux-bridge:
+  # Linux 平台桥接：同 .macos-bridge 机制，桥接仓库按 kind=linux 路由 Ubuntu runner
+  extends: .macos-bridge
+  variables:
+    BRIDGE_KIND: "linux"
+
 macos-bridge-smoke:
   extends: .macos-bridge
   variables:
@@ -351,6 +349,22 @@ macos-bridge-smoke:
   script:
     - bash ci/bridge.sh
     # 常驻守护 MACOS_FETCH_ARTIFACTS 依赖的 Job-Token registry 读路径
+    - bash ci/registry-roundtrip.sh
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    # masked+protected 变量缺失/为空 → 静默跳过（配置好 GH_BRIDGE_TOKEN 后自动启用）
+    - if: '$GH_BRIDGE_TOKEN == null || $GH_BRIDGE_TOKEN == ""'
+      when: never
+    - when: on_success
+
+linux-bridge-smoke:
+  extends: .linux-bridge
+  variables:
+    MACOS_SCRIPT: "ci/linux-smoke.sh"
+  script:
+    - bash ci/bridge.sh
+    # 常驻守护 linux 侧 MACOS_FETCH_ARTIFACTS 依赖的 Job-Token registry 读路径
     - bash ci/registry-roundtrip.sh
   rules:
     - if: '$CI_COMMIT_TAG'

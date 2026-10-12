@@ -1,6 +1,10 @@
 # macOS 作业桥接 GitHub Actions（试点）
 
-## 为什么
+> 2026-10-10 起桥接已**多平台化**：同一座桥按 payload 的 `kind`（`BRIDGE_KIND`，
+> `macos|linux`）路由——macOS 作业用 `extends: .macos-bridge`，Linux 作业用
+> `extends: .linux-bridge`（Ubuntu runner；打包类可经 allowlist 路由 `ubuntu-22.04`
+> GLIBC 基线档）。产物包名按平台分（`macos-bridge` / `linux-bridge`）。完整方案见
+> ZCode workspace 的 `gitlab-linux-jobs-on-github-actions.md`。
 
 macOS 作业此前只能跑在那台 `tags: macos` 的 MacBook runner 上——设备随身携带、
 频繁断网，作业时长随之失败/排队。GitHub Actions 提供托管的 Apple Silicon macOS

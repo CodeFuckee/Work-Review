@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# ci/bridge.sh — 把当前 GitLab 作业桥接到 GitHub Actions 的 macOS runner 上执行。
+# ci/bridge.sh — 把当前 GitLab 作业桥接到 GitHub Actions 托管 runner 上执行
+# （多平台：BRIDGE_KIND=macos|linux，桥接仓库据此路由 runner 标签）。
 #
-# 用法：在 .gitlab-ci.yml 里定义一个跑在 Linux shell runner 上的作业，
-#   variables 里指定 MACOS_SCRIPT=（仓库内脚本路径），script 调本脚本。
-#   MACOS_SCRIPT 必须自包含（自己装依赖、构建），产出物放 dist/，会由
-#   GitHub 侧自动 PUT 回本项目的 generic package registry
-#   （包名 macos-bridge，版本号 = correlation_id）。
+# 用法：在 .gitlab-ci.yml 里定义一个跑在任意可用 GitLab runner 上的作业，
+#   variables 里指定 MACOS_SCRIPT/BRIDGE_SCRIPT=（仓库内脚本路径），script 调本脚本。
+#   脚本必须自包含（自己装依赖、构建），产出物放 dist/，会由 GitHub 侧自动
+#   PUT 回本项目的 generic package registry（包名 <kind>-bridge，版本号 = correlation_id）。
 #
 # 依赖：bash、curl、python3（Ubuntu 22.04 runner 自带；刻意不依赖 jq）。
 # 环境变量：
 #   GH_BRIDGE_REPO      (必填) GitHub 桥接仓库 owner/repo，如 CodeFuckee/gl-macos-bridge
 #   GH_BRIDGE_TOKEN     (必填) 对该仓库有 contents:write 的 GitHub PAT
 #                        （GitLab 项目级 masked+protected CI 变量）
-#   MACOS_SCRIPT        (必填) 要在 macOS 上执行的脚本（本仓库内路径）
-#   MACOS_EXTRA_ENV     (可选) 附带传给 macOS 侧的变量 "K1=V1 K2=V2"（值不含空格）
+#   MACOS_SCRIPT        (必填*) 要在目标平台执行的脚本（本仓库内路径；历史命名）
+#   BRIDGE_SCRIPT       (必填*二选一) 同上，新命名
+#   BRIDGE_KIND         (可选，默认 macos) 平台枚举 macos|linux
+#   MACOS_EXTRA_ENV     (可选) 附带传给目标平台的变量 "K1=V1 K2=V2"（值不含空格）
+#   MACOS_ENV_PASSTHROUGH (可选) 按名整值透传 GitLab 变量（值可含空格；只放非敏感配置）
+#   MACOS_FETCH_ARTIFACTS (可选，默认 false) true 时成功后拉回产物还原 target/... 原路径
 #   GH_POLL_INTERVAL    (可选，默认 15) 轮询间隔秒
 #   GH_POLL_TIMEOUT_MIN (可选，默认 40) 等待 GitHub run 的分钟上限，须小于作业 timeout
 #
@@ -29,7 +33,11 @@ command -v python3 >/dev/null 2>&1 || fail "runner 缺 python3（本脚本刻意
 
 GH_BRIDGE_REPO="${GH_BRIDGE_REPO:?GH_BRIDGE_REPO 未设置}"
 GH_BRIDGE_TOKEN="${GH_BRIDGE_TOKEN:?GH_BRIDGE_TOKEN 未设置（见 docs/ci/macos-bridge.md）}"
-MACOS_SCRIPT="${MACOS_SCRIPT:?MACOS_SCRIPT 未设置}"
+BRIDGE_KIND="${BRIDGE_KIND:-macos}"
+case "$BRIDGE_KIND" in macos|linux) ;; *) fail "BRIDGE_KIND 非法: $BRIDGE_KIND（只允许 macos|linux）" ;; esac
+PKG_NAME="${BRIDGE_KIND}-bridge"
+MACOS_SCRIPT="${BRIDGE_SCRIPT:-${MACOS_SCRIPT:-}}"
+MACOS_SCRIPT="${MACOS_SCRIPT:?MACOS_SCRIPT/BRIDGE_SCRIPT 未设置}"
 [ -f "$MACOS_SCRIPT" ] || fail "脚本不存在: $MACOS_SCRIPT"
 
 CORR="gl${CI_PROJECT_ID}-p${CI_PIPELINE_ID}j${CI_JOB_ID}"
@@ -130,6 +138,9 @@ payload = {
         "job_name": env("CI_JOB_NAME"),
     },
     "env": env_whitelist,
+    # 平台枚举：桥接仓库 resolve 据此在 allowlist runners 里挑标签（白名单校验后
+    # 才流入 runs-on，结构字段不动态拼）
+    "kind": os.environ.get("BRIDGE_KIND", "macos"),
     "script_b64": base64.b64encode(open(os.environ["MACOS_SCRIPT"], "rb").read()).decode(),
 }
 print(json.dumps(payload))
@@ -153,12 +164,12 @@ while :; do
       trap - EXIT
       if [ "$concl" = "success" ]; then
         echo "bridge: ✓ macOS 作业成功；产物（如有）已回传 package registry："
-        echo "  https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
+        echo "  https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/${PKG_NAME}/${CORR}/${CORR}.tgz"
         # MACOS_FETCH_ARTIFACTS=true 时拉回产物并按仓库相对路径还原
         # （macOS 脚本把产物镜像进 dist/target/...，解包 strip dist/ 后即恢复
         # target/... 原路径，下游 GitLab artifacts/publish 的 glob 零改动）
         if [ "${MACOS_FETCH_ARTIFACTS:-false}" = "true" ]; then
-          ART_URL="https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
+          ART_URL="https://${GL_SERVER}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/${PKG_NAME}/${CORR}/${CORR}.tgz"
           echo "bridge: 拉回 macOS 产物 → ${CI_PROJECT_DIR}"
           # 每作业唯一临时路径：shell runner 同机并发多个桥接作业（如夜间流水线
           # build-release-macos 与 package-daily-macos-arm64 同段并发）共用固定

@@ -7,10 +7,12 @@
 set -euo pipefail
 
 CORR="gl${CI_PROJECT_ID:?}-p${CI_PIPELINE_ID:?}j${CI_JOB_ID:?}"
-URL="https://${CI_SERVER_HOST:?}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
+# 包名按平台分（与 ci/bridge.sh 的 BRIDGE_KIND 一致，默认 macos-bridge 兼容存量）
+PKG_NAME="${BRIDGE_KIND:-macos}-bridge"
+URL="https://${CI_SERVER_HOST:?}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/${PKG_NAME}/${CORR}/${CORR}.tgz"
 # CI_SERVER_HOST 不含端口（非标端口实例），与 ci/bridge.sh 同规则拼接
 if [ "${CI_SERVER_PORT:-443}" != "443" ]; then
-  URL="https://${CI_SERVER_HOST}:${CI_SERVER_PORT}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/macos-bridge/${CORR}/${CORR}.tgz"
+  URL="https://${CI_SERVER_HOST}:${CI_SERVER_PORT}/api/v4/projects/${CI_PROJECT_ID}/packages/generic/${PKG_NAME}/${CORR}/${CORR}.tgz"
 fi
 
 echo "roundtrip: GET ${URL}"
