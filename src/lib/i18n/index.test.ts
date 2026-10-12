@@ -371,8 +371,10 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   // 时间线今日项目归因卡每语言新增 5 键（timeline.projects 组：title/addLabel/
   // editLabel/removeLabel/empty）；
   // 手动触发归因按钮每语言新增 2 键（timeline.projects.recomputeTitle /
-  // recomputeFailed）
-  assert.equal(expected.length, 1_321);
+  // recomputeFailed）；
+  // 配置同步卡认证失败提示每语言新增 1 键（settingsSync.authExpired——
+  // token 失效引导重新登录，修复上传假成功事故）
+  assert.equal(expected.length, 1_322);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

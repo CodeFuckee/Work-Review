@@ -194,3 +194,19 @@ test('重复派生同账号密钥应得到可用等价密钥（PBKDF2 确定性�
   const k2 = await deriveSyncKey('pw', 'alice');
   assert.equal(await decryptPayload(k2, cipher, iv), 'hello', '重登后重新派生的密钥应能解开旧密文');
 });
+
+test('同步 API 认证失败响应应可被识别（success:false 语义）', async () => {
+  installLocalStorageStub();
+  const { isSyncAuthFailure } = await import('./configSync.ts');
+  // 服务端 _user.Id<=0 时返回 200 + {success:false, 全空字段}（DTO 注释约定：
+  // false = 未登录/登录过期，调用端应引导重新登录）
+  assert.equal(isSyncAuthFailure({ success: false, payload: null, iv: null, updatedTime: null }), true, '认证失败必须被识别');
+  // 从未上传：success:true + 全空字段——不是认证失败，是「云端暂无配置」
+  assert.equal(isSyncAuthFailure({ success: true, payload: null, iv: null, updatedTime: null }), false);
+  // 有配置
+  assert.equal(isSyncAuthFailure({ success: true, payload: 'x', iv: 'y', updatedTime: '2026-10-11 12:00:00' }), false);
+  // 防御：缺 success 字段（旧服务端/异常响应）与非法入参一律不算认证失败
+  assert.equal(isSyncAuthFailure({ payload: null }), false);
+  assert.equal(isSyncAuthFailure(null), false);
+  assert.equal(isSyncAuthFailure('oops'), false);
+});

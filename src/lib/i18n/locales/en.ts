@@ -1189,6 +1189,7 @@ export default {
       title: 'Config sync (cross-device)',
       desc: 'Push connection configs (GitLab, Plane, AI models, bot credentials) to the server as an encrypted bundle tied to your account, then pull them on other devices with the same account.',
       loginRequired: 'Sign in to use config sync',
+      authExpired: 'Session expired or invalid — sign in again to sync',
       needRelogin: 'Sync key not ready: sign out and sign in once',
       cloudStatus: 'Cloud config',
       cloudUpdatedAt: 'Updated {time}',

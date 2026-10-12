@@ -210,3 +210,23 @@ export async function getStoredSyncKey(): Promise<CryptoKey | null> {
 export function clearStoredSyncKey(): void {
   localStorage.removeItem(SYNC_KEY_STORAGE);
 }
+
+/** 同步 API 出参元信息（服务端 ClientSyncConfigGetOutput 的 camelCase 序列化） */
+export interface SyncCloudMeta {
+  /** 恒 true（新版服务端未认证抛 HTTP 401）；旧版服务端认证失败时为 false */
+  success?: boolean;
+  payload?: string | null;
+  iv?: string | null;
+  updatedTime?: string | null;
+}
+
+/**
+ * 旧版服务端认证失败判定：200 + {success:false, 全空载荷}（未登录/登录过期）。
+ * token 失效必须引导重新登录——不能把空载荷当「云端暂无配置」，否则上传假成功、
+ * 状态恒空（v1.2.26 用户实测事故）。新版服务端直接返回 HTTP 401，两者都需兼容。
+ */
+export function isSyncAuthFailure(data: unknown): boolean {
+  return Boolean(
+    data && typeof data === 'object' && (data as { success?: unknown }).success === false,
+  );
+}

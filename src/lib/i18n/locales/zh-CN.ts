@@ -1173,6 +1173,7 @@ export default {
       title: '配置同步（跨设备）',
       desc: '把 GitLab、Plane、AI 模型、机器人凭证等连接配置整包推送到服务端（按账号加密存储），在其他设备登录同一账号后拉取应用。',
       loginRequired: '登录后可使用配置同步',
+      authExpired: '登录已过期或无效，请重新登录后再同步',
       needRelogin: '同步密钥未就绪：请退出后重新登录一次',
       cloudStatus: '云端配置',
       cloudUpdatedAt: '更新于 {time}',

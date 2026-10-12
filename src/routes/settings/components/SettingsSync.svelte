@@ -18,6 +18,8 @@
     encryptPayload,
     extractSyncPayload,
     getStoredSyncKey,
+    isSyncAuthFailure,
+    type SyncCloudMeta,
     type SyncPayload,
   } from '$lib/utils/configSync.ts';
   import Button from 'carbon-components-svelte/src/Button/Button.svelte';
@@ -34,12 +36,6 @@
     error?: string;
   }
 
-  interface CloudMeta {
-    payload: string | null;
-    iv: string | null;
-    updatedTime: string | null;
-  }
-
   // 刻意 any：Settings.svelte 的 SettingsConfig 是多面板交叉类型，
   // 与 Record<string, unknown> 结构不兼容；卡片只经 extract/apply 触碰同步键
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,11 +44,15 @@
   const dispatch = createEventDispatcher<{ change: Record<string, unknown> }>();
   $: currentLocale = $locale;
 
-  let cloudMeta: CloudMeta | null = null;
+  let cloudMeta: SyncCloudMeta | null = null;
   let statusLoading = false;
   let working = false;
   let showDiffModal = false;
   let pendingPull: SyncPayload | null = null;
+  // token 失效（服务端 401 / 旧版 200+success:false）：状态区改显重新登录提示，
+  // 上传/拉取不再走业务路径——此前只看 HTTP 状态码，认证失败被当成空配置，
+  // 上传假成功、状态恒显「云端暂无配置」（v1.2.26 用户实测事故）
+  let authExpired = false;
 
   $: auth = getAuth();
   $: canSync = Boolean(auth?.token && getAdminUrl());
@@ -72,11 +72,24 @@
         url: `${getAdminUrl()}/api/admin/client-config/get-sync-config`,
         authToken: currentAuth.token,
       });
+      // 未认证：新版服务端 401 / 旧版 200+success:false——静默置位（状态区显示
+      // 重新登录提示），不打扰 toast
+      if (res.status === 401) {
+        authExpired = true;
+        cloudMeta = null;
+        return;
+      }
       if (!res.delivered || res.status !== 200 || !res.body) {
         cloudMeta = null;
         return;
       }
-      const parsed = JSON.parse(res.body) as { data?: CloudMeta };
+      const parsed = JSON.parse(res.body) as { data?: SyncCloudMeta };
+      if (isSyncAuthFailure(parsed.data)) {
+        authExpired = true;
+        cloudMeta = null;
+        return;
+      }
+      authExpired = false;
       cloudMeta = parsed.data ?? null;
     } catch (e) {
       console.warn('获取云端配置状态失败:', e);
@@ -109,12 +122,23 @@
         showToast(t('settingsSync.networkError', { error: res.error ?? '' }), 'error');
         return;
       }
+      // 未认证：新版 401 / 旧版 200+success:false——引导重新登录，绝不当作空配置
+      if (res.status === 401) {
+        showToast(t('settingsSync.authExpired'), 'warning');
+        authExpired = true;
+        return;
+      }
       if (res.status !== 200 || !res.body) {
         showToast(t('settingsSync.networkError', { error: `HTTP ${res.status}` }), 'error');
         return;
       }
-      const parsed = JSON.parse(res.body) as { data?: CloudMeta };
+      const parsed = JSON.parse(res.body) as { data?: SyncCloudMeta };
       const meta = parsed.data;
+      if (isSyncAuthFailure(meta)) {
+        showToast(t('settingsSync.authExpired'), 'warning');
+        authExpired = true;
+        return;
+      }
       if (!meta?.payload || !meta.iv) {
         showToast(t('settingsSync.cloudEmpty'), 'info');
         return;
@@ -173,8 +197,27 @@
         body: { payload: cipher, iv },
         authToken: currentAuth?.token,
       });
+      // 未认证：新版 401 / 旧版 200+success:false——服务端什么都没存，
+      // 必须引导重新登录，绝不能弹「上传成功」假成功
+      if (res.status === 401) {
+        showToast(t('settingsSync.authExpired'), 'warning');
+        authExpired = true;
+        return;
+      }
       if (!res.delivered || res.status !== 200) {
         showToast(t('settingsSync.pushFailed', { error: `HTTP ${res.status ?? ''}` }), 'error');
+        return;
+      }
+      try {
+        const parsed = JSON.parse(res.body ?? '') as { data?: SyncCloudMeta };
+        if (isSyncAuthFailure(parsed.data)) {
+          showToast(t('settingsSync.authExpired'), 'warning');
+          authExpired = true;
+          return;
+        }
+      } catch {
+        // 响应体不是 JSON：按非 200 同类处理
+        showToast(t('settingsSync.pushFailed', { error: `HTTP ${res.status}` }), 'error');
         return;
       }
       showToast(t('settingsSync.pushDone'), 'success');
@@ -215,7 +258,9 @@
   {:else}
     <div class="sync-status-row">
       <span class="sync-status-label">{t('settingsSync.cloudStatus')}</span>
-      {#if cloudMeta?.updatedTime}
+      {#if authExpired}
+        <span class="sync-hint">{t('settingsSync.authExpired')}</span>
+      {:else if cloudMeta?.updatedTime}
         <Tag type="blue" size="sm">{t('settingsSync.cloudUpdatedAt', { time: cloudMeta.updatedTime })}</Tag>
       {:else if cloudMeta}
         <Tag type="gray" size="sm">{t('settingsSync.cloudEmpty')}</Tag>

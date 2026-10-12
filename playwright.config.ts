@@ -10,7 +10,8 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:5177',
     locale: 'zh-CN',
-    channel: 'msedge',
+    // 本机无 Edge 时可 E2E_CHANNEL=chrome 走系统 Chrome（e2e 仅本地跑，CI 未接入）
+    channel: (process.env.E2E_CHANNEL ?? 'msedge') as 'msedge' | 'chrome',
     viewport: { width: 1440, height: 900 },
     trace: 'retain-on-failure',
     // 人工过目：E2E_SLOW_MS=300 让每个动作放慢，便于肉眼跟随

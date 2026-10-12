@@ -1175,6 +1175,7 @@ export default {
       title: '設定同步（跨裝置）',
       desc: '把 GitLab、Plane、AI 模型、機器人憑證等連接設定整包推送到伺服器（按帳號加密儲存），在其他裝置登入同一帳號後拉取套用。',
       loginRequired: '登入後可使用設定同步',
+      authExpired: '登入已過期或無效，請重新登入後再同步',
       needRelogin: '同步金鑰未就緒：請登出後重新登入一次',
       cloudStatus: '雲端設定',
       cloudUpdatedAt: '更新於 {time}',
