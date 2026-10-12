@@ -107,5 +107,11 @@ fi
 # 容器无 /dev/fuse，AppImage 形态的 linuxdeploy 及其插件必须走解包运行，
 # 否则 tauri 打包器在 AppImage 步骤报 "failed to run linuxdeploy"（v1.1.86 根因）
 export APPIMAGE_EXTRACT_AND_RUN=1
-# 预提供的 type2 runtime：插件据此走 --runtime-file，跳过 GitHub 下载
+# 预提供的 type2 runtime：插件据此给 appimagetool 传 --runtime-file，跳过 GitHub 下载。
+# 变量名必须双发：新版 linuxdeploy-plugin-appimage（2026-10-01 continuous 重发起）只认
+# LDAI_RUNTIME_FILE（见其 src/main.cpp：LDAI_RUNTIME_FILE → --runtime-file，无旧名回退）；
+# APPIMAGE_TYPE2_RUNTIME_FILE 为旧名保留。教训：v1.2.24 起只 export 旧名，v1.2.25/26 与
+# 夜间多次「成功」实为当时 GitHub 恰可达、appimagetool 自行下载得手（3833/25969 日志
+# 均有 Downloading runtime 行）——预提供从未真正生效，GitHub 断连即现形（3890 夜间失败）
 export APPIMAGE_TYPE2_RUNTIME_FILE="$CACHE_DIR/runtime-$TAURI_ARCH"
+export LDAI_RUNTIME_FILE="$CACHE_DIR/runtime-$TAURI_ARCH"
