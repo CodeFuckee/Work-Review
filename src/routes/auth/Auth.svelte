@@ -18,17 +18,17 @@
     findRegisterValidationError,
   } from './authLogic.ts';
   import { deriveSyncKey, storeSyncKey } from '$lib/utils/configSync.ts';
-  import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
-  import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
-  import TextInput from 'carbon-components-svelte/src/TextInput/TextInput.svelte';
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import InlineNotification from 'carbon-components-svelte/src/Notification/InlineNotification.svelte';
-  import Accordion from 'carbon-components-svelte/src/Accordion/Accordion.svelte';
-  import AccordionItem from 'carbon-components-svelte/src/Accordion/AccordionItem.svelte';
+  import SegmentedButton, { Segment } from '@smui/segmented-button';
+  import Textfield from '@smui/textfield';
+  import Button from '@smui/button';
+  import MdIcon from '../../lib/components/MdIcon.svelte';
 
   type Mode = 'login' | 'register';
 
   let mode: Mode = 'login';
+  // SegmentedButton 单选影子：mode 为业务真值，外部同步进选中段；点击经 handleSegSelect 写回
+  let modeSel: string = 'login';
+  $: modeSel = mode;
   let userName = '';
   let password = '';
   let confirmPassword = '';
@@ -48,6 +48,17 @@
       push('/');
     }
   });
+
+  // 登录/注册 Tab：单选语义（点击已选段不切换、不清空表单，等同 Carbon ContentSwitcher）
+  function handleSegSelect(e: Event): void {
+    const detail = (e as CustomEvent<{ index: number; selected: boolean; segmentId?: string }>).detail;
+    const next: Mode = detail.segmentId === 'register' ? 'register' : 'login';
+    if (!detail.selected || next === mode) {
+      modeSel = mode;
+      return;
+    }
+    switchMode(next);
+  }
 
   function switchMode(next: Mode): void {
     mode = next;
@@ -147,74 +158,98 @@
       {mode === 'login' ? t('auth.loginSubtitle') : t('auth.registerSubtitle')}
     </p>
 
-    <ContentSwitcher
-      selectedIndex={mode === 'login' ? 0 : 1}
-      on:change={(e) => switchMode(e.detail === 0 ? 'login' : 'register')}
+    <SegmentedButton
+      class="auth-seg"
+      singleSelect
+      segments={['login', 'register']}
+      bind:selected={modeSel}
+      onselected={handleSegSelect}
     >
-      <Switch text={t('auth.loginTab')} id="login" />
-      <Switch text={t('auth.registerTab')} id="register" />
-    </ContentSwitcher>
+      {#snippet segment(seg)}
+        <Segment segment={seg}>
+          {seg === 'login' ? t('auth.loginTab') : t('auth.registerTab')}
+        </Segment>
+      {/snippet}
+    </SegmentedButton>
 
-    <form class="auth-carbon-form" on:submit|preventDefault={submit}>
-      <TextInput
+    <form
+      class="auth-carbon-form"
+      onsubmit={(e) => { e.preventDefault(); void submit(); }}
+    >
+      <Textfield
+        class="auth-textfield"
+        variant="outlined"
         bind:value={userName}
-        labelText={t('auth.accountPlaceholder')}
-        placeholder={t('auth.accountPlaceholder')}
-        autocomplete="username"
-        spellcheck={false}
+        label={t('auth.accountPlaceholder')}
+        input$autocomplete="username"
+        input$spellcheck={false}
       />
 
       {#if mode === 'register'}
-        <TextInput
+        <Textfield
+          class="auth-textfield"
+          variant="outlined"
           bind:value={name}
-          labelText={t('auth.namePlaceholder')}
-          placeholder={t('auth.namePlaceholder')}
-          autocomplete="name"
+          label={t('auth.namePlaceholder')}
+          input$autocomplete="name"
         />
       {/if}
 
-      <TextInput
+      <Textfield
+        class="auth-textfield"
+        variant="outlined"
         type="password"
         bind:value={password}
-        labelText={t('auth.passwordPlaceholder')}
-        placeholder={t('auth.passwordPlaceholder')}
-        autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+        label={t('auth.passwordPlaceholder')}
+        input$autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
       />
 
       {#if mode === 'register'}
-        <TextInput
+        <Textfield
+          class="auth-textfield"
+          variant="outlined"
           type="password"
           bind:value={confirmPassword}
-          labelText={t('auth.confirmPasswordPlaceholder')}
-          placeholder={t('auth.confirmPasswordPlaceholder')}
-          autocomplete="new-password"
+          label={t('auth.confirmPasswordPlaceholder')}
+          input$autocomplete="new-password"
         />
-        <TextInput
+        <Textfield
+          class="auth-textfield"
+          variant="outlined"
           bind:value={department}
-          labelText={t('auth.departmentPlaceholder')}
-          placeholder={t('auth.departmentPlaceholder')}
+          label={t('auth.departmentPlaceholder')}
         />
       {/if}
 
       {#if errorMessage}
-        <InlineNotification kind="error" title={errorMessage} hideCloseButton={true} timeout={0} />
+        <div class="md-banner" role="alert">
+          <MdIcon name="error" size={20} />
+          <span class="md-banner-text">{errorMessage}</span>
+        </div>
       {/if}
 
-      <Button type="submit" fullWidth={true} loading={submitting}>
+      <Button variant="raised" class="auth-submit" type="submit" disabled={submitting}>
         {mode === 'login' ? t('auth.loginAction') : t('auth.registerAction')}
       </Button>
     </form>
 
-    <Accordion align="start" size="sm">
-      <AccordionItem title={t('auth.serverToggle')}>
-        <TextInput
+    <!-- 服务器设置折叠区：SMUI 无 accordion 包，用原生 details/summary 承接 Carbon Accordion 语义 -->
+    <details class="auth-server">
+      <summary class="auth-server-summary">
+        <MdIcon name="dns" size={18} />
+        <span class="auth-server-title">{t('auth.serverToggle')}</span>
+        <span class="auth-server-chevron"><MdIcon name="expand_more" size={16} /></span>
+      </summary>
+      <div class="auth-server-body">
+        <Textfield
+          class="auth-textfield"
+          variant="outlined"
           bind:value={serverUrl}
-          labelText={t('auth.serverToggle')}
-          placeholder={t('auth.serverPlaceholder')}
-          spellcheck={false}
+          label={t('auth.serverPlaceholder')}
+          input$spellcheck={false}
         />
-      </AccordionItem>
-    </Accordion>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -225,7 +260,7 @@
     align-items: center;
     justify-content: center;
     padding: 2rem 1rem;
-    background: var(--cds-background);
+    background: var(--md-theme-background);
   }
 
   .auth-carbon-card {
@@ -236,8 +271,8 @@
     align-items: center;
     gap: 0.75rem;
     padding: 2rem 1.75rem;
-    background: var(--cds-layer);
-    border: 1px solid var(--cds-border-subtle);
+    background: var(--md-theme-surface);
+    border: 1px solid var(--md-theme-border-subtle);
     border-radius: 8px;
   }
 
@@ -251,12 +286,21 @@
   .auth-carbon-title {
     font-size: 1.125rem;
     font-weight: 600;
-    color: var(--cds-text-primary);
+    color: var(--md-theme-on-surface);
   }
 
   .auth-carbon-subtitle {
     font-size: 0.75rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
+  }
+
+  /* 登录/注册分段选择：撑满卡片宽度，段等分 */
+  .auth-seg {
+    width: 100%;
+  }
+
+  .auth-seg :global(.mdc-segmented-button__segment) {
+    flex: 1;
   }
 
   .auth-carbon-form {
@@ -267,8 +311,80 @@
     margin-top: 0.5rem;
   }
 
-  .auth-carbon-card :global(.bx--accordion) {
+  .auth-textfield {
+    width: 100%;
+  }
+
+  /* 错误提示条（MD banner 形态）：替代 Carbon InlineNotification */
+  .md-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--md-theme-border-subtle);
+    border-radius: var(--radius-md, 8px);
+    background: var(--md-theme-surface-variant);
+    color: var(--md-theme-on-surface);
+    font-size: 0.875rem;
+  }
+
+  .md-banner :global(.md-icon) {
+    color: var(--md-theme-error);
+    flex-shrink: 0;
+  }
+
+  .md-banner-text {
+    min-width: 0;
+  }
+
+  .auth-submit {
+    width: 100%;
+  }
+
+  .auth-submit :global(.mdc-button__label) {
+    width: 100%;
+  }
+
+  /* 服务器设置折叠区（原生 details） */
+  .auth-server {
     width: 100%;
     margin-top: 0.5rem;
+    border-top: 1px solid var(--md-theme-border-subtle);
+  }
+
+  .auth-server-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 0.25rem;
+    color: var(--md-theme-on-surface-medium);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .auth-server-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .auth-server-summary:hover {
+    color: var(--md-theme-on-surface);
+  }
+
+  .auth-server-title {
+    flex: 1;
+  }
+
+  .auth-server-chevron {
+    display: inline-flex;
+    transition: transform 160ms ease;
+  }
+
+  .auth-server[open] .auth-server-chevron {
+    transform: rotate(180deg);
+  }
+
+  .auth-server-body {
+    padding: 0.25rem 0 0.75rem;
   }
 </style>

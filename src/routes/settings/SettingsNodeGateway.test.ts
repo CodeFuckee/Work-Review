@@ -57,10 +57,11 @@ test('节点子面板的二元开关应提供本地化 switch 语义', async () 
     'WecomBotPanel.svelte',
   ].map((file) => readFile(new URL(`./components/nodeGateway/${file}`, import.meta.url), 'utf8')));
 
+  // MD 迁移：Carbon Toggle → SMUI Switch（受控 checked 影子变量 + aria-label 本地化名称）
   for (const source of sources) {
-    assert.match(source, /<Toggle/);
-    assert.match(source, /labelText=/);
-    assert.match(source, /<Toggle/);
+    assert.match(source, /<Switch/);
+    assert.match(source, /aria-label=\{t\(/);
+    assert.match(source, /bind:checked=/);
   }
   assert.match(sources[2], /nodeGatewayPage\.(?:showSecret|hideSecret)/);
   assert.match(sources[3], /nodeGatewayPage\.(?:showSecret|hideSecret)/);

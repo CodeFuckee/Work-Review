@@ -2,7 +2,8 @@
   import { createEventDispatcher } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { locale, t } from '$lib/i18n/index.ts';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  // SMUI v8 Switch：change 事件实为 SMUISwitchChange（onchange 不触发），用 onSMUISwitchChange
+  import Switch from '@smui/switch';
 
   interface PlaneSettings {
     enabled: boolean;
@@ -28,6 +29,12 @@
   let showKey = false;
   let testing = false;
   let testResult: { ok: boolean; message: string; detail: string } | null = null;
+
+  // Switch 受控影子：外部加载同步进开关，切换时回调把影子值经既有函数写回 config
+  let planeEnabledSwitch = false;
+  let planeAllowInsecureSwitch = false;
+  $: planeEnabledSwitch = Boolean(config.plane?.enabled);
+  $: planeAllowInsecureSwitch = Boolean(config.plane?.allow_insecure_http);
 
   let previewing = false;
   let previewLoaded = false;
@@ -185,7 +192,7 @@
           <div class="settings-text">{t('settingsPlane.enabledLabel')}</div>
           <div class="settings-muted">{t('settingsPlane.enabledHint')}</div>
         </div>
-        <Toggle size="sm" toggled={config.plane?.enabled} labelText={t('settingsPlane.enabledLabel')} hideLabel={true} on:toggle={onEnabledToggle} />
+        <Switch bind:checked={planeEnabledSwitch} onSMUISwitchChange={onEnabledToggle} aria-label={t('settingsPlane.enabledLabel')} />
       </div>
     </div>
 
@@ -247,7 +254,7 @@
           <div class="settings-text">{t('settingsPlane.allowInsecureLabel')}</div>
           <div class="settings-muted">{t('settingsPlane.allowInsecureHint')}</div>
         </div>
-        <Toggle size="sm" toggled={config.plane?.allow_insecure_http} labelText={t('settingsPlane.allowInsecureLabel')} hideLabel={true} on:toggle={onAllowInsecureToggle} />
+        <Switch bind:checked={planeAllowInsecureSwitch} onSMUISwitchChange={onAllowInsecureToggle} aria-label={t('settingsPlane.allowInsecureLabel')} />
       </div>
     </div>
 

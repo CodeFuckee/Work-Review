@@ -3,8 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { createEventDispatcher } from 'svelte';
   import { t } from '../../lib/i18n/index.ts';
-  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
-  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
+  import Select, { Option } from '@smui/select';
 
   // 「今日项目」归因卡：当日 Plane 项目清单 = 归因聚合(auto) − 当日屏蔽(removed)
   // ∪ 手动添加(added)。人工调整只影响本卡展示，不联动时间线行徽标（行级归因
@@ -159,7 +158,7 @@
         title={t('timeline.projects.recomputeTitle')}
         aria-label={t('timeline.projects.recomputeTitle')}
         disabled={recomputing}
-        on:click={() => dispatch('recompute')}
+        onclick={() => dispatch('recompute')}
       >
         {#if recomputing}
           <span class="timeline-projects-recompute-spinner" aria-hidden="true"></span>
@@ -185,7 +184,7 @@
             class="timeline-projects-chip-btn"
             title={t('timeline.projects.editLabel')}
             aria-label={t('timeline.projects.editLabel') + ' ' + name}
-            on:click={() => openReplaceEditor(name)}
+            onclick={() => openReplaceEditor(name)}
           >
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -196,7 +195,7 @@
             class="timeline-projects-chip-btn"
             title={t('timeline.projects.removeLabel')}
             aria-label={t('timeline.projects.removeLabel') + ' ' + name}
-            on:click={() => removeProject(name)}
+            onclick={() => removeProject(name)}
           >
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -209,7 +208,7 @@
         <button
           type="button"
           class="timeline-projects-add-btn"
-          on:click={openAddEditor}
+          onclick={openAddEditor}
         >
           + {t('timeline.projects.addLabel')}
         </button>
@@ -223,21 +222,20 @@
           {/if}
           <Select
             class="timeline-projects-select"
-            labelText={t('timeline.projectsEditorTitle')}
-            hideLabel={true}
+            noLabel={true}
+            anchor$aria-label={t('timeline.projectsEditorTitle')}
             disabled={editorBusy}
-            selected={editorSelection}
-            on:change={(e) => editorSelection = (e as CustomEvent<string>).detail}
+            bind:value={editorSelection}
           >
             {#each selectableProjects as name (name)}
-              <SelectItem value={name} text={name} />
+              <Option value={name}>{name}</Option>
             {/each}
           </Select>
           <button
             type="button"
             class="timeline-projects-editor-confirm"
             disabled={editorBusy || !editorSelection}
-            on:click={confirmEditor}
+            onclick={confirmEditor}
           >
             ✓
           </button>
@@ -245,7 +243,7 @@
             type="button"
             class="timeline-projects-editor-cancel"
             disabled={editorBusy}
-            on:click={() => (editor = null)}
+            onclick={() => (editor = null)}
           >
             ✕
           </button>
@@ -411,14 +409,27 @@
     font-size: 0.8rem;
   }
 
+  /* SMUI Select（MDC standard 形态）：压缩成行内小尺寸下拉 */
   .timeline-projects-select {
     max-width: 14rem;
-    padding: 0.2rem 0.4rem;
-    border-radius: var(--radius-md);
-    border: 1px solid rgb(148 163 184 / 0.5);
-    background: transparent;
     font-size: 0.8rem;
     color: inherit;
+  }
+
+  .timeline-projects-select :global(.mdc-select__anchor) {
+    height: 2rem;
+    padding-inline: 0.4rem;
+  }
+
+  .timeline-projects-select :global(.mdc-select__selected-text) {
+    padding: 0;
+    font-size: 0.8rem;
+    line-height: 2rem;
+  }
+
+  .timeline-projects-select :global(.mdc-select__dropdown-icon) {
+    width: 16px;
+    height: 16px;
   }
 
   .timeline-projects-editor-confirm,

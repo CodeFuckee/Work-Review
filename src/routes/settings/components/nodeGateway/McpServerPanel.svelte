@@ -1,7 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n/index.ts';
   import { createEventDispatcher } from 'svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  import Switch from '@smui/switch';
 
   interface McpServerConfig {
     mcp_server_enabled: boolean;
@@ -19,6 +19,9 @@
   export let mcpConfigJson = '';
 
   const dispatch = createEventDispatcher<{ save: null; toast: ToastDetail }>();
+  // Switch 影子变量：SMUI Switch 受控 checked，程序化加载同步进开关，切换经 toggle() 走保存管线
+  let mcpServerEnabledSwitch = false;
+  $: mcpServerEnabledSwitch = config.mcp_server_enabled ?? false;
 
   function toggle() {
     config.mcp_server_enabled = !config.mcp_server_enabled;
@@ -61,7 +64,12 @@
         {/if}
       </div>
     </div>
-    <Toggle size="sm" toggled={config.mcp_server_enabled} labelText={t('nodeGatewayPage.mcpServer')} hideLabel={true} disabled={saving} on:toggle={toggle} />
+    <Switch
+      bind:checked={mcpServerEnabledSwitch}
+      onSMUISwitchChange={() => toggle()}
+      disabled={saving}
+      aria-label={t('nodeGatewayPage.mcpServer')}
+    />
   </div>
 
   <p class="text-[11px] text-slate-400 dark:text-[#636c76]">{t('nodeGatewayPage.mcpServerDescription')}</p>
@@ -74,7 +82,7 @@
           <div class="flex flex-col gap-0.5 rounded-lg bg-white/70 px-3 py-1.5 ring-1 ring-slate-200/70 dark:bg-[#161b22]/20 dark:ring-[#30363d]/70">
             <div class="flex items-center justify-between gap-2">
               <span class="text-[11px] text-slate-500 dark:text-[#7d8590]">{t('nodeGatewayPage.mcpServerDbPath')}</span>
-              <button type="button" class="text-[10px] text-primary-600 hover:underline focus:outline-none" on:click={() => copyPath(mcpDbPath, 'mcpServerDbPath')}>{t('nodeGatewayPage.mcpServerCopyPath')}</button>
+              <button type="button" class="text-[10px] text-primary-600 hover:underline focus:outline-none" onclick={() => copyPath(mcpDbPath, 'mcpServerDbPath')}>{t('nodeGatewayPage.mcpServerCopyPath')}</button>
             </div>
             <span class="font-mono text-[11px] text-slate-700 dark:text-[#adbac7] break-all select-all" title={mcpDbPath}>{mcpDbPath}</span>
           </div>
@@ -83,7 +91,7 @@
           <div class="flex flex-col gap-0.5 rounded-lg bg-white/70 px-3 py-1.5 ring-1 ring-slate-200/70 dark:bg-[#161b22]/20 dark:ring-[#30363d]/70">
             <div class="flex items-center justify-between gap-2">
               <span class="text-[11px] text-slate-500 dark:text-[#7d8590]">{t('nodeGatewayPage.mcpServerConfigPath')}</span>
-              <button type="button" class="text-[10px] text-primary-600 hover:underline focus:outline-none" on:click={() => copyPath(mcpConfigPath, 'mcpServerConfigPath')}>{t('nodeGatewayPage.mcpServerCopyPath')}</button>
+              <button type="button" class="text-[10px] text-primary-600 hover:underline focus:outline-none" onclick={() => copyPath(mcpConfigPath, 'mcpServerConfigPath')}>{t('nodeGatewayPage.mcpServerCopyPath')}</button>
             </div>
             <span class="font-mono text-[11px] text-slate-700 dark:text-[#adbac7] break-all select-all" title={mcpConfigPath}>{mcpConfigPath}</span>
           </div>
@@ -91,7 +99,7 @@
         <div class="flex flex-col gap-0.5 rounded-lg bg-white/70 px-3 py-1.5 ring-1 ring-slate-200/70 dark:bg-[#161b22]/20 dark:ring-[#30363d]/70">
           <div class="flex items-center justify-between gap-2">
             <span class="text-[11px] text-slate-500 dark:text-[#7d8590]">{t('nodeGatewayPage.mcpServerBinaryPath')}</span>
-            <button type="button" class="text-[10px] text-primary-600 hover:underline focus:outline-none" on:click={() => copyPath('work-review-mcp-server', 'mcpServerBinaryPath')}>{t('nodeGatewayPage.mcpServerCopyPath')}</button>
+            <button type="button" class="text-[10px] text-primary-600 hover:underline focus:outline-none" onclick={() => copyPath('work-review-mcp-server', 'mcpServerBinaryPath')}>{t('nodeGatewayPage.mcpServerCopyPath')}</button>
           </div>
           <span class="font-mono text-[11px] text-slate-700 dark:text-[#adbac7] break-all select-all">work-review-mcp-server</span>
         </div>
@@ -99,7 +107,7 @@
       <div>
         <div class="flex items-center justify-between mb-1">
           <span class="text-xs font-medium text-slate-700 dark:text-[#adbac7]">{t('nodeGatewayPage.mcpServerConfigTitle')}</span>
-          <button type="button" class="settings-chip-button settings-chip-button-active text-[11px]" on:click={copyMcpConfig}>{t('nodeGatewayPage.mcpServerCopyConfig')}</button>
+          <button type="button" class="settings-chip-button settings-chip-button-active text-[11px]" onclick={copyMcpConfig}>{t('nodeGatewayPage.mcpServerCopyConfig')}</button>
         </div>
         <p class="text-[11px] text-slate-400 dark:text-[#636c76] mb-1.5">{t('nodeGatewayPage.mcpServerConfigHint')}</p>
         <pre class="rounded-lg bg-slate-800 p-3 text-[11px] font-mono text-slate-400 leading-relaxed overflow-x-auto dark:bg-[#161b22]/80">{mcpConfigJson}</pre>

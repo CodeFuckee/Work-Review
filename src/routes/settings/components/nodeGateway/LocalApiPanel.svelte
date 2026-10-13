@@ -2,7 +2,7 @@
   import { t } from '$lib/i18n/index.ts';
   import { invoke } from '@tauri-apps/api/core';
   import { createEventDispatcher } from 'svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  import Switch from '@smui/switch';
 
   interface LocalApiConfig {
     localhost_api_enabled: boolean;
@@ -33,6 +33,9 @@
   }>();
   let tokenVisible = false;
   let tokenValue = '';
+  // Switch 影子变量：SMUI Switch 受控 checked，程序化加载同步进开关，切换经 toggle() 走保存管线
+  let localApiEnabledSwitch = false;
+  $: localApiEnabledSwitch = config.localhost_api_enabled ?? false;
 
   function toggle() {
     config.localhost_api_enabled = !config.localhost_api_enabled;
@@ -87,7 +90,12 @@
         <span class="settings-chip-neutral">{t('nodeGatewayPage.localhostDisabled')}</span>
       {/if}
     </div>
-    <Toggle size="sm" toggled={config.localhost_api_enabled} labelText={t('nodeGatewayPage.localApi')} hideLabel={true} disabled={saving} on:toggle={toggle} />
+    <Switch
+      bind:checked={localApiEnabledSwitch}
+      onSMUISwitchChange={() => toggle()}
+      disabled={saving}
+      aria-label={t('nodeGatewayPage.localApi')}
+    />
   </div>
 
   {#if config.localhost_api_enabled}
@@ -109,7 +117,7 @@
             type="number"
             aria-label={t('nodeGatewayPage.apiPortLabel')}
             bind:value={config.localhost_api_port}
-            on:blur={() => {
+            onblur={() => {
               if (!Number.isInteger(config.localhost_api_port) || config.localhost_api_port <= 0 || config.localhost_api_port > 65535) {
                 config.localhost_api_port = 47831;
               }
@@ -129,9 +137,9 @@
         <div class="flex items-center justify-between gap-2 mb-1">
           <span class="text-[11px] text-slate-400 dark:text-[#636c76]">{t('nodeGatewayPage.localhostToken')}</span>
           <div class="flex gap-1">
-            <button type="button" class="settings-chip-button" on:click={revealToken}>{t('nodeGatewayPage.revealToken')}</button>
-            <button type="button" class="settings-chip-button" on:click={copyToken}>{t('nodeGatewayPage.copyToken')}</button>
-            <button type="button" class="settings-chip-button settings-chip-button-active" on:click={rotateToken}>{t('nodeGatewayPage.rotateToken')}</button>
+            <button type="button" class="settings-chip-button" onclick={revealToken}>{t('nodeGatewayPage.revealToken')}</button>
+            <button type="button" class="settings-chip-button" onclick={copyToken}>{t('nodeGatewayPage.copyToken')}</button>
+            <button type="button" class="settings-chip-button settings-chip-button-active" onclick={rotateToken}>{t('nodeGatewayPage.rotateToken')}</button>
           </div>
         </div>
         <div class="font-mono text-[11px] text-slate-500 dark:text-[#7d8590] break-all">

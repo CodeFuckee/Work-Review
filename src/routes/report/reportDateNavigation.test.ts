@@ -94,7 +94,7 @@ test('日报日期组最左侧应提供本地化的上一天按钮', async () =>
     '日期组顺序应为上一天、今天、昨天、日期选择器',
   );
   assert.match(source.slice(toolbarStart, todayIndex), /type="button"/);
-  assert.match(source.slice(toolbarStart, todayIndex), /on:click=\{selectPreviousDay\}/);
+  assert.match(source.slice(toolbarStart, todayIndex), /onclick=\{selectPreviousDay\}/);
 });
 
 test('上一天按钮文案应覆盖四种语言', async () => {

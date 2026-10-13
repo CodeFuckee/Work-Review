@@ -59,8 +59,8 @@ test('常驻网站应呈现与应用使用一致的轻分隔排行', async () =>
   assert.match(source, /overview-domain-heading[\s\S]*overview-domain-category-meta/);
   assert.match(source, /overview-domain-source-list[\s\S]*overview-domain-source-segment/);
   assert.match(source, /overview-domain-duration/);
-  assert.match(source, /on:click=\{\(\) => openDomainDetail\(domain\)\}/);
-  assert.match(source, /on:click=\{toggleDomainUsageExpanded\}/);
+  assert.match(source, /onclick=\{\(\) => openDomainDetail\(domain\)\}/);
+  assert.match(source, /onclick=\{toggleDomainUsageExpanded\}/);
   assert.match(source, /domainUsageLoading[\s\S]*t\('common\.loading'\)[\s\S]*domainUsageExpanded[\s\S]*t\('common\.collapse'\)[\s\S]*t\('overview\.viewAll'\)/);
 });
 

@@ -11,9 +11,11 @@ test('存储设置应提供独立的启用截图开关，而不只是截图间�
   assert.match(source, /settingsStorage\.screenshotsEnabled/);
   assert.match(source, /config\.storage\.screenshots_enabled/);
   assert.match(source, /settingsStorage\.screenshotsEnabledHint/);
-  assert.match(source, /<Toggle/);
-  assert.match(source, /labelText=\{t\('settingsStorage\.screenshotsEnabled'\)\}/);
-  assert.match(source, /toggled=\{config\.storage\.screenshots_enabled\}/);
+  // 开关已迁移 SMUI Switch：影子变量受控 + onSMUISwitchChange + aria-label
+  assert.match(source, /<Switch/);
+  assert.match(source, /aria-label=\{t\('settingsStorage\.screenshotsEnabled'\)\}/);
+  assert.match(source, /\$: screenshotsEnabledSwitch = config\.storage\?\.screenshots_enabled/);
+  assert.match(source, /bind:checked=\{screenshotsEnabledSwitch\}/);
 });
 
 test('存储设置数值输入和自动导出开关应提供本地化可访问名称', async () => {
@@ -25,9 +27,10 @@ test('存储设置数值输入和自动导出开关应提供本地化可访问�
   for (const key of ['pollingInterval', 'retentionDays', 'storageLimitLabel']) {
     assert.match(source, new RegExp(`aria-label=\\{t\\('settingsStorage\\.${key}'\\)\\}`));
   }
-  // 自动导出开关已迁移 Carbon Toggle
-  assert.match(source, /labelText=\{t\('settingsStorage\.autoExport'\)\}/);
-  assert.match(source, /toggled=\{config\.daily_report_auto_export\}/);
+  // 自动导出开关已迁移 SMUI Switch（影子变量 + aria-label，未选目录时保持禁用）
+  assert.match(source, /aria-label=\{t\('settingsStorage\.autoExport'\)\}/);
+  assert.match(source, /bind:checked=\{dailyReportAutoExportSwitch\}/);
+  assert.match(source, /disabled=\{!config\.daily_report_export_dir\}/);
   assert.equal((source.match(/settingsStorage\.(?:showSecret|hideSecret)/g) || []).length, 6);
   assert.match(source, /aria-label=\{`\$\{t\(s3AccessKeyVisible/);
   assert.match(source, /aria-label=\{`\$\{t\(webdavPasswordVisible/);

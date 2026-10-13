@@ -2,7 +2,8 @@
   import { createEventDispatcher } from 'svelte';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { t } from '$lib/i18n/index.ts';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  // SMUI v8 Switch：change 事件实为 SMUISwitchChange（onchange 不触发），用 onSMUISwitchChange
+  import Switch from '@smui/switch';
 
   interface FileMonitorSettings {
     enabled: boolean;
@@ -13,6 +14,10 @@
   export let config: { file_monitor?: FileMonitorSettings | null };
 
   const dispatch = createEventDispatcher<{ change: typeof config }>();
+
+  // Switch 受控影子：外部加载同步进开关，切换时回调经 toggleEnabled 写回 config
+  let fileMonitorEnabledSwitch = false;
+  $: fileMonitorEnabledSwitch = fileMonitor().enabled;
 
   function fileMonitor(): FileMonitorSettings {
     if (!config.file_monitor) {
@@ -89,7 +94,7 @@
       <p class="settings-text">{t('settingsFileMonitor.enabled')}</p>
       <p class="settings-muted mt-1">{t('settingsFileMonitor.enabledDesc')}</p>
     </div>
-    <Toggle size="sm" toggled={fileMonitor().enabled} labelText={t('settingsFileMonitor.enabled')} hideLabel={true} on:toggle={toggleEnabled} />
+    <Switch bind:checked={fileMonitorEnabledSwitch} onSMUISwitchChange={toggleEnabled} aria-label={t('settingsFileMonitor.enabled')} />
   </div>
 
   <div class="settings-field">

@@ -6,9 +6,11 @@
   import { locale, t } from '$lib/i18n/index.ts';
   import type { Locale } from '$lib/i18n/index.ts';
   import AssistantMemoryManager from './AssistantMemoryManager.svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
-  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
-  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
+  // SMUI v8：Switch 的 change 事件实为 SMUISwitchChange，Select 的 change 事件实为
+  // SMUISelectChange（detail.value）——分别用 onSMUISwitchChange / onSMUISelectChange；
+  // Carbon SelectItem 对应 @smui/select 的 Option（value prop + 子内容为文案）
+  import Switch from '@smui/switch';
+  import Select, { Option } from '@smui/select';
 
   type AiMode = 'local' | 'summary';
   type SemanticStatus = 'idle' | 'building' | 'ready' | 'failed';
@@ -137,6 +139,13 @@
 
   const dispatch = createEventDispatcher<{ change: AiSettingsConfig }>();
   $: currentLocale = $locale;
+  // Switch 受控影子：外部加载同步进开关，切换时回调读影子值写回 config
+  let webAccessEnabledSwitch = false;
+  let memorySemanticEnabledSwitch = false;
+  let assistantMemoryEnabledSwitch = false;
+  $: webAccessEnabledSwitch = config.assistant_web_access_enabled ?? false;
+  $: memorySemanticEnabledSwitch = config.memory_semantic_enabled ?? false;
+  $: assistantMemoryEnabledSwitch = config.assistant_memory_enabled ?? false;
   let aiModes: LocalizedAiMode[] = [];
   let localizedProviders: AiProvider[] = [];
   // 三入口分区：模型配置 / 助手联网 / 语义记忆（点击切换，互不打扰）
@@ -1058,14 +1067,13 @@
             <span class="settings-label">{t('settingsAI.thinkingMode')}</span>
             <Select
               class="mt-1"
-              labelText={t('settingsAI.thinkingMode')}
-              hideLabel={true}
-              selected={thinkingModeValue}
-              on:change={(e) => setThinkingMode((e as CustomEvent<string>).detail)}
+              value={thinkingModeValue}
+              anchor$aria-label={t('settingsAI.thinkingMode')}
+              onSMUISelectChange={(e) => setThinkingMode((e as CustomEvent<{ value: string }>).detail.value)}
             >
-              <SelectItem value="" text={t('settingsAI.thinkingServerDefault')} />
-              <SelectItem value="on" text={t('settingsAI.thinkingOn')} />
-              <SelectItem value="off" text={t('settingsAI.thinkingOff')} />
+              <Option value="">{t('settingsAI.thinkingServerDefault')}</Option>
+              <Option value="on">{t('settingsAI.thinkingOn')}</Option>
+              <Option value="off">{t('settingsAI.thinkingOff')}</Option>
             </Select>
             {#if generationCaps.thinkingStreamingOnly}
               <p class="settings-note mt-1">{t('settingsAI.thinkingStreamingOnlyHint')}</p>
@@ -1135,10 +1143,10 @@
           </span>
           <p class="settings-muted mt-0.5">{t('settingsAI.webAccess.hint')}</p>
         </div>
-        <Toggle size="sm" toggled={config.assistant_web_access_enabled} labelText={t('settingsAI.webAccess.title')} hideLabel={true} on:toggle={() => {
-            config.assistant_web_access_enabled = !config.assistant_web_access_enabled;
+        <Switch bind:checked={webAccessEnabledSwitch} onSMUISwitchChange={() => {
+            config.assistant_web_access_enabled = webAccessEnabledSwitch;
             handleChange();
-          }} />
+          }} aria-label={t('settingsAI.webAccess.title')} />
       </label>
 
       {#if config.assistant_web_access_enabled}
@@ -1146,14 +1154,13 @@
           <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
             <label class="settings-muted text-xs" for="assistant-search-provider">{t('settingsAI.webAccess.searchProvider')}</label>
             <Select
-              labelText={t('settingsAI.webAccess.searchProvider')}
-              hideLabel={true}
-              selected={config.assistant_search_provider}
-              on:change={(e) => { config.assistant_search_provider = (e as CustomEvent<string>).detail as typeof config.assistant_search_provider; handleChange(); }}
+              anchor$aria-label={t('settingsAI.webAccess.searchProvider')}
+              value={config.assistant_search_provider}
+              onSMUISelectChange={(e) => { config.assistant_search_provider = (e as CustomEvent<{ value: string }>).detail.value as typeof config.assistant_search_provider; handleChange(); }}
             >
-              <SelectItem value="duckduckgo" text={t('settingsAI.webAccess.providerFreeBing')} />
-              <SelectItem value="tavily" text="Tavily" />
-              <SelectItem value="bocha" text={t('settingsAI.webAccess.providerBocha')} />
+              <Option value="duckduckgo">{t('settingsAI.webAccess.providerFreeBing')}</Option>
+              <Option value="tavily">Tavily</Option>
+              <Option value="bocha">{t('settingsAI.webAccess.providerBocha')}</Option>
             </Select>
 
             {#if config.assistant_search_provider !== 'duckduckgo'}
@@ -1211,10 +1218,10 @@
           </span>
           <p class="settings-muted mt-0.5">{t('settingsAI.semanticMemory.hint')}</p>
         </div>
-        <Toggle size="sm" toggled={config.memory_semantic_enabled} labelText={t('settingsAI.semanticMemory.title')} hideLabel={true} on:toggle={() => {
-            config.memory_semantic_enabled = !config.memory_semantic_enabled;
+        <Switch bind:checked={memorySemanticEnabledSwitch} onSMUISwitchChange={() => {
+            config.memory_semantic_enabled = memorySemanticEnabledSwitch;
             handleChange();
-          }} />
+          }} aria-label={t('settingsAI.semanticMemory.title')} />
       </label>
 
       {#if config.memory_semantic_enabled}
@@ -1222,13 +1229,12 @@
           <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
             <label class="settings-muted text-xs" for="embedding-provider">{t('settingsAI.semanticMemory.provider')}</label>
             <Select
-              labelText={t('settingsAI.semanticMemory.provider')}
-              hideLabel={true}
-              selected={config.embedding_provider}
-              on:change={(e) => { config.embedding_provider = (e as CustomEvent<string>).detail as typeof config.embedding_provider; handleChange(); }}
+              anchor$aria-label={t('settingsAI.semanticMemory.provider')}
+              value={config.embedding_provider}
+              onSMUISelectChange={(e) => { config.embedding_provider = (e as CustomEvent<{ value: string }>).detail.value as typeof config.embedding_provider; handleChange(); }}
             >
-              <SelectItem value="ollama" text={t('settingsAI.semanticMemory.providerOllama')} />
-              <SelectItem value="openai" text={t('settingsAI.semanticMemory.providerOpenai')} />
+              <Option value="ollama">{t('settingsAI.semanticMemory.providerOllama')}</Option>
+              <Option value="openai">{t('settingsAI.semanticMemory.providerOpenai')}</Option>
             </Select>
 
             <label class="settings-muted text-xs" for="embedding-endpoint">{t('settingsAI.semanticMemory.endpoint')}</label>
@@ -1337,10 +1343,10 @@
             </span>
             <p class="settings-muted mt-0.5">{t('settingsAI.assistantMemory.hint')}</p>
           </div>
-          <Toggle size="sm" toggled={config.assistant_memory_enabled} labelText={t('settingsAI.assistantMemory.enabled')} hideLabel={true} on:toggle={() => {
-              config.assistant_memory_enabled = !config.assistant_memory_enabled;
+          <Switch bind:checked={assistantMemoryEnabledSwitch} onSMUISwitchChange={() => {
+              config.assistant_memory_enabled = assistantMemoryEnabledSwitch;
               handleChange();
-            }} />
+            }} aria-label={t('settingsAI.assistantMemory.enabled')} />
         </label>
 
         <AssistantMemoryManager enabled={Boolean(config.assistant_memory_enabled)} {t} />

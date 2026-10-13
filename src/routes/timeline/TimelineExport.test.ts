@@ -40,7 +40,7 @@ test('时间线工具栏应包含导出按钮，并在加载/无数据时禁用'
   );
 
   // 按钮触发函数
-  assert.match(source, /on:click=\{exportTimelineJson\}/);
+  assert.match(source, /onclick=\{exportTimelineJson\}/);
 
   // 加载中或当前日期无活动时按钮禁用，避免无意义触发
   assert.match(

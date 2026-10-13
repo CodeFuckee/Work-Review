@@ -52,10 +52,34 @@ test('认证失败后状态区应显示重新登录提示而非「云端暂无�
   );
   assert.match(refreshFn, /isSyncAuthFailure\(parsed\.data\)[\s\S]{0,200}authExpired = true/);
   assert.match(refreshFn, /authExpired = true[\s\S]{0,200}cloudMeta = null/);
-  // 模板：状态行内 authExpired 提示先于灰标分支（操作按钮保留，上传可再试出警告）
+  // 模板：状态行内 authExpired 提示先于「云端暂无配置」中性 chip 分支
+  // （MD 迁移：Carbon Tag type="gray" → md-chip md-chip-outlined；操作按钮保留，上传可再试出警告）
   const authExpiredBranch = source.indexOf('{#if authExpired}');
-  const grayTag = source.indexOf('type="gray"');
   assert.ok(authExpiredBranch > 0, '状态行应有 authExpired 独立分支');
-  assert.ok(grayTag < 0 || grayTag > authExpiredBranch, '重新登录提示应优先于云端暂无配置灰标');
+  // 从 authExpired 分支起找灰标 chip，避开脚本区 diffChipClass 的类名引用
+  const grayChip = source.indexOf('md-chip-outlined', authExpiredBranch);
+  assert.ok(grayChip > authExpiredBranch, '重新登录提示应优先于云端暂无配置灰标');
   assert.match(source, /\{#if authExpired\}[\s\S]{0,300}t\('settingsSync\.authExpired'\)/);
+});
+
+test('同步卡应完成 Carbon → SMUI/MD 迁移且不再引用 Carbon 包', async () => {
+  const source = await readFile(new URL('./SettingsSync.svelte', import.meta.url), 'utf8');
+
+  // 不再引用 Carbon 组件/图标
+  assert.doesNotMatch(source, /carbon-components-svelte|carbon-icons-svelte/);
+  // Carbon Tag → md-chip 静态标签（状态行 + 差异行均不再有 <Tag）
+  assert.doesNotMatch(source, /<Tag/);
+  assert.match(source, /md-chip md-chip-tonal/);
+  assert.match(source, /md-chip md-chip-outlined/);
+  // Carbon Modal → SMUI Dialog 受控 open（scrim/Esc 关闭等同取消，关闭即丢弃待拉取载荷）
+  assert.match(source, /import Dialog, \{ Title, Content, Actions \} from '@smui\/dialog'/);
+  assert.match(source, /<Dialog bind:open=\{showDiffModal\}/);
+  assert.match(source, /\$: if \(!showDiffModal\) \{[\s\S]{0,80}pendingPull = null/);
+  // Carbon Button(kind/icon/on:click) → SMUI Button（variant/onclick + mdc-button__icon 图标）
+  assert.match(source, /<Button variant="outlined" disabled=\{working\} onclick=\{handlePull\}>/);
+  assert.match(source, /<Button variant="raised" disabled=\{working\} onclick=\{handlePush\}>/);
+  assert.match(source, /mdc-button__icon/);
+  // Carbon InlineLoading → SMUI CircularProgress
+  assert.match(source, /import CircularProgress from '@smui\/circular-progress'/);
+  assert.match(source, /<CircularProgress indeterminate \/>/);
 });

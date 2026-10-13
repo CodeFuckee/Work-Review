@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, setContext, afterUpdate } from 'svelte';
   import type { ComponentProps } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { push } from 'svelte-spa-router';
@@ -17,13 +17,12 @@
   import SettingsPlane from './components/SettingsPlane.svelte';
   import SettingsFileMonitor from './components/SettingsFileMonitor.svelte';
   import SettingsSync from './components/SettingsSync.svelte';
-  import Tabs from 'carbon-components-svelte/src/Tabs/Tabs.svelte';
-  import Tab from 'carbon-components-svelte/src/Tabs/Tab.svelte';
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import TextInput from 'carbon-components-svelte/src/TextInput/TextInput.svelte';
-  import InlineNotification from 'carbon-components-svelte/src/Notification/InlineNotification.svelte';
-  import NotificationActionButton from 'carbon-components-svelte/src/Notification/NotificationActionButton.svelte';
-  import Loading from 'carbon-components-svelte/src/Loading/Loading.svelte';
+  // SMUI v8：Tab/Button/Textfield/CircularProgress；bare.css 集中在 src/smui.css 引入
+  import Tab from '@smui/tab';
+  import Button from '@smui/button';
+  import Textfield from '@smui/textfield';
+  import CircularProgress from '@smui/circular-progress';
+  import MdIcon from '../../lib/components/MdIcon.svelte';
   import SettingsNodeGateway from './components/SettingsNodeGateway.svelte';
   import SettingsSystem from './components/SettingsSystem.svelte';
   import SettingsPrivacy from './components/SettingsPrivacy.svelte';
@@ -154,6 +153,32 @@
 
   // 当前激活的标签
   let activeTab: SettingsTabId = 'general';
+
+  // ═══ SMUI Tab（@smui/tab v8 未导出 TabBar）═══
+  // Tab 初始化强依赖 TabBar 提供的 context（focusOnActivate / initialActive），
+  // 这里手动等价提供：初始激活 'general'；后续激活态由 activeTab 经 afterUpdate
+  // 驱动各 Tab 的 activate/deactivate（受控语义等价 Carbon Tabs 的 selected）。
+  setContext('SMUI:tab:focusOnActivate', false);
+  setContext('SMUI:tab:initialActive', { active: 'general' as SettingsTabId | null, key: (key: unknown) => key });
+
+  // Tab 组件实例只导出 activate/deactivate/focus/getElement（active 是内部状态，
+  // 激活与否用根元素上的 mdc-tab--active 类判断）
+  interface TabHandle {
+    activate(previousIndicatorClientRect: DOMRect | undefined, skipFocus: boolean): void;
+    deactivate(): void;
+    getElement(): HTMLButtonElement;
+  }
+
+  let tabRefs: (TabHandle | undefined)[] = [];
+  $: activeTabIndex = tabs.findIndex((tab) => tab.id === activeTab);
+  afterUpdate(() => {
+    tabRefs.forEach((ref, index) => {
+      if (!ref) return;
+      const isActive = ref.getElement().classList.contains('mdc-tab--active');
+      if (index === activeTabIndex && !isActive) ref.activate(undefined, true);
+      else if (index !== activeTabIndex && isActive) ref.deactivate();
+    });
+  });
 
   const tabs: SettingsTab[] = [
     { id: 'general', labelKey: 'settings.tabs.general', icon: 'general' },
@@ -465,31 +490,28 @@
       <p class="settings-carbon-subtitle">{t('settings.subtitle')}</p>
     </div>
     <Button
-      kind="primary"
-      loading={saving}
+      variant="raised"
       disabled={loading || saving}
-      on:click={saveConfig}
+      onclick={saveConfig}
     >
+      {#if saving}
+        <span class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"></span>
+      {/if}
       {#if success}{t('settings.saved')}{:else}{t('settings.save')}{/if}
     </Button>
   </div>
 
   {#if loading}
-    <div class="settings-carbon-loading">
-      <Loading description={t('settings.loading') || 'Loading'} withOverlay={false} />
+    <div class="settings-carbon-loading" role="status" aria-label={t('settings.loading') || 'Loading'}>
+      <CircularProgress indeterminate class="settings-loading-spinner" />
     </div>
   {:else if error}
-    <InlineNotification
-      kind="error"
-      title={t('settings.loadError')}
-      subtitle={error}
-      hideCloseButton={true}
-      timeout={0}
-    >
-      <NotificationActionButton slot="actions" on:click={loadConfig}>
-        {t('settings.retry')}
-      </NotificationActionButton>
-    </InlineNotification>
+    <!-- MD banner 形态：替代 Carbon InlineNotification（错误 + 重试动作按钮） -->
+    <div class="md-banner" role="alert">
+      <MdIcon name="error" size={20} />
+      <span class="md-banner-copy"><strong>{t('settings.loadError')}</strong>{error}</span>
+      <button class="md-text-btn" onclick={loadConfig}>{t('settings.retry')}</button>
+    </div>
   {:else if config}
     <!-- 账号区块 -->
     <section class="settings-carbon-card">
@@ -503,27 +525,28 @@
             <p class="settings-account-meta">{accountState.userName} · {t('settings.accountLoggedInAs')}</p>
           </div>
           <div class="settings-account-actions">
-            <Button kind="ghost" size="small" on:click={() => push('/auth')}>{t('auth.reloginAction')}</Button>
-            <Button kind="ghost" size="small" on:click={handleAccountLogout}>{t('auth.logoutAction')}</Button>
+            <Button variant="text" onclick={() => push('/auth')}>{t('auth.reloginAction')}</Button>
+            <Button variant="text" onclick={handleAccountLogout}>{t('auth.logoutAction')}</Button>
           </div>
         {:else}
           <p class="settings-account-meta">{t('settings.accountNotLoggedIn')}</p>
-          <Button kind="ghost" size="small" on:click={() => push('/auth')}>{t('auth.loginTab')}</Button>
+          <Button variant="text" onclick={() => push('/auth')}>{t('auth.loginTab')}</Button>
         {/if}
       </div>
 
       <div class="settings-account-server">
-        <TextInput
-          id="account-server-url"
+        <Textfield
+          class="settings-account-server-field"
+          input$id="account-server-url"
+          variant="outlined"
           bind:value={accountServerUrl}
-          labelText={t('settings.accountServerLabel')}
+          label={t('settings.accountServerLabel')}
           placeholder="http://10.37.80.25:4191"
-          spellcheck={false}
+          input$spellcheck={false}
         />
         <Button
-          kind="ghost"
-          size="small"
-          on:click={saveAccountServerUrl}
+          variant="text"
+          onclick={saveAccountServerUrl}
         >
           {accountServerSaved ? t('settings.saved') : t('settings.save')}
         </Button>
@@ -537,69 +560,75 @@
       </section>
     {/if}
 
-    <!-- 设置页签（Carbon Tabs：0.113 重写版 —— 导航项 + slot="content" 面板区，
-         面板须为 role=tabpanel 直接子级并由 hidden 按索引切换，内容按需懒渲染） -->
-    <Tabs selected={0} on:change={(e) => { activeTab = tabs[e.detail]?.id ?? 'general'; }}>
-      {#each tabs as tab (tab.id)}
-        <Tab label={t(tab.labelKey) + (tab.beta ? ' · Beta' : '')} />
+    <!-- 设置页签（SMUI Tab）：@smui/tab v8 未导出 TabBar，Tab 所需 context 由上方 setContext
+         等价提供，激活态由 activeTab 经 afterUpdate 驱动（等价 Carbon 受控 selected 语义）；
+         下方 9 个 role=tabpanel div 维持 hidden 按需懒渲染架构 -->
+    <div class="settings-tab-strip" role="tablist">
+      {#each tabs as tab, index (tab.id)}
+        <Tab
+          bind:this={tabRefs[index]}
+          tab={tab.id}
+          tabindex={0}
+          onclick={() => { activeTab = tab.id; }}
+        >
+          <span class="mdc-tab__text-label">{t(tab.labelKey) + (tab.beta ? ' · Beta' : '')}</span>
+        </Tab>
       {/each}
-      <svelte:fragment slot="content">
-        {#each tabs as tab (tab.id)}
-          <div role="tabpanel" hidden={activeTab !== tab.id}>
-            {#if activeTab === tab.id}
-              <div class="settings-carbon-panel">
-              {#if activeTab === 'general'}
-                <SettingsSync bind:config on:change={() => dirty = true} />
-                <SettingsGeneral bind:config on:change={() => dirty = true} />
-              {:else if activeTab === 'appearance'}
-                <SettingsAppearance bind:config on:change={handleSettingsChange} />
-              {:else if activeTab === 'node'}
-                <SettingsNodeGateway bind:config {dataDir} on:change={() => dirty = true} />
-              {:else if activeTab === 'ai'}
-                <section class="settings-carbon-card">
-                  <h3 class="cds--type-heading-02">{t('settings.aiCardTitle')}</h3>
-                  <p class="settings-carbon-card-desc">{t('settings.aiCardDescription')}</p>
-                  <SettingsAI bind:config {providers} on:change={() => dirty = true} />
-                </section>
-              {:else if activeTab === 'privacy'}
-                <SettingsPrivacy
-                  bind:config
-                  {runningApps}
-                  {recentApps}
-                  on:change={() => dirty = true}
-                  on:refresh-apps={() => { loadRunningApps(); loadRecentApps(); }}
-                />
-              {:else if activeTab === 'storage'}
-                <SettingsStorage
-                  bind:config
-                  {storageStats}
-                  {dataDir}
-                  {defaultDataDir}
-                  on:change={() => dirty = true}
-                  on:clearCache={handleClearCache}
-                  on:dataDirChanged={handleDataDirChanged}
-                />
-              {:else if activeTab === 'gitlab'}
-                <SettingsGitlab bind:config on:change={() => dirty = true} />
-              {:else if activeTab === 'plane'}
-                <SettingsPlane bind:config on:change={() => dirty = true} />
-              {:else if activeTab === 'filemonitor'}
-                <SettingsFileMonitor bind:config on:change={() => dirty = true} />
-              {/if}
-              </div>
-            {/if}
+    </div>
+    {#each tabs as tab (tab.id)}
+      <div role="tabpanel" hidden={activeTab !== tab.id}>
+        {#if activeTab === tab.id}
+          <div class="settings-carbon-panel">
+          {#if activeTab === 'general'}
+            <SettingsSync bind:config on:change={() => dirty = true} />
+            <SettingsGeneral bind:config on:change={() => dirty = true} />
+          {:else if activeTab === 'appearance'}
+            <SettingsAppearance bind:config on:change={handleSettingsChange} />
+          {:else if activeTab === 'node'}
+            <SettingsNodeGateway bind:config {dataDir} on:change={() => dirty = true} />
+          {:else if activeTab === 'ai'}
+            <section class="settings-carbon-card">
+              <h3 class="cds--type-heading-02">{t('settings.aiCardTitle')}</h3>
+              <p class="settings-carbon-card-desc">{t('settings.aiCardDescription')}</p>
+              <SettingsAI bind:config {providers} on:change={() => dirty = true} />
+            </section>
+          {:else if activeTab === 'privacy'}
+            <SettingsPrivacy
+              bind:config
+              {runningApps}
+              {recentApps}
+              on:change={() => dirty = true}
+              on:refresh-apps={() => { loadRunningApps(); loadRecentApps(); }}
+            />
+          {:else if activeTab === 'storage'}
+            <SettingsStorage
+              bind:config
+              {storageStats}
+              {dataDir}
+              {defaultDataDir}
+              on:change={() => dirty = true}
+              on:clearCache={handleClearCache}
+              on:dataDirChanged={handleDataDirChanged}
+            />
+          {:else if activeTab === 'gitlab'}
+            <SettingsGitlab bind:config on:change={() => dirty = true} />
+          {:else if activeTab === 'plane'}
+            <SettingsPlane bind:config on:change={() => dirty = true} />
+          {:else if activeTab === 'filemonitor'}
+            <SettingsFileMonitor bind:config on:change={() => dirty = true} />
+          {/if}
           </div>
-        {/each}
-      </svelte:fragment>
-    </Tabs>
+        {/if}
+      </div>
+    {/each}
   {/if}
 </div>
 
 <style>
   .settings-carbon-shell {
     min-height: 100%;
-    background: var(--cds-background);
-    color: var(--cds-text-primary);
+    background: var(--md-theme-background);
+    color: var(--md-theme-on-surface);
     padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem;
     display: flex;
     flex-direction: column;
@@ -615,7 +644,7 @@
   }
 
   .settings-carbon-subtitle {
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
     font-size: 0.8125rem;
     margin-top: 0.125rem;
   }
@@ -626,9 +655,62 @@
     padding: 3rem 0;
   }
 
+  /* class 经 prop 落在 CircularProgress 子组件根元素上，需 :global 才能命中 */
+  :global(.settings-loading-spinner) {
+    width: 28px;
+    height: 28px;
+    --md-circular-progress-size: 28px;
+  }
+
+  /* MD banner 形态（与 App.svelte 壳层的 grace banner 同款，此处为本组件局部副本） */
+  .md-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--md-theme-border-subtle);
+    border-radius: 8px;
+    background: var(--md-theme-surface-variant);
+    color: var(--md-theme-on-surface);
+    font-size: 0.875rem;
+  }
+
+  .md-banner-copy {
+    min-width: 0;
+  }
+
+  .md-banner-copy strong {
+    margin-inline-end: 0.375rem;
+  }
+
+  .md-text-btn {
+    margin-inline-start: auto;
+    padding: 0.375rem 0.75rem;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--md-theme-primary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .md-text-btn:hover {
+    background: var(--md-theme-border-subtle);
+  }
+
+  /* SMUI Tab 页签条：@smui/tab 无 TabBar 容器样式，这里补条状布局 */
+  .settings-tab-strip {
+    display: flex;
+    align-items: stretch;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--md-theme-border-subtle);
+  }
+
   .settings-carbon-card {
-    background: var(--cds-layer);
-    border: 1px solid var(--cds-border-subtle);
+    background: var(--md-theme-surface);
+    border: 1px solid var(--md-theme-border-subtle);
     border-radius: 8px;
     padding: 1.25rem 1.375rem;
     display: flex;
@@ -638,12 +720,12 @@
 
   .settings-carbon-card-desc {
     font-size: 0.8125rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
   }
 
   .settings-carbon-hint {
     font-size: 0.6875rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
   }
 
   .settings-account-row {
@@ -664,7 +746,7 @@
 
   .settings-account-meta {
     font-size: 0.75rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
   }
 
   .settings-account-actions {
@@ -679,7 +761,7 @@
     gap: 0.5rem;
   }
 
-  .settings-account-server :global(.bx--form-item) {
+  .settings-account-server :global(.mdc-text-field) {
     flex: 1;
     min-width: 0;
   }

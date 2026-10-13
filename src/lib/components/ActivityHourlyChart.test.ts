@@ -8,7 +8,7 @@ test('按小时活跃度图表应将所选时段直接显示在柱状图内', as
   assert.match(source, /let selectedHour(?:\s*:\s*number\s*\|\s*null)? = null/);
   assert.match(source, /function selectHour\(hour(?:\s*:\s*number)?\)(?::\s*void)?/);
   assert.match(source, /aria-pressed=\{selectedHour === bucket\.hour\}/);
-  assert.match(source, /on:click=\{\(\) => selectHour\(bucket\.hour\)\}/);
+  assert.match(source, /onclick=\{\(\) => selectHour\(bucket\.hour\)\}/);
   // 点击柱状图高亮选中（ring），详情显示在下方信息条而非浮动弹窗
   assert.match(source, /ring-2 ring-sky-300/);
   assert.doesNotMatch(source, /tooltipAlignmentClass/);

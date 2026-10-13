@@ -46,10 +46,10 @@ test('时间线详情分类修改应使用紧凑 Popover，并用色点、名称
   assert.match(source, /bind:this=\{categoryPopover\}/);
   assert.match(source, /async function toggleCategoryPopover\(\)/);
   assert.match(source, /showCategoryPopover = true;[\s\S]*await tick\(\);[\s\S]*categoryPopover\?\.focus\(\)/);
-  assert.match(source, /on:click=\{toggleCategoryPopover\}/);
+  assert.match(source, /onclick=\{toggleCategoryPopover\}/);
   assert.match(source, /function handleDetailDismiss\(\)/);
   assert.match(source, /if \(showCategoryPopover\) \{[\s\S]*closeCategoryPopover\(\)/);
-  assert.match(source, /on:click\|self=\{handleDetailDismiss\}/);
+  assert.match(source, /if \(event\.target === event\.currentTarget\) handleDetailDismiss\(\)/);
   assert.match(source, /handleDetailOverlayKeydown/);
   assert.match(source, /getViewportPopoverPlacement/);
   assert.match(source, /style=\{categoryPopoverStyle\}/);
@@ -79,7 +79,7 @@ test('分类确认层应接管键盘焦点，并在分类入口触发时恢复�
     '删除、隐私和分类变更三个标题分支都应为确认对话框提供可访问名称'
   );
   assert.match(source, /function handleTimelineWindowKeydown\(event\)[\s\S]*cancelPendingAction\(\)/);
-  assert.match(source, /<svelte:window[\s\S]*on:keydown=\{handleTimelineWindowKeydown\}/);
+  assert.match(source, /<svelte:window[\s\S]*onkeydown=\{handleTimelineWindowKeydown\}/);
   const confirmDialogStart = source.indexOf('class="timeline-action-confirm-dialog"');
   const confirmDialogEnd = source.indexOf('>', confirmDialogStart);
   assert.ok(confirmDialogStart >= 0 && confirmDialogEnd > confirmDialogStart);

@@ -38,8 +38,9 @@ async function seedAuth(page: Page): Promise<void> {
 async function openAiTab(page: Page): Promise<void> {
   await seedAuth(page);
   await page.goto('/#/settings');
-  await expect(page.getByRole('button', { name: 'AI 模型' })).toBeVisible();
-  await page.getByRole('button', { name: 'AI 模型' }).click();
+  // MD 迁移：设置页签为 SMUI Tab（role=tab 而非 button）
+  await expect(page.getByRole('tab', { name: 'AI 模型' })).toBeVisible();
+  await page.getByRole('tab', { name: 'AI 模型' }).click();
 }
 
 // 人工过目模式：E2E_HOLD_MS=毫秒 时，用例结束后浏览器停留指定时长供肉眼核对卡片。

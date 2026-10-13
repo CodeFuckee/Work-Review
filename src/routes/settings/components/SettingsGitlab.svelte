@@ -10,7 +10,8 @@
   } from '../gitlabAuthorPicker.ts';
   import GitlabProjectPicker from './GitlabProjectPicker.svelte';
   import GitlabAuthorPicker from './GitlabAuthorPicker.svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  // SMUI v8 Switch：change 事件实为 SMUISwitchChange（onchange 不触发），用 onSMUISwitchChange
+  import Switch from '@smui/switch';
 
   interface GitlabSettings {
     url: string | null;
@@ -28,6 +29,10 @@
   let showToken = false;
   let testing = false;
   let testResult: { ok: boolean; message: string | null; detail: string } | null = null;
+
+  // Switch 受控影子：外部加载同步进开关，切换时回调经 onEnabledToggle 写回 config
+  let reportEnabledSwitch = true;
+  $: reportEnabledSwitch = gitlab().report_enabled;
 
   let showProjectPicker = false;
   let pickerLoading = false;
@@ -310,7 +315,7 @@
           <div class="settings-text">{t('settingsGitlab.enabledLabel')}</div>
           <div class="settings-muted">{t('settingsGitlab.enabledHint')}</div>
         </div>
-        <Toggle size="sm" toggled={gitlab().report_enabled} labelText={t('settingsGitlab.enabledLabel')} hideLabel={true} on:toggle={onEnabledToggle} />
+        <Switch bind:checked={reportEnabledSwitch} onSMUISwitchChange={onEnabledToggle} aria-label={t('settingsGitlab.enabledLabel')} />
       </div>
     </div>
 

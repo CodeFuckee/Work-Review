@@ -98,7 +98,7 @@ test('常驻网站应按需加载完整摘要并在卡片内展开，同时保�
   assert.match(source, /requestId !== domainUsageRequestId/);
   assert.match(source, /\(stats\.domain_total_count \|\| domainUsageItems\.length\) > 6/);
   assert.match(source, /disabled=\{domainUsageLoading\}/);
-  assert.match(source, /on:click=\{toggleDomainUsageExpanded\}/);
+  assert.match(source, /onclick=\{toggleDomainUsageExpanded\}/);
   assert.doesNotMatch(source, /openAllDomainsDetail/);
   assert.match(source, /invoke(?:<[^>]+>)?\('get_overview_domain_detail'/);
   assert.match(source, /async function openDomainDetail\(domain(?:\s*:[^)]+)?\)/);
@@ -113,7 +113,7 @@ test('常驻网站应按需加载完整摘要并在卡片内展开，同时保�
   assert.match(source, /domainOverlayDialog\?\.querySelector(?:<[^>]+>)?\('\[data-domain-summary\]'\)/);
   assert.match(source, /bind:this=\{domainOverlayBackButton\}/);
   assert.match(source, /data-domain-summary/);
-  assert.match(source, /on:click\|self=\{closeDomainOverlay\}/);
+  assert.match(source, /if \(event\.target === event\.currentTarget\) closeDomainOverlay\(\)/);
 });
 
 test('概览总时长 KPI 应使用紧凑格式并保持单行', async () => {
@@ -271,8 +271,9 @@ test('概览页面应支持今日、指定日期与本周三种时间视角切�
   assert.doesNotMatch(source, /inputmode="numeric"/);
   assert.match(source, /dateFrom: overviewMode === 'date'/);
   assert.match(source, /dateTo: overviewMode === 'date'/);
-  // Carbon 迁移后视角切换为 ContentSwitcher，三模式经 change 事件三元表达式分发
-  assert.match(source, /<ContentSwitcher/);
+  // MD 迁移后视角切换为 SMUI SegmentedButton（单选 segment 即模式值），今日 -> 本周 -> 指定日期顺序不变
+  assert.match(source, /<SegmentedButton/);
+  assert.match(source, /const OVERVIEW_MODES(?:\s*:\s*OverviewMode\[\])?\s*=\s*\['today',\s*'week',\s*'date'\]/);
   const todayIndex = source.indexOf("'today'");
   const weekIndex = source.indexOf("'week'");
   const dateIndex = source.indexOf("'date'");

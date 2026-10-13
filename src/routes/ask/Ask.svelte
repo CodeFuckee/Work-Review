@@ -922,13 +922,12 @@
       chatBody.scrollTop = chatBody.scrollHeight;
     }
   });
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
-  import AddIcon from 'carbon-icons-svelte/lib/Add.svelte';
+  import Button from '@smui/button';
+  import MdIcon from '../../lib/components/MdIcon.svelte';
 </script>
 
 <svelte:window
-  on:keydown={(e) => {
+  onkeydown={(e) => {
     if (e.key === 'Escape' && showConversationList) {
       showConversationList = false;
     }
@@ -954,22 +953,22 @@
       </div>
 
       <div class="ask-header-actions">
-        <Button kind="ghost" size="small" icon={RenewIcon} on:click={openConversationDrawer}>
+        <Button variant="text" onclick={openConversationDrawer}>
+          <span class="mdc-button__icon"><MdIcon name="refresh" size={18} /></span>
           {t('ask.conversationHistory')}
         </Button>
         <Button
-          kind="primary"
-          size="small"
-          icon={AddIcon}
-          on:click={clearConversation}
+          variant="raised"
+          onclick={clearConversation}
           disabled={sending || (!hasConversation && conversationId == null)}
         >
+          <span class="mdc-button__icon"><MdIcon name="add" size={18} /></span>
           {t('ask.newConversation')}
         </Button>
       </div>
     </div>
 
-    <div bind:this={chatBody} class="ask-chat-scroll flex-1 min-h-0 overflow-y-auto" on:scroll={syncStickToBottom}>
+    <div bind:this={chatBody} class="ask-chat-scroll flex-1 min-h-0 overflow-y-auto" onscroll={syncStickToBottom}>
       {#if !hasConversation}
         <section class="ask-welcome-panel page-axis-reading" aria-labelledby="ask-welcome-title">
           <div class="ask-welcome-product-mark" aria-hidden="true">
@@ -983,7 +982,7 @@
             {#each starterPrompts.slice(0, 4) as prompt, promptIndex}
               <button
                 class="ask-starter-card"
-                on:click={() => submitQuestion(prompt)}
+                onclick={() => submitQuestion(prompt)}
                 disabled={sending}
               >
                 <span>{prompt}</span>
@@ -1018,7 +1017,7 @@
                       class="ask-tool-summary group/tool"
                       data-state={toolSummaryState(message)}
                       open={shouldExpandToolSummary(message) || undefined}
-                      on:toggle={handleExpandScroll}
+                      ontoggle={handleExpandScroll}
                     >
                       <summary>
                         <span class="ask-tool-status-dot" aria-hidden="true"></span>
@@ -1050,11 +1049,11 @@
                               <div class="ask-confirm-panel">
                                 <p>{step.summary}</p>
                                 {#if step.confirmStatus === 'pending'}
-                                  <div class="ask-confirm-actions">
-                                    <Button kind="primary" size="small" on:click={() => respondConfirm(message.id, step, true)}>
+                                    <div class="ask-confirm-actions">
+                                    <Button variant="raised" onclick={() => respondConfirm(message.id, step, true)}>
                                       {t('ask.approveAction')}
                                     </Button>
-                                    <Button kind="secondary" size="small" on:click={() => respondConfirm(message.id, step, false)}>
+                                    <Button variant="outlined" onclick={() => respondConfirm(message.id, step, false)}>
                                       {t('ask.denyAction')}
                                     </Button>
                                   </div>
@@ -1099,7 +1098,7 @@
                   </div>
 
                   {#if message.references?.length}
-                    <details class="ask-reference-trail" on:toggle={handleExpandScroll}>
+                    <details class="ask-reference-trail" ontoggle={handleExpandScroll}>
                       <summary aria-label={t('ask.referenceTrail', { count: message.references.length })}>
                         <span>{t('ask.referenceTrail', { count: message.references.length })}</span>
                         <span class="ask-reference-line" aria-hidden="true"></span>
@@ -1162,8 +1161,8 @@
           class="ask-composer-input"
           placeholder={t('ask.placeholder')}
           aria-label={t('ask.placeholder')}
-          on:input={resizeComposer}
-          on:keydown={handleComposerKeydown}
+          oninput={resizeComposer}
+          onkeydown={handleComposerKeydown}
         ></textarea>
 
         <div class="ask-composer-toolbar">
@@ -1187,7 +1186,7 @@
               <select
                 bind:this={modelSelectEl}
                 bind:value={selectedModelId}
-                on:change={handleModelChange}
+                onchange={handleModelChange}
                 class="ask-model-select"
                 style="width: {modelSelectWidth}; background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 10px center;"
                 aria-label={t('ask.modelSelector')}
@@ -1204,7 +1203,7 @@
             <button
               type="button"
               class="ask-send-button ask-send-button-stop"
-              on:click={stopCurrentRequest}
+              onclick={stopCurrentRequest}
               aria-label={t('ask.stopGenerating')}
               title={t('ask.stopGenerating')}
             >
@@ -1214,7 +1213,7 @@
             <button
               type="button"
               class="ask-send-button"
-              on:click={() => submitQuestion()}
+              onclick={() => submitQuestion()}
               disabled={!input.trim()}
               aria-label={t('ask.sendMessage')}
               title={t('ask.sendMessage')}
@@ -1239,7 +1238,7 @@
   <div
     class="fixed inset-0 z-[160] flex justify-end bg-slate-950/32 backdrop-blur-sm animate-fadeIn"
     role="presentation"
-    on:click|self={() => (showConversationList = false)}
+    onclick={(event) => { if (event.target === event.currentTarget) showConversationList = false; }}
   >
     <div
       use:trapFocus
@@ -1253,9 +1252,8 @@
         <h3>{t('ask.conversationHistory')}</h3>
         <div class="flex items-center gap-1.5">
           <Button
-            kind="ghost"
-            size="small"
-            on:click={() => { showConversationList = false; clearConversation(); }}
+            variant="text"
+            onclick={() => { showConversationList = false; clearConversation(); }}
             disabled={sending}
           >
             {t('ask.newConversation')}
@@ -1263,7 +1261,7 @@
           <button
             type="button"
             class="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:text-[#636c76] dark:hover:bg-[#21262d] dark:hover:text-[#adbac7]"
-            on:click={() => (showConversationList = false)}
+            onclick={() => (showConversationList = false)}
             title={t('common.cancel')}
           >
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -1276,7 +1274,7 @@
             <button
               type="button"
               class="min-w-0 flex-1 text-start"
-              on:click={() => switchConversation(conv.id)}
+              onclick={() => switchConversation(conv.id)}
             >
               <span class="block truncate text-[13px] font-medium text-slate-700 dark:text-[#c9d1d9]">{displayConversationTitle(conv.title)}</span>
               <span class="block text-[11px] text-slate-400 dark:text-[#636c76]">{t('ask.conversationMeta', { count: conv.messageCount })}</span>
@@ -1284,7 +1282,7 @@
             <button
               type="button"
               class="ask-history-delete"
-              on:click|stopPropagation={() => deleteConversation(conv.id)}
+              onclick={(event) => { event.stopPropagation(); deleteConversation(conv.id); }}
               disabled={sending}
               aria-label={t('ask.deleteConversation')}
               title={t('ask.deleteConversation')}

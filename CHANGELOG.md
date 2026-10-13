@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 新增
+- **前端全站迁移 Material Design（SMUI v8）**：25 个 svelte 文件从 Carbon 迁至 @smui/* 8.0.x（Svelte 5 runes 组件与 legacy 业务组件混编）——壳层重建为 MD 顶栏 + 可折叠导航抽屉，Toggle/Button/Select/Modal/ContentSwitcher/Tabs/Tag 等全量替换，字体换 Roboto + Noto Sans SC/Arabic + Material Symbols（本地打包），Tailwind 色板重映射 Material hex（797 处 dark: 变体自动换色），图表与自研组件换 MD 令牌配色，DatePicker 去 Carbon 化（flatpickr 直驱 + MD 皮肤，API 不变）。移除 carbon-components-svelte/carbon-icons-svelte/@ibm-plex 依赖。测试：单元断言 13 文件对齐 MD 语义 + E2E 6 处 DOM 断言更新 + 新增迁移锁定测试；verify:frontend 746 测试零失败、E2E 27/27（workers 收敛 2 消除资源竞争 flaky）。
+
 - **跨设备配置同步**：设置-常规新增「配置同步（跨设备）」卡——把 GitLab、Plane、AI 模型与提示词、机器人凭证、localhost API 等连接类配置**整包一键推送到服务端**（按账号加密存储），在其他设备登录同一账号后**一键拉取应用**（拉取前逐块差异预览：仅本机有/仅云端有/内容不同/一致）。凭据安全性：payload 经 PBKDF2(登录密码+账号，150k 迭代) 派生密钥 AES-GCM 加密后才上传，服务端仅存密文不可读；同步密钥登录时自动派生、登出自动清除；HTTP 全程经 Rust 命令发出（新增 `client_http_get_json` 与 Bearer 认证头支持）。管理后台新增按用户隔离的配置存取 API（`client_sync_config` 表，仅存密文）。新机器空白配置误覆盖风险由差异预览（仅云端有→直接填充）规避。
 
 ### 变更

@@ -5,7 +5,8 @@
   import { cache } from '../../../lib/stores/cache.ts';
   import { locale, t } from '$lib/i18n/index.ts';
   import { showToast } from '$lib/stores/toast.ts';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  // SMUI v8 Switch：change 事件实为 SMUISwitchChange（onchange 不触发），用 onSMUISwitchChange
+  import Switch from '@smui/switch';
   import CollapsibleSection from '../../../lib/components/CollapsibleSection.svelte';
 
   interface ScreenshotStorageSettings {
@@ -102,6 +103,13 @@
   }>();
   $: currentLocale = $locale;
   let isClearing = false;
+  // Switch 受控影子：外部加载同步进开关，切换时回调读影子值写回 config
+  let screenshotsEnabledSwitch = true;
+  let dailyReportAutoExportSwitch = false;
+  let syncAppConfigSwitch = false;
+  $: screenshotsEnabledSwitch = config.storage?.screenshots_enabled ?? true;
+  $: dailyReportAutoExportSwitch = Boolean(config.daily_report_auto_export);
+  $: syncAppConfigSwitch = Boolean(config.remote_storage?.sync_app_config);
   let isMigrating = false;
   let isCleaningPreviousDir = false;
   let cleanupCandidateDir = '';
@@ -331,15 +339,13 @@
         <span class="settings-text">{t('settingsStorage.screenshotsEnabled')}</span>
         <p class="settings-muted mt-0.5">{t('settingsStorage.screenshotsEnabledHint')}</p>
       </div>
-      <Toggle
-        size="sm"
-        toggled={config.storage.screenshots_enabled}
-        labelText={t('settingsStorage.screenshotsEnabled')}
-        hideLabel={true}
-        on:toggle={() => {
-          config.storage.screenshots_enabled = !config.storage.screenshots_enabled;
+      <Switch
+        bind:checked={screenshotsEnabledSwitch}
+        onSMUISwitchChange={() => {
+          config.storage.screenshots_enabled = screenshotsEnabledSwitch;
           handleChange();
         }}
+        aria-label={t('settingsStorage.screenshotsEnabled')}
       />
     </div>
 
@@ -577,13 +583,11 @@
           <p class="settings-text">{t('settingsStorage.autoExport')}</p>
           <p class="settings-muted mt-0.5">{t('settingsStorage.autoExportHint')}</p>
         </div>
-        <Toggle
-          size="sm"
-          toggled={config.daily_report_auto_export}
-          labelText={t('settingsStorage.autoExport')}
-          hideLabel={true}
+        <Switch
+          bind:checked={dailyReportAutoExportSwitch}
           disabled={!config.daily_report_export_dir}
-          on:toggle={() => { if (config.daily_report_export_dir) config.daily_report_auto_export = !config.daily_report_auto_export; }}
+          onSMUISwitchChange={() => { if (config.daily_report_export_dir) config.daily_report_auto_export = dailyReportAutoExportSwitch; }}
+          aria-label={t('settingsStorage.autoExport')}
         />
       </div>
     </div>
@@ -886,16 +890,14 @@
             <span class="settings-text text-sm">{t('settingsStorage.syncAppConfig')}</span>
             <p class="settings-note mt-1">{t('settingsStorage.syncAppConfigHint')}</p>
           </div>
-          <Toggle
-            size="sm"
-            toggled={Boolean(config.remote_storage?.sync_app_config)}
-            labelText={t('settingsStorage.syncAppConfig')}
-            hideLabel={true}
-            on:toggle={() => {
+          <Switch
+            bind:checked={syncAppConfigSwitch}
+            onSMUISwitchChange={() => {
               if (!config.remote_storage) return;
-              config.remote_storage.sync_app_config = !config.remote_storage.sync_app_config;
+              config.remote_storage.sync_app_config = syncAppConfigSwitch;
               handleChange();
             }}
+            aria-label={t('settingsStorage.syncAppConfig')}
           />
         </div>
 

@@ -62,15 +62,14 @@
   import HourlySummaryDrawer from './HourlySummaryDrawer.svelte';
   import TimelineProjectsCard from './TimelineProjectsCard.svelte';
   import { confirm } from '../../lib/stores/confirm.ts';
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import TrashIcon from 'carbon-icons-svelte/lib/TrashCan.svelte';
-  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
-  import ExportIcon from 'carbon-icons-svelte/lib/Export.svelte';
-  import Modal from 'carbon-components-svelte/src/Modal/Modal.svelte';
-  import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
-  import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
-  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
-  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
+  import Button from '@smui/button';
+  import Dialog, { Title, Content, Actions } from '@smui/dialog';
+  import SegmentedButton, { Segment } from '@smui/segmented-button';
+  import Select, { Option } from '@smui/select';
+  import MdIcon from '../../lib/components/MdIcon.svelte';
+
+  // 批量清理模式分段键（SegmentedButton 单选 segment 即模式值）
+  const CLEANUP_MODES: CleanupMode[] = ['date', 'range', 'app'];
 
   type PrivacyLevel = 'full' | 'anonymized' | 'ignored';
   type CleanupMode = 'date' | 'range' | 'app';
@@ -1301,12 +1300,6 @@
     }
   }
 
-  function selectCleanupMode(mode: string): void {
-    if (mode === 'date' || mode === 'range' || mode === 'app') {
-      cleanupMode = mode;
-    }
-  }
-
   function updateCategoryPopoverPosition(): void {
     if (!showCategoryPopover || !categoryTrigger || typeof window === 'undefined') {
       categoryPopoverStyle = '';
@@ -1825,7 +1818,7 @@
   });
 </script>
 
-<svelte:window on:resize={handleDetailScroll} on:keydown={handleTimelineWindowKeydown} />
+<svelte:window onresize={handleDetailScroll} onkeydown={handleTimelineWindowKeydown} />
 
 <div class="page-shell" data-locale={currentLocale}>
   <!-- 页面标题 -->
@@ -1851,22 +1844,20 @@
       </div>
     </div>
     <div class="page-toolbar">
-      <Button kind="secondary" size="small" on:click={() => (selectedDate = shiftIsoDate(selectedDate, -1))}>
+      <Button variant="outlined" onclick={() => (selectedDate = shiftIsoDate(selectedDate, -1))}>
         {t('report.previousDay')}
       </Button>
       <Button
-        kind="secondary"
-        size="small"
-        isSelected={selectedDate === getLocalDateString()}
-        on:click={() => (selectedDate = getLocalDateString())}
+        variant="outlined"
+        class="timeline-quick-date-btn{selectedDate === getLocalDateString() ? ' timeline-quick-date-active' : ''}"
+        onclick={() => (selectedDate = getLocalDateString())}
       >
         {t('report.today')}
       </Button>
       <Button
-        kind="secondary"
-        size="small"
-        isSelected={selectedDate === getTimelineYesterdayDateString()}
-        on:click={() => (selectedDate = getTimelineYesterdayDateString())}
+        variant="outlined"
+        class="timeline-quick-date-btn{selectedDate === getTimelineYesterdayDateString() ? ' timeline-quick-date-active' : ''}"
+        onclick={() => (selectedDate = getTimelineYesterdayDateString())}
       >
         {t('report.yesterday')}
       </Button>
@@ -1877,9 +1868,34 @@
           triggerClass="page-control-input w-auto"
         />
       {/key}
-      <Button kind="danger-ghost" size="small" icon={TrashIcon} iconDescription={t('timeline.cleanupRecords')} tooltipPosition="bottom" on:click={() => (showCleanupPanel = true)} />
-      <Button kind="ghost" size="small" icon={RenewIcon} iconDescription={t('timeline.refreshTitle')} tooltipPosition="bottom" on:click={loadTimeline} />
-      <Button kind="ghost" size="small" icon={ExportIcon} iconDescription={t('timeline.exportTitle')} tooltipPosition="bottom" disabled={exportingTimeline || !activities.length} on:click={exportTimelineJson} />
+      <button
+        type="button"
+        class="md-icon-btn"
+        onclick={() => (showCleanupPanel = true)}
+        aria-label={t('timeline.cleanupRecords')}
+        title={t('timeline.cleanupRecords')}
+      >
+        <MdIcon name="delete" size={20} />
+      </button>
+      <button
+        type="button"
+        class="md-icon-btn"
+        onclick={loadTimeline}
+        aria-label={t('timeline.refreshTitle')}
+        title={t('timeline.refreshTitle')}
+      >
+        <MdIcon name="refresh" size={20} />
+      </button>
+      <button
+        type="button"
+        class="md-icon-btn"
+        onclick={exportTimelineJson}
+        disabled={exportingTimeline || !activities.length}
+        aria-label={t('timeline.exportTitle')}
+        title={t('timeline.exportTitle')}
+      >
+        <MdIcon name="download" size={20} />
+      </button>
     </div>
   </div>
 
@@ -1902,7 +1918,7 @@
         <p class="font-semibold">{t('timeline.loadError')}</p>
         <p class="text-sm mt-1">{error}</p>
       </div>
-      <button class="page-action-brand" on:click={loadTimeline}>{t('timeline.retry')}</button>
+      <button class="page-action-brand" onclick={loadTimeline}>{t('timeline.retry')}</button>
     </div>
   {:else if activities.length === 0}
     <div class="empty-state-lg">
@@ -1926,7 +1942,7 @@
           class="page-control-btn timeline-summary-action"
           aria-haspopup="dialog"
           aria-expanded={showSummaryDrawer}
-          on:click={openSummaryDrawer}
+          onclick={openSummaryDrawer}
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -1948,7 +1964,7 @@
           {#if row.kind === 'commit'}
             <button
               class="timeline-entry timeline-entry-commit"
-              on:click={(event) => viewCommit(row.commit, event.currentTarget)}
+              onclick={(event) => viewCommit(row.commit, event.currentTarget)}
             >
               <div class="timeline-entry-anchor">
                 <div class="timeline-entry-time">{new Date(row.commit.committed_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
@@ -2042,7 +2058,7 @@
           {@const timelineTitle = getTimelineTitle(activity)}
           <button
             class={`timeline-entry ${featured ? 'timeline-entry-featured' : 'timeline-entry-compact'}`}
-            on:click={(event) => viewActivity(activity, event.currentTarget)}
+            onclick={(event) => viewActivity(activity, event.currentTarget)}
           >
             <div class="timeline-entry-anchor">
               <div class="timeline-entry-time">{formatTimelineAnchor(activity.timestamp)}</div>
@@ -2073,7 +2089,7 @@
                         {#if getTimelineIconSrc(activity)}
                           <img src={getTimelineIconSrc(activity)}
                                alt={activity.app_name}
-                               on:error={() => handleTimelineIconError(activity)}
+                               onerror={() => handleTimelineIconError(activity)}
                                class="timeline-app-icon-image app-icon object-cover" />
                         {:else}
                           <span>{info.icon}</span>
@@ -2107,7 +2123,7 @@
                     {#if getTimelineIconSrc(activity)}
                       <img src={getTimelineIconSrc(activity)}
                            alt={activity.app_name}
-                           on:error={() => handleTimelineIconError(activity)}
+                           onerror={() => handleTimelineIconError(activity)}
                            class="timeline-app-icon-image app-icon object-cover" />
                     {:else}
                       <span>{info.icon}</span>
@@ -2142,7 +2158,7 @@
       {#if hasMore}
         <div class="timeline-load-more">
           <button
-            on:click={loadMore}
+            onclick={loadMore}
             disabled={loadingMore}
             class="timeline-load-more-btn"
           >
@@ -2185,8 +2201,8 @@
   <div
     class="timeline-detail-overlay fixed inset-0 z-[140] bg-slate-950/52 backdrop-blur-md flex items-center justify-end p-4 animate-fadeIn"
     role="presentation"
-    on:click|self={handleDetailDismiss}
-    on:keydown={handleDetailOverlayKeydown}
+    onclick={(event) => { if (event.target === event.currentTarget) handleDetailDismiss(); }}
+    onkeydown={handleDetailOverlayKeydown}
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
     <aside
@@ -2195,7 +2211,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="timeline-detail-title"
-      on:scroll={handleDetailScroll}
+      onscroll={handleDetailScroll}
     >
       <!-- 头部 -->
       <div class="timeline-detail-header">
@@ -2207,7 +2223,7 @@
               {#if getTimelineIconSrc(selectedActivity)}
                 <img src={getTimelineIconSrc(selectedActivity)}
                      alt={selectedActivity.app_name}
-                     on:error={() => handleTimelineIconError(selectedActivity)}
+                     onerror={() => handleTimelineIconError(selectedActivity)}
                      class="timeline-app-icon-image timeline-app-icon-image-lg app-icon object-cover" />
               {:else}
                 {info.icon}
@@ -2222,13 +2238,13 @@
             <button
               class="btn btn-ghost text-rose-500 hover:text-rose-600 dark:text-rose-400"
               title={t('timeline.deleteActivity')}
-              on:click={() => deleteActivity(selectedActivity)}
+              onclick={() => deleteActivity(selectedActivity)}
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
               </svg>
             </button>
-            <button bind:this={detailCloseButton} class="btn btn-ghost" aria-label={t('window.close')} on:click={() => closeDetail()}>
+            <button bind:this={detailCloseButton} class="btn btn-ghost" aria-label={t('window.close')} onclick={() => closeDetail()}>
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -2301,7 +2317,7 @@
             <div class="timeline-detail-meta-row">
               <span>{t('timeline.detail.visitedUrl')}</span>
               <button
-                on:click={() => openUrl(selectedActivity?.browser_url)}
+                onclick={() => openUrl(selectedActivity?.browser_url)}
                 class="timeline-detail-url"
               >
                 {formatBrowserUrlForDisplay(selectedActivity.browser_url)}
@@ -2332,7 +2348,7 @@
               aria-haspopup="dialog"
               aria-expanded={showCategoryPopover}
               disabled={categorySaving}
-              on:click={toggleCategoryPopover}
+              onclick={toggleCategoryPopover}
             >
               <span class="timeline-category-dot" style={`background-color: ${info.color}`}></span>
               <span>{info.name}</span>
@@ -2359,7 +2375,7 @@
                         class:timeline-category-option-active={(selectedActivity.category || 'other') === cat.key}
                         aria-pressed={(selectedActivity.category || 'other') === cat.key}
                         disabled={categorySaving}
-                        on:click={() => selectActivityCategory(cat.key)}
+                        onclick={() => selectActivityCategory(cat.key)}
                       >
                         <span class="timeline-category-dot" style={`background-color: ${cat.color}`}></span>
                         <span class="timeline-category-option-name">{getCategoryDisplayName(cat)}</span>
@@ -2374,7 +2390,7 @@
                             disabled={categorySaving}
                             title={t('timeline.renameCategory')}
                             aria-label={t('timeline.renameCategory')}
-                            on:click={() => {
+                            onclick={() => {
                               showCreateCategory = false;
                               startRenameCategory(cat);
                             }}
@@ -2386,7 +2402,7 @@
                             disabled={categorySaving}
                             title={t('timeline.deleteCategory')}
                             aria-label={t('timeline.deleteCategory')}
-                            on:click={() => {
+                            onclick={() => {
                               prepareCategoryConfirmation();
                               pendingDeleteCategory = { key: cat.key, name: getCategoryDisplayName(cat) };
                             }}
@@ -2403,7 +2419,7 @@
                   type="button"
                   class="timeline-category-create-trigger"
                   disabled={categorySaving}
-                  on:click={() => {
+                  onclick={() => {
                     showRenameCategory = false;
                     showCreateCategory = !showCreateCategory;
                   }}
@@ -2429,13 +2445,13 @@
                         <button
                           type="button"
                           class:timeline-category-emoji-active={newCategoryIcon === emoji}
-                          on:click={() => newCategoryIcon = emoji}
+                          onclick={() => newCategoryIcon = emoji}
                         >{emoji}</button>
                       {/each}
                     </div>
                     <div class="timeline-category-editor-actions">
-                      <button type="button" on:click={() => showCreateCategory = false}>{t('timeline.cancel')}</button>
-                      <button type="button" class="timeline-category-editor-primary" on:click={createCustomCategory}>{t('timeline.confirmChange')}</button>
+                      <button type="button" onclick={() => showCreateCategory = false}>{t('timeline.cancel')}</button>
+                      <button type="button" class="timeline-category-editor-primary" onclick={createCustomCategory}>{t('timeline.confirmChange')}</button>
                     </div>
                   </div>
                 {/if}
@@ -2457,13 +2473,13 @@
                         <button
                           type="button"
                           class:timeline-category-emoji-active={renameCategoryIcon === emoji}
-                          on:click={() => renameCategoryIcon = emoji}
+                          onclick={() => renameCategoryIcon = emoji}
                         >{emoji}</button>
                       {/each}
                     </div>
                     <div class="timeline-category-editor-actions">
-                      <button type="button" on:click={() => showRenameCategory = false}>{t('timeline.cancel')}</button>
-                      <button type="button" class="timeline-category-editor-primary" on:click={saveRenameCategory}>{t('timeline.confirmChange')}</button>
+                      <button type="button" onclick={() => showRenameCategory = false}>{t('timeline.cancel')}</button>
+                      <button type="button" class="timeline-category-editor-primary" onclick={saveRenameCategory}>{t('timeline.confirmChange')}</button>
                     </div>
                   </div>
                 {/if}
@@ -2492,7 +2508,7 @@
               { value: 'ignored', label: t('timeline.detail.privacyIgnored'), activeClass: 'settings-segment-danger' },
             ] as opt}
               <button
-                on:click={() => requestPrivacyRuleByValue(opt.value)}
+                onclick={() => requestPrivacyRuleByValue(opt.value)}
                 class="segment-btn flex-1 text-center border border-slate-200 dark:border-[#484f58] rounded-lg {(selectedActivity._privacyLevel || 'full') === opt.value ? opt.activeClass : 'settings-segment-idle'}"
                 disabled={privacySaving}
               >
@@ -2523,8 +2539,8 @@
   <div
     class="timeline-detail-overlay fixed inset-0 z-[140] bg-slate-950/52 backdrop-blur-md flex items-center justify-end p-4 animate-fadeIn"
     role="presentation"
-    on:click|self={handleCommitDetailDismiss}
-    on:keydown={handleCommitDetailOverlayKeydown}
+    onclick={(event) => { if (event.target === event.currentTarget) handleCommitDetailDismiss(); }}
+    onkeydown={handleCommitDetailOverlayKeydown}
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
     <aside
@@ -2554,13 +2570,13 @@
             <button
               class="btn btn-ghost text-indigo-500 hover:text-indigo-600 dark:text-indigo-400"
               title={t('timeline.detail.openInGitlab')}
-              on:click={() => selectedCommit && openUrl(commitWebUrl(selectedCommit))}
+              onclick={() => selectedCommit && openUrl(commitWebUrl(selectedCommit))}
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
             </button>
-            <button bind:this={commitDetailCloseButton} class="btn btn-ghost" aria-label={t('window.close')} on:click={() => closeCommitDetail()}>
+            <button bind:this={commitDetailCloseButton} class="btn btn-ghost" aria-label={t('window.close')} onclick={() => closeCommitDetail()}>
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -2620,7 +2636,7 @@
           {:else if commitDiffError}
             <div class="timeline-detail-files-error">
               <p>{commitDiffError}</p>
-              <button type="button" class="page-control-btn" on:click={retryCommitDiff}>{t('timeline.retry')}</button>
+              <button type="button" class="page-control-btn" onclick={retryCommitDiff}>{t('timeline.retry')}</button>
             </div>
           {:else if commitDiffFiles.length === 0}
             <div class="timeline-detail-files-state text-slate-400 dark:text-[#7d8590]">
@@ -2637,7 +2653,7 @@
                     type="button"
                     class="timeline-diff-file"
                     aria-expanded={expanded}
-                    on:click={() => toggleDiffFile(file)}
+                    onclick={() => toggleDiffFile(file)}
                   >
                     <svg class:timeline-diff-chevron-open={expanded} class="timeline-diff-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -2667,72 +2683,91 @@
   </div>
 {/if}
 
-<!-- 批量清理记录面板（Carbon Modal，danger 语义） -->
+<!-- 批量清理记录面板（SMUI Dialog 受控模式，danger 语义） -->
 {#if showCleanupPanel}
-  <Modal
-    open={true}
-    modalHeading={t('timeline.cleanupRecordsTitle')}
-    modalAriaLabel={t('timeline.cleanupRecordsTitle')}
-    danger={true}
-    alert={true}
-    primaryButtonText={cleanupMode === 'date' ? t('timeline.deleteByDate') : cleanupMode === 'range' ? t('timeline.deleteByRange') : t('timeline.deleteByApp')}
-    primaryButtonDisabled={cleanupBusy
-      || (cleanupMode === 'range' && (!cleanupRangeStart || !cleanupRangeEnd))
-      || (cleanupMode === 'app' && !cleanupApp)}
-    secondaryButtonText={t('common.cancel')}
-    on:submit={() => {
-      if (cleanupMode === 'date') void doCleanupByDate();
-      else if (cleanupMode === 'range') void doCleanupByRange();
-      else void doCleanupByApp();
-    }}
-    on:close={() => { if (!cleanupBusy) showCleanupPanel = false; }}
+  <Dialog
+    bind:open={showCleanupPanel}
+    aria-labelledby="cleanup-dialog-title"
+    escapeKeyAction={cleanupBusy ? '' : 'close'}
+    scrimClickAction={cleanupBusy ? '' : 'close'}
   >
-    <div class="cleanup-carbon-body">
-      <p class="cleanup-hint">{t('timeline.cleanupRecordsHint')}</p>
+    <Title id="cleanup-dialog-title" class="cleanup-dialog-title">{t('timeline.cleanupRecordsTitle')}</Title>
+    <Content>
+      <div class="cleanup-dialog-body">
+        <p class="cleanup-hint">{t('timeline.cleanupRecordsHint')}</p>
 
-      <ContentSwitcher
-        selectedIndex={cleanupMode === 'date' ? 0 : cleanupMode === 'range' ? 1 : 2}
-        on:change={(e) => selectCleanupMode(e.detail === 0 ? 'date' : e.detail === 1 ? 'range' : 'app')}
-      >
-        <Switch text={t('timeline.deleteByDate')} id="date" />
-        <Switch text={t('timeline.deleteByRange')} id="range" />
-        <Switch text={t('timeline.deleteByApp')} id="app" />
-      </ContentSwitcher>
+        <SegmentedButton
+          singleSelect
+          class="cleanup-mode-switcher"
+          segments={CLEANUP_MODES}
+          bind:selected={cleanupMode}
+        >
+          {#snippet segment(seg)}
+            <Segment segment={seg}>
+              {seg === 'date' ? t('timeline.deleteByDate') : seg === 'range' ? t('timeline.deleteByRange') : t('timeline.deleteByApp')}
+            </Segment>
+          {/snippet}
+        </SegmentedButton>
 
-      {#if cleanupMode === 'date'}
-        <p class="cleanup-note">{t('timeline.deleteByDateMessage', { date: selectedDate })}</p>
-      {:else if cleanupMode === 'range'}
-        <LocalizedDatePicker
-          mode="range"
-          bind:startDate={cleanupRangeStart}
-          bind:endDate={cleanupRangeEnd}
-          localeCode={currentLocale}
-          triggerClass="page-control-input w-auto"
-        />
-        <div class="cleanup-time-grid">
-          <label class="cleanup-time-field">
-            <span>{t('datePicker.startDate')}</span>
-            <input type="time" bind:value={cleanupRangeStartTime} class="page-control-input" />
-          </label>
-          <label class="cleanup-time-field">
-            <span>{t('datePicker.endDate')}</span>
-            <input type="time" bind:value={cleanupRangeEndTime} class="page-control-input" />
-          </label>
-        </div>
-      {:else}
-        {#if cleanupAppCandidates.length === 0}
-          <p class="cleanup-note">{t('timeline.noActivitiesToDelete')}</p>
+        {#if cleanupMode === 'date'}
+          <p class="cleanup-note">{t('timeline.deleteByDateMessage', { date: selectedDate })}</p>
+        {:else if cleanupMode === 'range'}
+          <LocalizedDatePicker
+            mode="range"
+            bind:startDate={cleanupRangeStart}
+            bind:endDate={cleanupRangeEnd}
+            localeCode={currentLocale}
+            triggerClass="page-control-input w-auto"
+          />
+          <div class="cleanup-time-grid">
+            <label class="cleanup-time-field">
+              <span>{t('datePicker.startDate')}</span>
+              <input type="time" bind:value={cleanupRangeStartTime} class="page-control-input" />
+            </label>
+            <label class="cleanup-time-field">
+              <span>{t('datePicker.endDate')}</span>
+              <input type="time" bind:value={cleanupRangeEndTime} class="page-control-input" />
+            </label>
+          </div>
         {:else}
-          <Select labelText={t('timeline.selectApp')} hideLabel={true} bind:selected={cleanupApp}>
-            <SelectItem value="" text={t('timeline.selectApp')} />
-            {#each cleanupAppCandidates as app (app)}
-              <SelectItem value={app} text={app} />
-            {/each}
-          </Select>
+          {#if cleanupAppCandidates.length === 0}
+            <p class="cleanup-note">{t('timeline.noActivitiesToDelete')}</p>
+          {:else}
+            <Select
+              class="cleanup-app-select"
+              noLabel={true}
+              anchor$aria-label={t('timeline.selectApp')}
+              bind:value={cleanupApp}
+            >
+              <Option value="">{t('timeline.selectApp')}</Option>
+              {#each cleanupAppCandidates as app (app)}
+                <Option value={app}>{app}</Option>
+              {/each}
+            </Select>
+          {/if}
         {/if}
-      {/if}
-    </div>
-  </Modal>
+      </div>
+    </Content>
+    <Actions>
+      <Button class="cleanup-dialog-btn" disabled={cleanupBusy} onclick={() => (showCleanupPanel = false)}>
+        {t('common.cancel')}
+      </Button>
+      <Button
+        variant="raised"
+        class="cleanup-dialog-btn cleanup-dialog-danger"
+        disabled={cleanupBusy
+          || (cleanupMode === 'range' && (!cleanupRangeStart || !cleanupRangeEnd))
+          || (cleanupMode === 'app' && !cleanupApp)}
+        onclick={() => {
+          if (cleanupMode === 'date') void doCleanupByDate();
+          else if (cleanupMode === 'range') void doCleanupByRange();
+          else void doCleanupByApp();
+        }}
+      >
+        {cleanupMode === 'date' ? t('timeline.deleteByDate') : cleanupMode === 'range' ? t('timeline.deleteByRange') : t('timeline.deleteByApp')}
+      </Button>
+    </Actions>
+  </Dialog>
 {/if}
 
 <!-- 分类修改确认（页面顶层，z-index 高于详情弹窗 z-[140]） -->
@@ -2747,7 +2782,7 @@
   <div
     class="fixed inset-0 z-[150] bg-slate-950/40 backdrop-blur-sm flex items-center justify-center animate-fadeIn"
     role="presentation"
-    on:click|self={cancelAction}
+    onclick={(event) => { if (event.target === event.currentTarget) cancelAction(); }}
   >
     <div
       class="timeline-action-confirm-dialog"
@@ -2766,13 +2801,13 @@
         </p>
         <div class="mt-5 flex justify-end gap-2">
           <button
-            on:click={cancelAction}
+            onclick={cancelAction}
             class="px-4 py-2 text-sm rounded-lg text-slate-500 hover:text-slate-700 dark:text-[#7d8590] dark:hover:text-[#c9d1d9] border border-slate-200 dark:border-[#30363d]"
           >
             {t('timeline.cancel')}
           </button>
           <button
-            on:click={confirmAction}
+            onclick={confirmAction}
             class="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700"
           >
             {t('timeline.confirmDelete')}
@@ -2790,13 +2825,13 @@
         </p>
         <div class="mt-5 flex justify-end gap-2">
           <button
-            on:click={cancelAction}
+            onclick={cancelAction}
             class="px-4 py-2 text-sm rounded-lg text-slate-500 hover:text-slate-700 dark:text-[#7d8590] dark:hover:text-[#c9d1d9] border border-slate-200 dark:border-[#30363d]"
           >
             {t('timeline.cancel')}
           </button>
           <button
-            on:click={confirmAction}
+            onclick={confirmAction}
             class="px-4 py-2 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
           >
             {t('timeline.confirmChange')}
@@ -2815,13 +2850,13 @@
         </p>
         <div class="mt-5 flex justify-end gap-2">
           <button
-            on:click={cancelAction}
+            onclick={cancelAction}
             class="px-4 py-2 text-sm rounded-lg text-slate-500 hover:text-slate-700 dark:text-[#7d8590] dark:hover:text-[#c9d1d9] border border-slate-200 dark:border-[#30363d]"
           >
             {t('timeline.cancel')}
           </button>
           <button
-            on:click={confirmAction}
+            onclick={confirmAction}
             class="px-4 py-2 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
           >
             {t('timeline.confirmChange')}
@@ -4400,7 +4435,7 @@
       padding: 0 0.5rem 1rem;
     }
   }
-  .cleanup-carbon-body {
+  .cleanup-dialog-body {
     display: flex;
     flex-direction: column;
     gap: 0.875rem;
@@ -4410,7 +4445,7 @@
   .cleanup-note {
     font-size: 0.8125rem;
     line-height: 1.6;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
   }
 
   .cleanup-time-grid {
@@ -4424,6 +4459,61 @@
     flex-direction: column;
     gap: 0.25rem;
     font-size: 0.75rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
+  }
+
+  /* ── SMUI 迁移样式 ── */
+  /* 工具栏 icon-only 按钮：MD icon button（圆形 hover 态，与 App 壳层同款） */
+  .md-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--md-theme-on-surface);
+    cursor: pointer;
+  }
+
+  .md-icon-btn:hover:not(:disabled) {
+    background: var(--md-theme-border-subtle);
+  }
+
+  .md-icon-btn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+  }
+
+  /* 上一天/今天/昨天快捷按钮：today/yesterday 选中态用主色容器高亮 */
+  .timeline-quick-date-active {
+    --mdc-outlined-button-container-color: var(--md-theme-primary-container);
+    --mdc-outlined-button-label-text-color: var(--md-theme-on-primary-container);
+    --mdc-outlined-button-outline-color: transparent;
+  }
+
+  /* 清理面板：SMUI Dialog 标题与操作按钮 */
+  .cleanup-dialog-title {
+    font-size: 1.125rem;
+    font-weight: 500;
+  }
+
+  .cleanup-dialog-btn :global(.mdc-button__label) {
+    font-size: 0.875rem;
+  }
+
+  /* danger 语义：主操作按钮换错误色（覆盖 raised 主按钮容器令牌） */
+  .cleanup-dialog-danger :global(.mdc-button) {
+    --mdc-protected-button-container-color: var(--md-theme-error);
+    --mdc-protected-button-label-text-color: var(--md-theme-on-error);
+  }
+
+  .cleanup-mode-switcher {
+    align-self: flex-start;
+  }
+
+  .cleanup-app-select {
+    max-width: 22rem;
   }
 </style>

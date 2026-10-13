@@ -5111,3 +5111,26 @@
   background: var(--md-theme-primary-container);
   color: var(--md-theme-on-primary-container);
 }
+
+/* MD icon button（圆形 hover 态）：SMUI 迁移后各页 icon-only 按钮共用 */
+.md-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--md-theme-on-surface);
+  cursor: pointer;
+}
+
+.md-icon-btn:hover:not(:disabled) {
+  background: var(--md-theme-border-subtle);
+}
+
+.md-icon-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}

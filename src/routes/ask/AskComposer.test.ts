@@ -8,7 +8,7 @@ test('中文输入法组合期间按 Enter 不应误发送', () => {
   const handler = source.match(/function handleComposerKeydown\(event(?:\s*:[^)]+)?\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
 
   assert.ok(handler, '应存在输入器键盘处理函数');
-  assert.match(source, /<textarea[\s\S]*on:keydown=\{handleComposerKeydown\}/);
+  assert.match(source, /<textarea[\s\S]*onkeydown=\{handleComposerKeydown\}/);
   assert.match(handler, /event\.isComposing/);
   assert.match(handler, /event\.keyCode\s*===\s*229/);
   assert.match(handler, /if \(event\.isComposing \|\| event\.keyCode === 229\) return;/);

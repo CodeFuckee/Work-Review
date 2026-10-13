@@ -24,11 +24,8 @@
   } from './reportSections.ts';
   import { createReportGenerationOwnership, createReportRequestSnapshot, shiftIsoDate } from './reportDateNavigation.ts';
   import LocalizedDatePicker from '../../lib/components/CarbonDatePicker.svelte';
-  import OverflowMenu from 'carbon-components-svelte/src/OverflowMenu/OverflowMenu.svelte';
-  import OverflowMenuItem from 'carbon-components-svelte/src/OverflowMenu/OverflowMenuItem.svelte';
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import SettingsIcon from 'carbon-icons-svelte/lib/Settings.svelte';
-  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
+  import Button from '@smui/button';
+  import MdIcon from '../../lib/components/MdIcon.svelte';
 
   interface DailyReport {
     date: string;
@@ -982,7 +979,7 @@
   }
 </script>
 
-<svelte:window on:focusin={refreshConfigOnFocus} on:visibilitychange={() => {
+<svelte:window onfocusin={refreshConfigOnFocus} onvisibilitychange={() => {
   if (document.visibilityState === 'visible') refreshConfigOnFocus();
 }} />
 
@@ -1007,19 +1004,19 @@
           <button
             type="button"
             class="page-control-btn"
-            on:click={selectPreviousDay}
+            onclick={selectPreviousDay}
           >
             {t('report.previousDay')}
           </button>
           <button
             class="page-control-btn {selectedDate === getLocalDateString() ? 'page-control-btn-active' : ''}"
-            on:click={() => selectDate(getLocalDateString())}
+            onclick={() => selectDate(getLocalDateString())}
           >
             {t('report.today')}
           </button>
           <button
             class="page-control-btn {selectedDate === getYesterdayDateString() ? 'page-control-btn-active' : ''}"
-            on:click={() => selectDate(getYesterdayDateString())}
+            onclick={() => selectDate(getYesterdayDateString())}
           >
             {t('report.yesterday')}
           </button>
@@ -1033,48 +1030,77 @@
           {/key}
         </div>
         {#if report}
-          <OverflowMenu direction="bottom" flipped={false} disabled={exportInProgress} iconDescription={exportInProgress ? t('report.exporting') : t('report.exportMenu')}>
-              <OverflowMenuItem
-                on:click={handleExportCurrent}
-                disabled={exportInProgress}
-              >
-                <span class="report-menu-title">{t('report.exportMenuCurrent')}</span>
-                <span class="report-menu-sub">{config?.daily_report_export_dir || t('report.exportWithoutDefaultDir')}</span>
-              </OverflowMenuItem>
-              <OverflowMenuItem
-                on:click={openBatchExportModal}
-                disabled={batchExporting}
-              >
-                <span class="report-menu-title">{t('report.exportMenuRange')}</span>
-                <span class="report-menu-sub">{t('report.batchExportTitle')}</span>
-              </OverflowMenuItem>
-              <OverflowMenuItem on:click={copyReportContent}>
-                <span class="report-menu-title">{t('report.exportMenuCopy')}</span>
-                <span class="report-menu-sub">{t('report.exportMenuCopyHint')}</span>
-              </OverflowMenuItem>
-            </OverflowMenu>
+          <!-- 自绘 MD 菜单：导出 ▾（锚定按钮下方，行为与 Carbon OverflowMenu 一致） -->
+          <div class="md-menu-host">
+            <button
+              type="button"
+              class="md-icon-btn"
+              disabled={exportInProgress}
+              onclick={() => (showExportMenu = !showExportMenu)}
+              aria-haspopup="menu"
+              aria-expanded={showExportMenu}
+              aria-label={exportInProgress ? t('report.exporting') : t('report.exportMenu')}
+              title={exportInProgress ? t('report.exporting') : t('report.exportMenu')}
+            >
+              <MdIcon name="more_vert" size={20} />
+            </button>
+            {#if showExportMenu}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="md-menu-scrim" onclick={() => (showExportMenu = false)}></div>
+              <div class="md-menu-surface" role="menu">
+                <button
+                  class="md-menu-item report-export-menu-item"
+                  role="menuitem"
+                  disabled={exportInProgress}
+                  onclick={handleExportCurrent}
+                >
+                  <span class="report-menu-copy">
+                    <span class="report-menu-title">{t('report.exportMenuCurrent')}</span>
+                    <span class="report-menu-sub">{config?.daily_report_export_dir || t('report.exportWithoutDefaultDir')}</span>
+                  </span>
+                </button>
+                <button
+                  class="md-menu-item report-export-menu-item"
+                  role="menuitem"
+                  disabled={batchExporting}
+                  onclick={openBatchExportModal}
+                >
+                  <span class="report-menu-copy">
+                    <span class="report-menu-title">{t('report.exportMenuRange')}</span>
+                    <span class="report-menu-sub">{t('report.batchExportTitle')}</span>
+                  </span>
+                </button>
+                <button
+                  class="md-menu-item report-export-menu-item"
+                  role="menuitem"
+                  onclick={copyReportContent}
+                >
+                  <span class="report-menu-copy">
+                    <span class="report-menu-title">{t('report.exportMenuCopy')}</span>
+                    <span class="report-menu-sub">{t('report.exportMenuCopyHint')}</span>
+                  </span>
+                </button>
+              </div>
+            {/if}
+          </div>
         {/if}
         {#if config?.ai_mode === 'summary' || hiddenBlocks.length > 0}
           <Button
-            kind="ghost"
-            size="small"
-            icon={SettingsIcon}
+            variant="text"
             aria-expanded={showGenerateDrawer}
-            on:click={() => (showGenerateDrawer = !showGenerateDrawer)}
+            onclick={() => (showGenerateDrawer = !showGenerateDrawer)}
           >
+            <span class="mdc-button__icon"><MdIcon name="settings" size={18} /></span>
             {t('report.generateSettings')}{#if hiddenBlocks.length > 0}&nbsp;({hiddenBlocks.length}){/if}
           </Button>
         {/if}
         {#if report}
           <Button
-            kind="primary"
-            size="small"
-            loading={generating}
-            loadingDescription={t('report.generating')}
-            icon={RenewIcon}
-            on:click={() => generateReport(true)}
+            variant="raised"
+            onclick={() => generateReport(true)}
             disabled={generating}
           >
+            <span class="mdc-button__icon"><MdIcon name="refresh" size={18} /></span>
             {generating ? t('report.generating') : t('report.regenerate')}
           </Button>
         {/if}
@@ -1093,7 +1119,7 @@
           class="report-weekstrip-day {day.hasReport ? '' : 'report-weekstrip-day-none'} {day.date === selectedDate ? 'report-weekstrip-day-active' : ''}"
           disabled={day.isFuture}
           title={day.isFuture ? '' : day.hasReport ? t('report.weekStripHasReport') : t('report.weekStripNoReport')}
-          on:click={() => selectDate(day.date)}
+          onclick={() => selectDate(day.date)}
         >
           <span class="report-weekstrip-day-label">{day.label} {day.dayNum}</span>
           <i></i>
@@ -1103,7 +1129,7 @@
     <span class="report-weekstrip-meta">
       {t('report.weekStripGenerated', { count: weekGeneratedCount, total: weekElapsedCount })}
       ·
-      <button type="button" class="report-weekstrip-export" on:click={openWeekBatchExport}>
+      <button type="button" class="report-weekstrip-export" onclick={openWeekBatchExport}>
         {t('report.weekStripExport')}
       </button>
     </span>
@@ -1117,7 +1143,7 @@
         <button
           class="text-slate-400 hover:text-slate-600 dark:text-[#7d8590] dark:hover:text-[#c9d1d9]"
           title={t('report.cancelEdit')}
-          on:click={() => (showGenerateDrawer = false)}
+          onclick={() => (showGenerateDrawer = false)}
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
@@ -1137,7 +1163,7 @@
                   class="segment-btn flex-none rounded-lg border px-3 py-1.5 text-xs max-w-56 truncate
                     {presetActive ? 'settings-segment-success' : 'settings-segment-idle'}"
                   title={presetActive ? t('report.presetClickToUnselect') : preset.prompt}
-                  on:click={() => selectPromptPreset(preset, presetActive)}
+                  onclick={() => selectPromptPreset(preset, presetActive)}
                 >
                   {preset.name}
                 </button>
@@ -1145,7 +1171,8 @@
                   type="button"
                   class="absolute -top-1.5 left-1/2 -translate-x-1/2 flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] bg-blue-500 text-xs leading-none text-white opacity-0 shadow-sm transition-opacity hover:bg-blue-600 group-hover/preset:opacity-100 focus-visible:opacity-100 dark:shadow-none"
                   title={t('report.editPreset')}
-                  on:click|stopPropagation={() => {
+                  onclick={(event) => {
+                    event.stopPropagation();
                     editingPresetIndex = i;
                     editingPresetName = preset.name;
                     editingPresetPrompt = preset.prompt;
@@ -1156,7 +1183,7 @@
                   type="button"
                   class="absolute -top-1.5 -end-1.5 flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] bg-red-500 text-xs leading-none text-white opacity-0 shadow-sm transition-opacity hover:bg-red-600 group-hover/preset:opacity-100 focus-visible:opacity-100 dark:shadow-none"
                   title={t('common.delete')}
-                  on:click|stopPropagation={() => deletePreset(i)}
+                  onclick={(event) => { event.stopPropagation(); deletePreset(i); }}
                 >×</button>
               </div>
             {/each}
@@ -1164,7 +1191,7 @@
               <button
                 type="button"
                 class="segment-btn settings-segment-idle flex-none rounded-lg border border-dashed px-3 py-1.5 text-xs"
-                on:click={() => {
+                onclick={() => {
                   editingPresetIndex = -1;
                   editingPresetName = '';
                   editingPresetPrompt = '';
@@ -1182,7 +1209,7 @@
           <textarea
             id="daily-report-custom-prompt"
             bind:value={config.daily_report_custom_prompt}
-            on:change={persistReportPrompt}
+            onchange={persistReportPrompt}
             rows="3"
             class="control-input resize-y min-h-[80px]"
             placeholder={t('report.promptPlaceholder')}
@@ -1197,7 +1224,7 @@
               <button
                 type="button"
                 class="text-xs text-slate-400 hover:text-slate-700 dark:hover:text-[#adbac7] transition"
-                on:click={resetSystemPromptOverride}
+                onclick={resetSystemPromptOverride}
                 disabled={!config.daily_report_system_prompt_override}
               >
                 {t('report.resetSystemPrompt')}
@@ -1209,7 +1236,7 @@
               rows="6"
               class="control-input resize-y min-h-[100px] font-mono text-xs"
               bind:value={config.daily_report_system_prompt_override}
-              on:change={persistReportPrompt}
+              onchange={persistReportPrompt}
               placeholder={t('report.systemPromptOverridePlaceholder')}
             ></textarea>
           </div>
@@ -1224,7 +1251,7 @@
             {#each hiddenBlocks as blockName}
               <button
                 class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-[#30363d] bg-white dark:bg-[#21262d] px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-[#adbac7] hover:border-blue-300 dark:hover:border-blue-500 transition-colors"
-                on:click={() => restoreHiddenBlock(blockName)}
+                onclick={() => restoreHiddenBlock(blockName)}
               >
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                 {tm(`report.blockNames.${blockName}`) || blockName}
@@ -1284,7 +1311,7 @@
       </div>
       <p class="text-sm">{error}</p>
       </div>
-      <button class="page-action-brand" on:click={() => generateReport(true)}>{t('common.retry')}</button>
+      <button class="page-action-brand" onclick={() => generateReport(true)}>{t('common.retry')}</button>
     </div>
   {:else if report}
     <div class="report-reading-layout">
@@ -1304,7 +1331,7 @@
             <div class="report-fallback-action">
               <button
                 class="page-action-warn report-fallback-button min-h-9 px-3 text-xs rounded-lg shadow-none"
-                on:click={() => generateReport(false)}
+                onclick={() => generateReport(false)}
                 disabled={generating}
               >
                 {#if generating}
@@ -1342,7 +1369,7 @@
           {#if reportInsight}
             <p class="report-article-lead">{reportInsight}</p>
             {#if adviceSectionIndex >= 0}
-              <button type="button" class="report-insight-link" on:click={() => scrollToSection(adviceSectionIndex)}>
+              <button type="button" class="report-insight-link" onclick={() => scrollToSection(adviceSectionIndex)}>
                 {t('report.insightJumpAdvice')}
               </button>
             {/if}
@@ -1358,7 +1385,7 @@
                 <button
                   type="button"
                   class="report-anchor-chip {activeSectionIndex === i ? 'report-anchor-chip-active' : ''}"
-                  on:click={() => scrollToSection(i)}
+                  onclick={() => scrollToSection(i)}
                 >
                   {anchorLabel}
                 </button>
@@ -1382,7 +1409,7 @@
                   {#if blockName}
                     <button
                       class="report-section-edit-btn"
-                      on:click={() => togglePinBlock(section)}
+                      onclick={() => togglePinBlock(section)}
                       title={pinnedBlocks.includes(blockName) ? t('report.unpinBlock') : t('report.pinBlock')}
                     >
                       <svg class="w-3.5 h-3.5" fill={pinnedBlocks.includes(blockName) ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
@@ -1391,7 +1418,7 @@
                     </button>
                     <button
                       class="report-section-edit-btn"
-                      on:click={() => toggleHideBlock(section)}
+                      onclick={() => toggleHideBlock(section)}
                       title={t('report.hideBlock')}
                     >
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1401,7 +1428,7 @@
                   {/if}
                   <button
                     class="report-section-edit-btn"
-                    on:click={() => startEditSection(reportSections, section.originalIndex ?? i)}
+                    onclick={() => startEditSection(reportSections, section.originalIndex ?? i)}
                     title={t('report.editSection')}
                   >
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1455,7 +1482,7 @@
                   <button
                     type="button"
                     class="report-toc-item {activeSectionIndex === i ? 'report-toc-item-active' : ''}"
-                    on:click={() => scrollToSection(i)}
+                    onclick={() => scrollToSection(i)}
                   >
                     {label}
                   </button>
@@ -1510,7 +1537,7 @@
       </p>
       <button
         class="page-action-warn min-h-11 px-6 py-3"
-        on:click={() => generateReport(false)}
+        onclick={() => generateReport(false)}
         disabled={generating}
       >
         {#if generating}
@@ -1530,11 +1557,11 @@
 <!-- 段落编辑弹窗 -->
 {#if editingSection >= 0}
   <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="report-edit-section-title">
-    <button type="button" class="absolute inset-0 cursor-default" aria-label={t('report.cancelEdit')} on:click={cancelEditSection}></button>
+    <button type="button" class="absolute inset-0 cursor-default" aria-label={t('report.cancelEdit')} onclick={cancelEditSection}></button>
     <div class="modal-panel relative z-10">
       <div class="modal-header">
         <h3 id="report-edit-section-title" class="modal-title">{t('report.editSection')}</h3>
-        <button class="modal-close" aria-label={t('window.close')} on:click={cancelEditSection}>
+        <button class="modal-close" aria-label={t('window.close')} onclick={cancelEditSection}>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
@@ -1547,12 +1574,12 @@
         ></textarea>
       </div>
       <div class="modal-footer">
-        <button class="page-control-btn" on:click={cancelEditSection}>
+        <button class="page-control-btn" onclick={cancelEditSection}>
           {t('report.cancelEdit')}
         </button>
         <button
           class="page-action-brand"
-          on:click={() => saveEditSection(reportSections, editingSection)}
+          onclick={() => saveEditSection(reportSections, editingSection)}
           disabled={savingSection}
         >
           {#if savingSection}
@@ -1573,11 +1600,11 @@
 
 {#if showPresetModal}
   <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="report-preset-dialog-title">
-    <button type="button" class="absolute inset-0 cursor-default" aria-label={t('report.cancelEdit')} on:click={() => { showPresetModal = false; }}></button>
+    <button type="button" class="absolute inset-0 cursor-default" aria-label={t('report.cancelEdit')} onclick={() => { showPresetModal = false; }}></button>
     <div class="modal-panel relative z-10" style="max-width: 36rem;">
       <div class="modal-header">
         <h3 id="report-preset-dialog-title" class="modal-title">{editingPresetIndex >= 0 ? editingPresetName || t('report.presetsTitle') : t('report.addPreset')}</h3>
-        <button class="modal-close" aria-label={t('window.close')} on:click={() => { showPresetModal = false; }}>
+        <button class="modal-close" aria-label={t('window.close')} onclick={() => { showPresetModal = false; }}>
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
@@ -1606,14 +1633,14 @@
       <div class="modal-footer">
         <button
           class="px-4 py-2 text-sm font-medium rounded-lg text-slate-700 dark:text-[#7d8590] hover:bg-slate-100 dark:hover:bg-[#30363d] transition-colors"
-          on:click={() => { showPresetModal = false; }}
+          onclick={() => { showPresetModal = false; }}
         >
           {t('report.cancelEdit')}
         </button>
         <button
           class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 hover:bg-blue-600 text-white shadow-sm dark:shadow-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!editingPresetName.trim() || !editingPresetPrompt.trim() || presetSaving}
-          on:click={savePresetEditor}
+          onclick={savePresetEditor}
         >
           {#if presetSaving}
             <span class="inline-flex items-center gap-1.5">
@@ -1631,14 +1658,14 @@
 
 {#if showBatchExportModal}
   <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="report-batch-export-dialog-title">
-    <button type="button" class="absolute inset-0 cursor-default" aria-label={t('report.cancelEdit')} on:click={() => { if (!batchExporting) showBatchExportModal = false; }}></button>
+    <button type="button" class="absolute inset-0 cursor-default" aria-label={t('report.cancelEdit')} onclick={() => { if (!batchExporting) showBatchExportModal = false; }}></button>
     <div class="modal-panel relative z-10" style="max-width: 32rem;">
       <div class="modal-header">
         <h3 id="report-batch-export-dialog-title" class="modal-title">{t('report.batchExportModalTitle')}</h3>
         <button
           class="modal-close"
           aria-label={t('window.close')}
-          on:click={() => { if (!batchExporting) showBatchExportModal = false; }}
+          onclick={() => { if (!batchExporting) showBatchExportModal = false; }}
           disabled={batchExporting}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -1648,10 +1675,10 @@
         <p class="text-xs text-slate-500 dark:text-[#7d8590]">{t('report.batchExportHint')}</p>
 
         <div class="flex flex-wrap gap-2">
-          <button class="page-control-btn" on:click={() => applyBatchPreset('thisWeek')}>{t('report.batchPresetThisWeek')}</button>
-          <button class="page-control-btn" on:click={() => applyBatchPreset('lastWeek')}>{t('report.batchPresetLastWeek')}</button>
-          <button class="page-control-btn" on:click={() => applyBatchPreset('thisMonth')}>{t('report.batchPresetThisMonth')}</button>
-          <button class="page-control-btn" on:click={() => applyBatchPreset('lastMonth')}>{t('report.batchPresetLastMonth')}</button>
+          <button class="page-control-btn" onclick={() => applyBatchPreset('thisWeek')}>{t('report.batchPresetThisWeek')}</button>
+          <button class="page-control-btn" onclick={() => applyBatchPreset('lastWeek')}>{t('report.batchPresetLastWeek')}</button>
+          <button class="page-control-btn" onclick={() => applyBatchPreset('thisMonth')}>{t('report.batchPresetThisMonth')}</button>
+          <button class="page-control-btn" onclick={() => applyBatchPreset('lastMonth')}>{t('report.batchPresetLastMonth')}</button>
         </div>
 
         <div class="grid gap-3 grid-cols-2">
@@ -1678,14 +1705,14 @@
       <div class="modal-footer">
         <button
           class="px-4 py-2 text-sm font-medium rounded-lg text-slate-700 dark:text-[#7d8590] hover:bg-slate-100 dark:hover:bg-[#30363d] transition-colors"
-          on:click={() => { if (!batchExporting) showBatchExportModal = false; }}
+          onclick={() => { if (!batchExporting) showBatchExportModal = false; }}
           disabled={batchExporting}
         >
           {t('report.cancelEdit')}
         </button>
         <button
           class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 hover:bg-blue-600 text-white shadow-sm dark:shadow-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          on:click={exportReportsRange}
+          onclick={exportReportsRange}
           disabled={batchExporting || !batchStartDate || !batchEndDate}
         >
           {#if batchExporting}
@@ -1701,3 +1728,77 @@
     </div>
   </div>
 {/if}
+
+<style>
+  /* ── 导出 ▾ 自绘 MD 菜单（结构与 App 壳层语言菜单一致） ── */
+  .md-menu-host {
+    position: relative;
+  }
+
+  .md-menu-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+  }
+
+  .md-menu-surface {
+    position: absolute;
+    top: calc(100% + 4px);
+    inset-inline-end: 0;
+    z-index: 91;
+    min-width: 16rem;
+    padding: 0.5rem 0;
+    border-radius: var(--radius-md);
+    background: var(--md-theme-surface);
+    box-shadow:
+      0 5px 5px -3px rgba(0, 0, 0, 0.2),
+      0 8px 10px 1px rgba(0, 0, 0, 0.14),
+      0 3px 14px 2px rgba(0, 0, 0, 0.12);
+  }
+
+  .md-menu-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.875rem;
+    border: none;
+    background: transparent;
+    color: var(--md-theme-on-surface);
+    font-size: 0.875rem;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .md-menu-item:hover:not(:disabled) {
+    background: var(--md-theme-border-subtle);
+  }
+
+  .md-menu-item:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+  }
+
+  /* 菜单项两行文案（标题 + 说明），纵向排布 */
+  .report-export-menu-item .report-menu-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    min-width: 0;
+  }
+
+  .report-menu-title {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--md-theme-on-surface);
+  }
+
+  .report-menu-sub {
+    max-width: 18rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.6875rem;
+    color: var(--md-theme-on-surface-medium);
+  }
+</style>

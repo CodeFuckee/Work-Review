@@ -3,7 +3,8 @@
   import { invoke } from '@tauri-apps/api/core';
   import { formatDurationLocalized, locale, t } from '$lib/i18n/index.ts';
   import CollapsibleSection from '../../../lib/components/CollapsibleSection.svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  // SMUI v8 Switch：change 事件实为 SMUISwitchChange（onchange 不触发），用 onSMUISwitchChange
+  import Switch from '@smui/switch';
 
   interface WorkTimeSegment {
     start_hour: number;
@@ -39,6 +40,15 @@
   $: currentLocale = $locale;
   let workHours = '—';
   let autoStartEnabled = false;
+  // Switch 受控影子：外部加载同步进开关，切换时回调读影子值写回 config
+  let workTimeEnabledSwitch = false;
+  let autoStartSwitch = false;
+  let hideDockIconSwitch = false;
+  let lightweightModeSwitch = false;
+  $: workTimeEnabledSwitch = config.work_time_enabled ?? false;
+  $: autoStartSwitch = autoStartEnabled;
+  $: hideDockIconSwitch = config.hide_dock_icon ?? false;
+  $: lightweightModeSwitch = config.lightweight_mode ?? false;
   const MAX_WORK_SEGMENTS = 8;
 
   onMount(async () => {
@@ -200,7 +210,8 @@
   }
 
   async function toggleAutoStart() {
-    const targetState = !autoStartEnabled;
+    // Switch 回调时影子值已是新状态，直接采用
+    const targetState = autoStartSwitch;
     try {
       if (targetState) {
         await invoke<void>('enable_autostart', { silent: !!config.auto_start_silent });
@@ -225,7 +236,7 @@
   }
 
   async function toggleDockIcon() {
-    config.hide_dock_icon = !config.hide_dock_icon;
+    config.hide_dock_icon = hideDockIconSwitch;
     try {
       await invoke<void>('set_dock_visibility', { visible: !config.hide_dock_icon });
     } catch (e) {
@@ -235,7 +246,7 @@
   }
 
   function toggleLightweightMode() {
-    config.lightweight_mode = !config.lightweight_mode;
+    config.lightweight_mode = lightweightModeSwitch;
     dispatch('change', config);
   }
 
@@ -272,15 +283,13 @@
             <span class="settings-muted">{t('settingsGeneral.workTimeDisabledHint')}</span>
           {/if}
         </div>
-        <Toggle
-          size="sm"
-          toggled={config.work_time_enabled}
-          labelText={t('settingsGeneral.workTime')}
-          hideLabel={true}
-          on:toggle={() => {
-            config.work_time_enabled = !config.work_time_enabled;
+        <Switch
+          bind:checked={workTimeEnabledSwitch}
+          onSMUISwitchChange={() => {
+            config.work_time_enabled = workTimeEnabledSwitch;
             handleChange();
           }}
+          aria-label={t('settingsGeneral.workTime')}
         />
       </div>
 
@@ -475,7 +484,7 @@
       <div class="space-y-2.5">
         <div class="settings-row">
           <span class="settings-text">{t('settingsGeneral.autoStart')}</span>
-          <Toggle size="sm" toggled={autoStartEnabled} labelText={t('settingsGeneral.autoStart')} hideLabel={true} on:toggle={toggleAutoStart} />
+          <Switch bind:checked={autoStartSwitch} onSMUISwitchChange={toggleAutoStart} aria-label={t('settingsGeneral.autoStart')} />
         </div>
 
         {#if autoStartEnabled}
@@ -502,7 +511,7 @@
 
         <div class="settings-row">
           <span class="settings-text">{t('settingsGeneral.hideDockIcon')}</span>
-          <Toggle size="sm" toggled={config.hide_dock_icon} labelText={t('settingsGeneral.hideDockIcon')} hideLabel={true} on:toggle={toggleDockIcon} />
+          <Switch bind:checked={hideDockIconSwitch} onSMUISwitchChange={toggleDockIcon} aria-label={t('settingsGeneral.hideDockIcon')} />
         </div>
 
         <div class="settings-row">
@@ -510,7 +519,7 @@
             <span class="settings-text">{t('settingsGeneral.lightweightMode')}</span>
             <p class="settings-muted mt-0.5">{t('settingsGeneral.lightweightModeDescription')}</p>
           </div>
-          <Toggle size="sm" toggled={config.lightweight_mode} labelText={t('settingsGeneral.lightweightMode')} hideLabel={true} on:toggle={toggleLightweightMode} />
+          <Switch bind:checked={lightweightModeSwitch} onSMUISwitchChange={toggleLightweightMode} aria-label={t('settingsGeneral.lightweightMode')} />
         </div>
       </div>
     </div>

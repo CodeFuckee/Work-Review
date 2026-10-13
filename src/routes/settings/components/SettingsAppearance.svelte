@@ -4,13 +4,12 @@
   import { showToast } from '$lib/stores/toast.ts';
   import { locale, t } from '$lib/i18n/index.ts';
   import { cache } from '$lib/stores/cache.ts';
-  import ContentSwitcher from 'carbon-components-svelte/src/ContentSwitcher/ContentSwitcher.svelte';
-  import Switch from 'carbon-components-svelte/src/ContentSwitcher/Switch.svelte';
-  import Slider from 'carbon-components-svelte/src/Slider/Slider.svelte';
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import RadioButtonGroup from 'carbon-components-svelte/src/RadioButtonGroup/RadioButtonGroup.svelte';
-  import RadioButton from 'carbon-components-svelte/src/RadioButton/RadioButton.svelte';
-  import ImageIcon from 'carbon-icons-svelte/lib/Image.svelte';
+  import SegmentedButton, { Segment } from '@smui/segmented-button';
+  import Slider from '@smui/slider';
+  import Button from '@smui/button';
+  import Radio from '@smui/radio';
+  import FormField from '@smui/form-field';
+  import MdIcon from '../../../lib/components/MdIcon.svelte';
 
   type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -37,6 +36,15 @@
   let bgUploading = false;
   let appearanceDestroyed = false;
 
+  // Radio 组影子：config.theme 外部同步进单选组，切换经 commitTheme 走保存管线
+  let themeSel = 'system';
+  $: themeSel = (config.theme as string) || 'system';
+  // Slider/SegmentedButton 影子：外部加载同步进控件，拖动/点击经回调写回 config
+  let opacitySlider = 0.25;
+  $: opacitySlider = config.background_opacity ?? 0.25;
+  let blurSel = 1;
+  $: blurSel = config.background_blur ?? 1;
+
   $: {
     currentLocale;
     blurLabels = [
@@ -56,7 +64,7 @@
     appearanceDestroyed = true;
   });
 
-  // 界面主题（跟随系统/浅色/深色）：写 config.theme 并经 cache 回流到 App 壳层的 Carbon 主题桥
+  // 界面主题（跟随系统/浅色/深色）：写 config.theme 并经 cache 回流到 App 壳层的 MD 主题桥
   async function selectTheme(preference: ThemePreference) {
     const previous = config.theme;
     if (preference === previous) return;
@@ -71,6 +79,21 @@
       console.error('保存主题设置失败:', e);
       showToast(t('settingsAppearance.uiVisualStyleSaveFailed', { error: e }), 'error');
     }
+  }
+
+  // Radio 组 change（原生冒泡）：bind:group 已更新 themeSel，此处提交
+  function commitTheme(): void {
+    void selectTheme(themeSel as ThemePreference);
+  }
+
+  // 模糊分段选择：单选语义，误点已选段（取消选中）时恢复当前值
+  function handleBlurSelect(e: Event): void {
+    const detail = (e as CustomEvent<{ index: number; selected: boolean; segmentId?: string }>).detail;
+    if (!detail.selected) {
+      blurSel = config.background_blur ?? 1;
+      return;
+    }
+    updateBgBlur(Number(detail.segmentId));
   }
 
   function handleBgFileSelect(event: Event) {
@@ -167,14 +190,20 @@
   <section class="appearance-card">
     <h3 class="cds--type-heading-02">{t('settingsAppearance.uiVisualStyle')}</h3>
     <p class="appearance-card-desc">{t('settingsAppearance.uiVisualStyleDesc')}</p>
-    <RadioButtonGroup
-      selected={(config.theme as string) || 'system'}
-      on:change={(e) => selectTheme(String(e.detail) as ThemePreference)}
-    >
-      <RadioButton value="system" labelText={t('sidebar.themeTitle.system')} />
-      <RadioButton value="light" labelText={t('sidebar.themeTitle.light')} />
-      <RadioButton value="dark" labelText={t('sidebar.themeTitle.dark')} />
-    </RadioButtonGroup>
+    <div class="appearance-theme-group">
+      <FormField>
+        <Radio bind:group={themeSel} value="system" onchange={commitTheme} />
+        {#snippet label()}<span class="appearance-theme-label">{t('sidebar.themeTitle.system')}</span>{/snippet}
+      </FormField>
+      <FormField>
+        <Radio bind:group={themeSel} value="light" onchange={commitTheme} />
+        {#snippet label()}<span class="appearance-theme-label">{t('sidebar.themeTitle.light')}</span>{/snippet}
+      </FormField>
+      <FormField>
+        <Radio bind:group={themeSel} value="dark" onchange={commitTheme} />
+        {#snippet label()}<span class="appearance-theme-label">{t('sidebar.themeTitle.dark')}</span>{/snippet}
+      </FormField>
+    </div>
   </section>
 
   <!-- 背景图片 -->
@@ -194,13 +223,14 @@
 
       <div class="appearance-bg-actions">
         <label class="appearance-upload-label">
-          <Button kind="tertiary" size="small" icon={ImageIcon} loading={bgUploading}>
+          <Button variant="outlined" disabled={bgUploading}>
+            <span class="mdc-button__icon"><MdIcon name="image" size={18} /></span>
             {t('settingsAppearance.chooseImage')}
           </Button>
-          <input type="file" accept="image/*" class="appearance-file-input" on:change={handleBgFileSelect} disabled={bgUploading} />
+          <input type="file" accept="image/*" class="appearance-file-input" onchange={handleBgFileSelect} disabled={bgUploading} />
         </label>
         {#if bgPreview}
-          <Button kind="ghost" size="small" on:click={clearBg}>{t('settingsAppearance.clearBackground')}</Button>
+          <Button variant="text" onclick={clearBg}>{t('settingsAppearance.clearBackground')}</Button>
         {/if}
         <p class="appearance-hint">{t('settingsAppearance.bgSupport')}</p>
       </div>
@@ -213,13 +243,12 @@
           <span class="appearance-slider-value">{Math.round((config.background_opacity ?? 0.25) * 100)}%</span>
         </div>
         <Slider
+          class="appearance-slider"
           min={0.05}
           max={0.6}
           step={0.01}
-          value={config.background_opacity ?? 0.25}
-          labelText=""
-          hideTextInput={true}
-          on:input={(e) => updateBgOpacity(e.detail as number)}
+          bind:value={opacitySlider}
+          oninput={() => updateBgOpacity(opacitySlider)}
         />
       </div>
 
@@ -228,14 +257,17 @@
           <span>{t('settingsAppearance.bgBlur')}</span>
           <span class="appearance-slider-value">{blurLabels[config.background_blur ?? 1]}</span>
         </div>
-        <ContentSwitcher
-          selectedIndex={(config.background_blur ?? 1) as number}
-          on:change={(e) => updateBgBlur(e.detail as number)}
+        <SegmentedButton
+          class="appearance-seg"
+          singleSelect
+          segments={[0, 1, 2]}
+          bind:selected={blurSel}
+          onselected={handleBlurSelect}
         >
-          {#each [0, 1, 2] as level, i (level)}
-            <Switch text={blurLabels[i]} id={'blur-' + level} />
-          {/each}
-        </ContentSwitcher>
+          {#snippet segment(level)}
+            <Segment segment={level}>{blurLabels[level]}</Segment>
+          {/snippet}
+        </SegmentedButton>
       </div>
     {/if}
   </section>
@@ -249,8 +281,8 @@
   }
 
   .appearance-card {
-    background: var(--cds-layer);
-    border: 1px solid var(--cds-border-subtle);
+    background: var(--md-theme-surface);
+    border: 1px solid var(--md-theme-border-subtle);
     border-radius: 8px;
     padding: 1.25rem 1.375rem;
     display: flex;
@@ -260,8 +292,25 @@
 
   .appearance-card-desc {
     font-size: 0.8125rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
     margin-top: -0.5rem;
+  }
+
+  /* 主题单选组：纵排 + 表单域对齐（替代 Carbon RadioButtonGroup 的 label 布局） */
+  .appearance-theme-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    margin-top: -0.5rem;
+  }
+
+  .appearance-theme-group :global(.mdc-form-field) {
+    align-items: center;
+  }
+
+  .appearance-theme-label {
+    font-size: 0.875rem;
+    color: var(--md-theme-on-surface);
   }
 
   .appearance-bg-row {
@@ -275,7 +324,7 @@
     height: 5rem;
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid var(--cds-border-subtle);
+    border: 1px solid var(--md-theme-border-subtle);
     flex-shrink: 0;
   }
 
@@ -288,14 +337,14 @@
   .appearance-bg-empty {
     width: 8rem;
     height: 5rem;
-    border: 1px dashed var(--cds-border-subtle);
+    border: 1px dashed var(--md-theme-border-subtle);
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     font-size: 0.75rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
   }
 
   .appearance-bg-actions {
@@ -318,11 +367,11 @@
   .appearance-hint {
     width: 100%;
     font-size: 0.6875rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
   }
 
   .appearance-slider-block {
-    border-top: 1px solid var(--cds-border-subtle);
+    border-top: 1px solid var(--md-theme-border-subtle);
     padding-top: 0.875rem;
     display: flex;
     flex-direction: column;
@@ -336,6 +385,19 @@
   }
 
   .appearance-slider-value {
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
+  }
+
+  .appearance-slider {
+    width: 100%;
+  }
+
+  /* 模糊档位分段选择：撑满滑块区宽度，段等分 */
+  .appearance-seg {
+    width: 100%;
+  }
+
+  .appearance-seg :global(.mdc-segmented-button__segment) {
+    flex: 1;
   }
 </style>

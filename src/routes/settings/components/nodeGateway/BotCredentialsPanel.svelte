@@ -1,7 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n/index.ts';
   import { createEventDispatcher } from 'svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  import Switch from '@smui/switch';
 
   type EnabledKey =
     | 'feishu_bot_enabled'
@@ -50,6 +50,9 @@
 
   const dispatch = createEventDispatcher<{ save: null }>();
   let secretVisible: Partial<Record<CredentialFieldKey, boolean>> = {};
+  // Switch 影子变量：SMUI Switch 受控 checked，程序化加载同步进开关，切换经 toggle() 走保存管线
+  let botEnabledSwitch = false;
+  $: botEnabledSwitch = config[enabledKey] ?? false;
 
   function toggle() {
     config[enabledKey] = !config[enabledKey];
@@ -70,7 +73,12 @@
         <span class="settings-chip-success">{t(enabledLabelKey)}</span>
       {/if}
     </div>
-    <Toggle size="sm" toggled={config[enabledKey]} labelText={t(titleKey)} hideLabel={true} disabled={saving} on:toggle={toggle} />
+    <Switch
+      bind:checked={botEnabledSwitch}
+      onSMUISwitchChange={() => toggle()}
+      disabled={saving}
+      aria-label={t(titleKey)}
+    />
   </div>
   {#if config[enabledKey]}
     <div class="mt-2 space-y-2">
@@ -84,7 +92,7 @@
                   <input
                     type="text"
                     bind:value={config[field.key]}
-                    on:blur={() => dispatch('save')}
+                    onblur={() => dispatch('save')}
                     class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                     placeholder={field.placeholder || ''}
                   />
@@ -92,7 +100,7 @@
                   <input
                     type="password"
                     bind:value={config[field.key]}
-                    on:blur={() => dispatch('save')}
+                    onblur={() => dispatch('save')}
                     class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                     placeholder={field.placeholder || ''}
                   />
@@ -101,7 +109,7 @@
                   type="button"
                   class="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-[#adbac7]"
                   aria-label={`${t(secretVisible[field.key] ? 'nodeGatewayPage.hideSecret' : 'nodeGatewayPage.showSecret')}: ${t(field.labelKey)}`}
-                  on:click={() => (secretVisible[field.key] = !secretVisible[field.key])}
+                  onclick={() => (secretVisible[field.key] = !secretVisible[field.key])}
                 >
                   {#if secretVisible[field.key]}
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>
@@ -114,7 +122,7 @@
               <input
                 type="text"
                 bind:value={config[field.key]}
-                on:blur={() => dispatch('save')}
+                onblur={() => dispatch('save')}
                 class="mt-0.5 w-full rounded-md bg-white/80 px-3 py-1.5 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                 placeholder={field.placeholder || ''}
               />

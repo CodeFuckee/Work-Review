@@ -27,7 +27,7 @@ test('时间线应用图标应使用统一安全区并在原生图片失败时�
 
   assert.match(source, /let failedTimelineIconKeys = new Set<string>\(\)/);
   assert.match(source, /function handleTimelineIconError\(activity\)/);
-  assert.match(source, /on:error=\{\(\) => handleTimelineIconError\(activity\)\}/);
+  assert.match(source, /onerror=\{\(\) => handleTimelineIconError\(activity\)\}/);
   assert.match(source, /timeline-app-icon-has-image/);
   assert.match(
     source,
@@ -193,12 +193,13 @@ test('时间线工具栏图标应统一放大且不改变按钮容器', async ()
   const toolbarSource = source.slice(toolbarStart, toolbarEnd);
 
   assert.ok(toolbarStart >= 0 && toolbarEnd > toolbarStart);
-  // Carbon 迁移后工具栏图标按钮为 icon-only Button（icon=Carbon 图标、iconDescription 提供名称）
-  assert.equal((toolbarSource.match(/<Button/g) || []).length, 6);
-  assert.match(toolbarSource, /icon=\{TrashIcon\}/);
-  assert.match(toolbarSource, /icon=\{RenewIcon\}/);
-  assert.match(toolbarSource, /icon=\{ExportIcon\}/);
-  assert.equal((toolbarSource.match(/iconDescription=\{t\(/g) || []).length, 3);
+  // MD 迁移后工具栏为 3 个 SMUI 文字/描边按钮（上一天/今天/昨天）+ 3 个 icon-only 裸按钮（删除/刷新/导出）
+  assert.equal((toolbarSource.match(/<Button/g) || []).length, 3);
+  assert.equal((toolbarSource.match(/class="md-icon-btn"/g) || []).length, 3);
+  assert.match(toolbarSource, /<MdIcon name="delete" size=\{20\} \/>/);
+  assert.match(toolbarSource, /<MdIcon name="refresh" size=\{20\} \/>/);
+  assert.match(toolbarSource, /<MdIcon name="download" size=\{20\} \/>/);
+  assert.equal((toolbarSource.match(/aria-label=\{t\(/g) || []).length, 3);
 });
 
 test('时间线应使用按钮打开小时摘要右侧抽屉，并保留无障碍状态', async () => {
@@ -208,7 +209,7 @@ test('时间线应使用按钮打开小时摘要右侧抽屉，并保留无障�
   assert.match(source, /class="page-control-btn timeline-summary-action"/);
   assert.match(source, /aria-haspopup="dialog"/);
   assert.match(source, /aria-expanded=\{showSummaryDrawer\}/);
-  assert.match(source, /on:click=\{openSummaryDrawer\}/);
+  assert.match(source, /onclick=\{openSummaryDrawer\}/);
   assert.doesNotMatch(source, /href="#\/timeline\/summary\/\{selectedDate\}"/);
   assert.match(source, /<HourlySummaryDrawer[\s\S]*open=\{showSummaryDrawer\}[\s\S]*date=\{selectedDate\}[\s\S]*summaries=\{hourlySummaries\}/);
 });
@@ -330,10 +331,10 @@ test('640px 及以下活动详情抽屉应全屏展示并移除圆角', async ()
 test('时间线工具栏应有日报同款日期快捷按钮（上一天/今天/昨天 + 选中高亮）', async () => {
   const source = await readFile(new URL('./Timeline.svelte', import.meta.url), 'utf8');
 
-  // 三按钮复用日报既有键，迁移后为 Carbon Button（选中态用 isSelected 表达）
+  // 三按钮复用日报既有键，迁移后为 SMUI outlined Button（选中态用主色容器高亮 class 表达）
   assert.match(source, /<Button[\s\S]*?t\('report\.previousDay'\)/);
-  assert.match(source, /isSelected=\{selectedDate === getLocalDateString\(\)\}/);
-  assert.match(source, /isSelected=\{selectedDate === getTimelineYesterdayDateString\(\)\}/);
+  assert.match(source, /selectedDate === getLocalDateString\(\) \? ' timeline-quick-date-active' : ''/);
+  assert.match(source, /selectedDate === getTimelineYesterdayDateString\(\) \? ' timeline-quick-date-active' : ''/);
   assert.match(source, /t\('report\.today'\)/);
   assert.match(source, /t\('report\.yesterday'\)/);
   // 上一天为相对操作：连点可一直往前翻（selectedDate 前移一天）

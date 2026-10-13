@@ -1,7 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n/index.ts';
   import { createEventDispatcher } from 'svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
+  import Switch from '@smui/switch';
 
   interface WecomConfig {
     wecom_bot_enabled: boolean;
@@ -33,6 +33,9 @@
   let tokenVisible = false;
   let aesVisible = false;
   let showCallback = false;
+  // Switch 影子变量：SMUI Switch 受控 checked，程序化加载同步进开关，切换经 toggle() 走保存管线
+  let wecomBotEnabledSwitch = false;
+  $: wecomBotEnabledSwitch = config.wecom_bot_enabled ?? false;
 
   function toggle() {
     config.wecom_bot_enabled = !config.wecom_bot_enabled;
@@ -59,7 +62,12 @@
         <span class="settings-chip-success">{t('nodeGatewayPage.wecomEnabled')}</span>
       {/if}
     </div>
-    <Toggle size="sm" toggled={config.wecom_bot_enabled} labelText={t('nodeGatewayPage.wecomBot')} hideLabel={true} disabled={saving} on:toggle={toggle} />
+    <Switch
+      bind:checked={wecomBotEnabledSwitch}
+      onSMUISwitchChange={() => toggle()}
+      disabled={saving}
+      aria-label={t('nodeGatewayPage.wecomBot')}
+    />
   </div>
   {#if config.wecom_bot_enabled}
     <div class="mt-2 space-y-2">
@@ -69,7 +77,7 @@
           <input
             type="text"
             bind:value={config.wecom_bot_id}
-            on:blur={() => dispatch('save')}
+            onblur={() => dispatch('save')}
             class="mt-0.5 w-full rounded-md bg-white/80 px-3 py-1.5 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
             placeholder="AIBOTID"
           />
@@ -81,7 +89,7 @@
               <input
                 type="text"
                 bind:value={config.wecom_bot_secret}
-                on:blur={() => dispatch('save')}
+                onblur={() => dispatch('save')}
                 class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                 placeholder="Secret"
               />
@@ -89,7 +97,7 @@
               <input
                 type="password"
                 bind:value={config.wecom_bot_secret}
-                on:blur={() => dispatch('save')}
+                onblur={() => dispatch('save')}
                 class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                 placeholder="Secret"
               />
@@ -98,7 +106,7 @@
               type="button"
               class="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-[#adbac7]"
               aria-label={`${t(secretVisible ? 'nodeGatewayPage.hideSecret' : 'nodeGatewayPage.showSecret')}: ${t('nodeGatewayPage.wecomBotSecret')}`}
-              on:click={() => (secretVisible = !secretVisible)}
+              onclick={() => (secretVisible = !secretVisible)}
             >
               {#if secretVisible}
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>
@@ -135,7 +143,7 @@
       <button
         type="button"
         class="text-[11px] text-slate-500 underline-offset-2 hover:underline dark:text-[#7d8590]"
-        on:click={() => (showCallback = !showCallback)}
+        onclick={() => (showCallback = !showCallback)}
       >
         {t('nodeGatewayPage.wecomCallbackSection')}
       </button>
@@ -146,7 +154,7 @@
             <input
               type="text"
               bind:value={config.wecom_corp_id}
-              on:blur={() => dispatch('save')}
+              onblur={() => dispatch('save')}
               class="mt-0.5 w-full rounded-md bg-white/80 px-3 py-1.5 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
               placeholder="Corp ID"
             />
@@ -158,7 +166,7 @@
                 <input
                   type="text"
                   bind:value={config.wecom_token}
-                  on:blur={() => dispatch('save')}
+                  onblur={() => dispatch('save')}
                   class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                   placeholder="Token"
                 />
@@ -166,7 +174,7 @@
                 <input
                   type="password"
                   bind:value={config.wecom_token}
-                  on:blur={() => dispatch('save')}
+                  onblur={() => dispatch('save')}
                   class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                   placeholder="Token"
                 />
@@ -175,7 +183,7 @@
                 type="button"
                 class="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-[#adbac7]"
                 aria-label={`${t(tokenVisible ? 'nodeGatewayPage.hideSecret' : 'nodeGatewayPage.showSecret')}: ${t('nodeGatewayPage.wecomToken')}`}
-                on:click={() => (tokenVisible = !tokenVisible)}
+                onclick={() => (tokenVisible = !tokenVisible)}
               >
                 {#if tokenVisible}
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>
@@ -192,7 +200,7 @@
                 <input
                   type="text"
                   bind:value={config.wecom_encoding_aes_key}
-                  on:blur={() => dispatch('save')}
+                  onblur={() => dispatch('save')}
                   class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                   placeholder="EncodingAESKey"
                 />
@@ -200,7 +208,7 @@
                 <input
                   type="password"
                   bind:value={config.wecom_encoding_aes_key}
-                  on:blur={() => dispatch('save')}
+                  onblur={() => dispatch('save')}
                   class="w-full rounded-md bg-white/80 px-3 py-1.5 pr-8 text-sm font-mono text-slate-900 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-[#30363d]/50 dark:text-[#e6edf3] dark:ring-[#484f58] dark:focus:ring-primary-600 focus:outline-none"
                   placeholder="EncodingAESKey"
                 />
@@ -209,7 +217,7 @@
                 type="button"
                 class="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-[#adbac7]"
                 aria-label={`${t(aesVisible ? 'nodeGatewayPage.hideSecret' : 'nodeGatewayPage.showSecret')}: ${t('nodeGatewayPage.wecomEncodingAesKey')}`}
-                on:click={() => (aesVisible = !aesVisible)}
+                onclick={() => (aesVisible = !aesVisible)}
               >
                 {#if aesVisible}
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>

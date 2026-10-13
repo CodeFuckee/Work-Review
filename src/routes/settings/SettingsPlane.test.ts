@@ -47,8 +47,10 @@ test('Plane 组件应提供工作项预览命令与预览列表', () => {
 
 test('Plane 组件应提供启用开关并按结构化结果展示连接状态', () => {
   const source = read(PLANE_COMPONENT);
-  assert.match(source, /<Toggle/);
-  assert.match(source, /toggled=\{config\.plane\?\.enabled\}/);
+  // 开关已迁移 SMUI Switch：影子变量受控 + onSMUISwitchChange
+  assert.match(source, /<Switch/);
+  assert.match(source, /\$: planeEnabledSwitch = Boolean\(config\.plane\?\.enabled\)/);
+  assert.match(source, /<Switch bind:checked=\{planeEnabledSwitch\}/);
   assert.match(source, /testResult\.ok/);
   assert.match(source, /previewError/);
 });
@@ -70,9 +72,11 @@ test('Plane 组件应提供项目过滤 textarea 并随保存流程持久化', (
   assert.match(source, /config\.plane = \{ \.\.\.plane\(\), project_filter: lines \};/);
 });
 
-test('设置页 Plane 页签应经由 Carbon Tabs 渲染（图标分支已随壳层迁移移除）', () => {
+test('设置页 Plane 页签应经由 SMUI Tab 渲染（图标分支已随壳层迁移移除）', () => {
   const source = read(SETTINGS);
-  assert.match(source, /<Tabs/);
+  // Tabs 已迁移 @smui/tab：页签条容器 + Tab 组件（v8 未导出 TabBar，context 由页面等价提供）
+  assert.match(source, /class="settings-tab-strip"/);
+  assert.match(source, /<Tab\b/);
   assert.match(source, /id: 'plane'/);
   assert.doesNotMatch(source, /tab\.icon === 'plane'/);
 });

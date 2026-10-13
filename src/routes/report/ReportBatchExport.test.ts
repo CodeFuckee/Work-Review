@@ -57,7 +57,7 @@ test('批量导出按钮应在 report 工具栏中触发 openBatchExportModal', 
   );
 
   // 按钮触发函数
-  assert.match(source, /on:click=\{openBatchExportModal\}/);
+  assert.match(source, /onclick=\{openBatchExportModal\}/);
   // 导出过程中按钮禁用
   assert.match(source, /disabled=\{batchExporting\}/);
 });

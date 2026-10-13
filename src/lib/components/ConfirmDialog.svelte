@@ -5,9 +5,8 @@
     type ConfirmTone,
   } from '$lib/stores/confirm.ts';
   import Dialog, { Title, Content, Actions } from '@smui/dialog';
-  import '@smui/dialog/bare.css';
   import Button from '@smui/button';
-  import '@smui/button/bare.css';
+  // bare.css 统一由 src/smui.css 相对路径引入（@smui 包 exports 不含 bare.css，直连会让 Vite build 失败）
 
   $: dialogState = $confirmDialog;
   // error 语气使用错误色主按钮，info/warning 用标准主按钮

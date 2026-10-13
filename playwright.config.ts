@@ -5,6 +5,9 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: 'tests/e2e/ui',
   fullyParallel: false,
+  // 时间线/设置套件较重，7 worker 并开 Chrome 在开发机上互相挤压致随机超时
+  // （单跑全过、全量随机挂），收敛为 2 worker 换稳定
+  workers: 2,
   timeout: 30_000,
   retries: 0,
   use: {

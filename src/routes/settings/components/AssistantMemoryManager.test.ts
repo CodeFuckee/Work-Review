@@ -43,8 +43,9 @@ test('加载后渲染可搜索、可按类型筛选的列表，并覆盖加载�
   const source = await readComponent();
 
   assert.match(source, /bind:value=\{searchQuery\}/);
-  // Carbon Select：selected + on:change 双向语义
-  assert.match(source, /selected=\{selectedMemoryType\}/);
+  // SMUI Select：value 单向受控 + onSMUISelectChange（detail.value）对齐原 selected/on:change 语义
+  assert.match(source, /value=\{selectedMemoryType\}/);
+  assert.match(source, /onSMUISelectChange=/);
   assert.match(source, /settingsAI\.assistantMemory\.searchPlaceholder/);
   assert.match(source, /\{#if loading\}/);
   assert.match(source, /\{:else if loadError\}/);

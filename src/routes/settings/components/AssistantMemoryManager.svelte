@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import Select from 'carbon-components-svelte/src/Select/Select.svelte';
-  import SelectItem from 'carbon-components-svelte/src/Select/SelectItem.svelte';
+  // SMUI v8 Select：change 事件实为 SMUISelectChange（detail.value），用 onSMUISelectChange；
+  // SelectItem 对应 Option（value prop + 子内容为文案）
+  import Select, { Option } from '@smui/select';
 
   type MemoryType = 'preference' | 'workflow' | 'profile' | 'goal' | 'project' | 'constraint';
   type RecallPolicy = 'always' | 'relevant' | 'manual';
@@ -307,14 +308,13 @@
         aria-label={t('settingsAI.assistantMemory.searchPlaceholder')}
       />
       <Select
-        selected={selectedMemoryType}
-        labelText={t('settingsAI.assistantMemory.type')}
-        hideLabel={true}
-        on:change={(e) => { selectedMemoryType = (e as CustomEvent<string>).detail as typeof selectedMemoryType; void loadMemories(); }}
+        value={selectedMemoryType}
+        anchor$aria-label={t('settingsAI.assistantMemory.type')}
+        onSMUISelectChange={(e) => { selectedMemoryType = (e as CustomEvent<{ value: string }>).detail.value as typeof selectedMemoryType; void loadMemories(); }}
       >
-        <SelectItem value="" text={t('settingsAI.assistantMemory.type')} />
+        <Option value="">{t('settingsAI.assistantMemory.type')}</Option>
         {#each memoryTypes as memoryType (memoryType)}
-          <SelectItem value={memoryType} text={typeLabel(memoryType)} />
+          <Option value={memoryType}>{typeLabel(memoryType)}</Option>
         {/each}
       </Select>
       <button type="button" class="settings-action-primary shrink-0" on:click={openCreateForm}>
@@ -335,22 +335,21 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="settings-field">
             <span class="settings-label">{t('settingsAI.assistantMemory.type')}</span>
-            <Select labelText={t('settingsAI.assistantMemory.type')} hideLabel={true} disabled={saving} selected={form.memoryType} on:change={(e) => form.memoryType = (e as CustomEvent<string>).detail as typeof form.memoryType}>
+            <Select value={form.memoryType} disabled={saving} anchor$aria-label={t('settingsAI.assistantMemory.type')} onSMUISelectChange={(e) => (form.memoryType = (e as CustomEvent<{ value: string }>).detail.value as typeof form.memoryType)}>
               {#each memoryTypes as memoryType (memoryType)}
-                <SelectItem value={memoryType} text={typeLabel(memoryType)} />
+                <Option value={memoryType}>{typeLabel(memoryType)}</Option>
               {/each}
             </Select>
           </label>
 
           <label class="settings-field">
             <span class="settings-label">{t('settingsAI.assistantMemory.recallPolicy')}</span>
-            <Select labelText={t('settingsAI.assistantMemory.recallPolicy')} hideLabel={true} disabled={saving} selected={form.recallPolicy} on:change={(e) => form.recallPolicy = (e as CustomEvent<string>).detail as typeof form.recallPolicy}>
+            <Select value={form.recallPolicy} disabled={saving} anchor$aria-label={t('settingsAI.assistantMemory.recallPolicy')} onSMUISelectChange={(e) => (form.recallPolicy = (e as CustomEvent<{ value: string }>).detail.value as typeof form.recallPolicy)}>
               {#each recallPolicies as recallPolicy (recallPolicy)}
-                <SelectItem
+                <Option
                   value={recallPolicy}
-                  text={policyLabel(recallPolicy)}
                   disabled={form.sensitivity === 'caution' && recallPolicy === 'always'}
-                />
+                >{policyLabel(recallPolicy)}</Option>
               {/each}
             </Select>
           </label>

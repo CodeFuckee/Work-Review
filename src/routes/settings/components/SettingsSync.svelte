@@ -22,12 +22,10 @@
     type SyncCloudMeta,
     type SyncPayload,
   } from '$lib/utils/configSync.ts';
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import InlineLoading from 'carbon-components-svelte/src/InlineLoading/InlineLoading.svelte';
-  import Modal from 'carbon-components-svelte/src/Modal/Modal.svelte';
-  import Tag from 'carbon-components-svelte/src/Tag/Tag.svelte';
-  import UploadIcon from 'carbon-icons-svelte/lib/Upload.svelte';
-  import DownloadIcon from 'carbon-icons-svelte/lib/Download.svelte';
+  import Button from '@smui/button';
+  import CircularProgress from '@smui/circular-progress';
+  import Dialog, { Title, Content, Actions } from '@smui/dialog';
+  import MdIcon from '../../../lib/components/MdIcon.svelte';
 
   interface ClientHttpPostJsonResult {
     delivered: boolean;
@@ -58,6 +56,11 @@
   $: canSync = Boolean(auth?.token && getAdminUrl());
   let hasSyncKey = false;
   async function refreshSyncKey(): Promise<void> { hasSyncKey = Boolean(await getStoredSyncKey()); }
+
+  // SMUI Dialog 受控关闭（scrim 点击/Esc）：弹层关闭即丢弃待拉取载荷
+  $: if (!showDiffModal) {
+    pendingPull = null;
+  }
 
   function blockLabel(block: string): string {
     return SYNC_BLOCK_LABELS[block] ?? block;
@@ -175,6 +178,11 @@
     void refreshCloudStatus();
   }
 
+  function cancelPull(): void {
+    showDiffModal = false;
+    pendingPull = null;
+  }
+
   async function handlePush(): Promise<void> {
     if (working) return;
     const key = await getStoredSyncKey();
@@ -238,6 +246,16 @@
       default: return t('settingsSync.diffBothEmpty');
     }
   }
+
+  // 差异状态 → md-chip 变体（differs/local-only 需语义色，其余走全局 outlined/tonal）
+  function diffChipClass(state: string): string {
+    switch (state) {
+      case 'differs': return 'sync-diff-chip-differs';
+      case 'cloud-only': return 'md-chip-tonal';
+      case 'local-only': return 'sync-diff-chip-local';
+      default: return 'md-chip-outlined';
+    }
+  }
 </script>
 
 <div class="sync-carbon" data-locale={currentLocale}>
@@ -247,7 +265,7 @@
       <p class="sync-desc">{t('settingsSync.desc')}</p>
     </div>
     {#if statusLoading}
-      <InlineLoading description="" />
+      <span class="sync-loading"><CircularProgress indeterminate /></span>
     {/if}
   </div>
 
@@ -261,16 +279,18 @@
       {#if authExpired}
         <span class="sync-hint">{t('settingsSync.authExpired')}</span>
       {:else if cloudMeta?.updatedTime}
-        <Tag type="blue" size="sm">{t('settingsSync.cloudUpdatedAt', { time: cloudMeta.updatedTime })}</Tag>
+        <span class="md-chip md-chip-tonal">{t('settingsSync.cloudUpdatedAt', { time: cloudMeta.updatedTime })}</span>
       {:else if cloudMeta}
-        <Tag type="gray" size="sm">{t('settingsSync.cloudEmpty')}</Tag>
+        <span class="md-chip md-chip-outlined">{t('settingsSync.cloudEmpty')}</span>
       {/if}
     </div>
     <div class="sync-actions">
-      <Button kind="secondary" size="small" icon={DownloadIcon} loading={working} on:click={handlePull}>
+      <Button variant="outlined" disabled={working} onclick={handlePull}>
+        <span class="mdc-button__icon"><MdIcon name="download" size={18} /></span>
         {t('settingsSync.pull')}
       </Button>
-      <Button kind="primary" size="small" icon={UploadIcon} loading={working} on:click={handlePush}>
+      <Button variant="raised" disabled={working} onclick={handlePush}>
+        <span class="mdc-button__icon"><MdIcon name="upload" size={18} /></span>
         {t('settingsSync.push')}
       </Button>
     </div>
@@ -279,36 +299,36 @@
 </div>
 
 {#if showDiffModal && pendingPull}
-  <Modal
-    open={true}
-    modalHeading={t('settingsSync.diffTitle')}
-    modalAriaLabel={t('settingsSync.diffTitle')}
-    primaryButtonText={t('settingsSync.applyPull')}
-    secondaryButtonText={t('common.cancel')}
-    on:submit={() => { void confirmPull(); }}
-    on:close={() => { showDiffModal = false; pendingPull = null; }}
-  >
-    <p class="sync-diff-intro">{t('settingsSync.diffIntro')}</p>
-    <div class="sync-diff-list">
-      {#each Object.entries(diffSyncBlocks(extractSyncPayload(config), pendingPull)) as [block, state] (block)}
-        <div class="sync-diff-row">
-          <span class="sync-diff-block">{blockLabel(block)}</span>
-          <Tag
-            type={state === 'differs' ? 'red' : state === 'cloud-only' ? 'blue' : state === 'local-only' ? 'green' : 'gray'}
-            size="sm"
-          >
-            {diffStateLabel(state)}
-          </Tag>
-        </div>
-      {/each}
-    </div>
-  </Modal>
+  <Dialog bind:open={showDiffModal} aria-labelledby="sync-diff-title">
+    <Title id="sync-diff-title" class="sync-diff-title">{t('settingsSync.diffTitle')}</Title>
+    <Content>
+      <p class="sync-diff-intro">{t('settingsSync.diffIntro')}</p>
+      <div class="sync-diff-list">
+        {#each Object.entries(diffSyncBlocks(extractSyncPayload(config), pendingPull)) as [block, state] (block)}
+          <div class="sync-diff-row">
+            <span class="sync-diff-block">{blockLabel(block)}</span>
+            <span class="md-chip {diffChipClass(state)}">{diffStateLabel(state)}</span>
+          </div>
+        {/each}
+      </div>
+    </Content>
+    <Actions>
+      <Button class="sync-diff-btn" onclick={cancelPull}>{t('common.cancel')}</Button>
+      <Button
+        class="sync-diff-btn"
+        variant="raised"
+        onclick={() => { void confirmPull(); }}
+      >
+        {t('settingsSync.applyPull')}
+      </Button>
+    </Actions>
+  </Dialog>
 {/if}
 
 <style>
   .sync-carbon {
-    background: var(--cds-layer);
-    border: 1px solid var(--cds-border-subtle);
+    background: var(--md-theme-surface);
+    border: 1px solid var(--md-theme-border-subtle);
     border-radius: 8px;
     padding: 1.25rem 1.375rem;
     display: flex;
@@ -325,13 +345,22 @@
 
   .sync-desc {
     font-size: 0.8125rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
     margin-top: 0.125rem;
   }
 
   .sync-hint {
     font-size: 0.75rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
+  }
+
+  .sync-loading {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    --md-circular-progress-size: 18px;
+    --mdc-circular-progress-active-indicator-color: var(--md-theme-primary);
+    vertical-align: -3px;
   }
 
   .sync-status-row {
@@ -350,9 +379,14 @@
     flex-wrap: wrap;
   }
 
+  .sync-diff-title {
+    font-size: 1.125rem;
+    font-weight: 500;
+  }
+
   .sync-diff-intro {
     font-size: 0.8125rem;
-    color: var(--cds-text-secondary);
+    color: var(--md-theme-on-surface-medium);
     margin-bottom: 0.75rem;
   }
 
@@ -372,5 +406,20 @@
   .sync-diff-block {
     font-size: 0.8125rem;
     font-weight: 500;
+  }
+
+  /* 差异语义色 chip：底色用半透明色块（明暗主题均成立），文字走主题令牌 */
+  .sync-diff-chip-differs {
+    background: rgba(176, 0, 32, 0.14);
+    color: var(--md-theme-error);
+  }
+
+  .sync-diff-chip-local {
+    background: rgba(67, 160, 71, 0.16);
+    color: #2e7d32;
+  }
+
+  .sync-diff-btn :global(.mdc-button__label) {
+    font-size: 0.875rem;
   }
 </style>

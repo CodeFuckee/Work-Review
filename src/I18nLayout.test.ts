@@ -19,12 +19,12 @@ test('应用壳层应使用统一 i18n 资源并支持三种界面语言', async
   assert.match(appSource, /<Router \{routes\} \/>/);
 });
 
-// Carbon 迁移后语言菜单位于 UIShell Header 的 OverflowMenu 内（App.svelte），
+// MD 迁移后语言菜单为壳层自绘 md-menu-surface（App.svelte，语义与原菜单等价），
 // 语言清单与顺序断言改为针对壳层实现。
 test('壳层应提供语言切换菜单，并按 ZH、EN、TW、AR 顺序展示', async () => {
   const source = await readFile(new URL('./App.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /OverflowMenu/);
+  assert.match(source, /md-menu-surface/);
   assert.match(source, /selectLocale\(option\.value\)/);
   assert.match(source, /value: 'zh-CN', label: 'ZH'/);
   assert.match(source, /value: 'en', label: 'EN'/);

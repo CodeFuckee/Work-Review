@@ -3,14 +3,14 @@ import { baseSpec, installTauriMock, type MockSpec } from './tauri-mock';
 
 // 被测功能：时间线工具栏日期快捷按钮（上一天/今天/昨天，与日报页同款）。
 // 断言锚点：LocalizedDatePicker 触发器显示的选中日期文本 + 按钮高亮类
-// page-control-btn-active；E2E-003 用 invoke 记录器验证日期切换驱动数据重载。
+// timeline-quick-date-active；E2E-003 用 invoke 记录器验证日期切换驱动数据重载。
 
 function isoDate(offsetDays: number): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}/${month}/${day}`;
+  return `${d.getFullYear()}-${month}-${day}`;
 }
 
 async function openTimeline(page: Page): Promise<void> {
@@ -53,7 +53,7 @@ async function openTimeline(page: Page): Promise<void> {
   await page.goto('/#/timeline');
 }
 
-// 日期选择器触发器（显示当前选中日期，如「2026/09/29 ▾」）
+// 日期选择器触发器（flatpickr 输入框，值为 ISO 日期如 2026-09-29）
 function pickerTrigger(page: Page) {
   return page.locator('.page-toolbar .page-control-input');
 }
@@ -75,15 +75,15 @@ test.describe('时间线日期快捷按钮', () => {
     const todayBtn = page.getByRole('button', { name: '今天', exact: true });
     const yesterdayBtn = page.getByRole('button', { name: '昨天', exact: true });
     await expect(todayBtn).toBeVisible();
-    await expect(todayBtn).toHaveClass(/page-control-btn-active/);
-    await expect(yesterdayBtn).not.toHaveClass(/page-control-btn-active/);
-    await expect(pickerTrigger(page)).toContainText(isoDate(0));
+    await expect(todayBtn).toHaveClass(/timeline-quick-date-active/);
+    await expect(yesterdayBtn).not.toHaveClass(/timeline-quick-date-active/);
+    await expect(pickerTrigger(page)).toHaveValue(isoDate(0));
 
     // 点[昨天]：日期选择器显示昨天、高亮切换
     await yesterdayBtn.click();
-    await expect(pickerTrigger(page)).toContainText(isoDate(-1));
-    await expect(yesterdayBtn).toHaveClass(/page-control-btn-active/);
-    await expect(todayBtn).not.toHaveClass(/page-control-btn-active/);
+    await expect(pickerTrigger(page)).toHaveValue(isoDate(-1));
+    await expect(yesterdayBtn).toHaveClass(/timeline-quick-date-active/);
+    await expect(todayBtn).not.toHaveClass(/timeline-quick-date-active/);
     await reviewHold(page);
   });
 
@@ -92,11 +92,11 @@ test.describe('时间线日期快捷按钮', () => {
 
     const prevBtn = page.getByRole('button', { name: '上一天', exact: true });
     await prevBtn.click();
-    await expect(pickerTrigger(page)).toContainText(isoDate(-1));
+    await expect(pickerTrigger(page)).toHaveValue(isoDate(-1));
     await prevBtn.click();
-    await expect(pickerTrigger(page)).toContainText(isoDate(-2));
+    await expect(pickerTrigger(page)).toHaveValue(isoDate(-2));
     // 相对操作按钮自身永不进入高亮态
-    await expect(prevBtn).not.toHaveClass(/page-control-btn-active/);
+    await expect(prevBtn).not.toHaveClass(/timeline-quick-date-active/);
     await reviewHold(page);
   });
 
@@ -136,7 +136,7 @@ test.describe('时间线日期快捷按钮', () => {
 
     const yesterdayBtn = page.getByRole('button', { name: '昨天', exact: true });
     await yesterdayBtn.click();
-    await expect(pickerTrigger(page)).toContainText(isoDate(-1));
+    await expect(pickerTrigger(page)).toHaveValue(isoDate(-1));
     // 记录器（渲染层之外传引用，evaluate 侧读取）
     const recorded = await page.evaluate(() => {
       const w = window as unknown as { __DATES__?: string[] };

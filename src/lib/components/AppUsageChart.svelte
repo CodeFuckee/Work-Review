@@ -67,10 +67,10 @@
   $: maxDuration = displayApps.length > 0 ? Math.max(1, ...displayApps.map(a => a.duration || 0)) : 1;
   $: columnShellClass = embedded
     ? 'app-usage-chart__columns app-usage-chart__columns-embedded'
-    : 'app-usage-chart__columns rounded-lg border border-slate-100 bg-white/90 p-4 dark:border-[#30363d]/60 dark:bg-[#21262d]/70';
+    : 'app-usage-chart__columns rounded-lg border border-slate-100 bg-white/90 p-4 dark:border-[var(--md-theme-border-subtle)] dark:bg-[color:color-mix(in_srgb,var(--md-theme-surface-variant)_70%,transparent)]';
   $: plotClass = embedded
-    ? 'app-usage-chart__plot relative rounded-lg bg-slate-50/90 px-3 pb-3 pt-4 dark:bg-[#161b22]/40'
-    : 'app-usage-chart__plot relative rounded-lg bg-slate-50 px-3 pb-3 pt-4 dark:bg-[#161b22]/40';
+    ? 'app-usage-chart__plot relative rounded-lg bg-slate-50/90 px-3 pb-3 pt-4 dark:bg-[color:color-mix(in_srgb,var(--md-theme-surface)_40%,transparent)]'
+    : 'app-usage-chart__plot relative rounded-lg bg-slate-50 px-3 pb-3 pt-4 dark:bg-[color:color-mix(in_srgb,var(--md-theme-surface)_40%,transparent)]';
 </script>
 
 <div class="space-y-2" data-locale={currentLocale}>
@@ -78,9 +78,9 @@
     <div class={columnShellClass}>
       <div class={plotClass}>
         <div class="pointer-events-none absolute inset-x-3 top-4 bottom-14">
-          <div class="absolute inset-x-0 top-0 border-t border-dashed border-slate-200 dark:border-[#30363d]/80"></div>
-          <div class="absolute inset-x-0 top-1/2 border-t border-dashed border-slate-200 dark:border-[#30363d]/80"></div>
-          <div class="absolute inset-x-0 bottom-0 border-t border-dashed border-slate-200 dark:border-[#30363d]/80"></div>
+          <div class="absolute inset-x-0 top-0 border-t border-dashed border-slate-200 dark:border-[var(--md-theme-border-subtle)]"></div>
+          <div class="absolute inset-x-0 top-1/2 border-t border-dashed border-slate-200 dark:border-[var(--md-theme-border-subtle)]"></div>
+          <div class="absolute inset-x-0 bottom-0 border-t border-dashed border-slate-200 dark:border-[var(--md-theme-border-subtle)]"></div>
         </div>
 
         <div class="relative flex h-52 items-end gap-3 overflow-x-auto pb-2">
@@ -90,10 +90,10 @@
               appIcons[getIconCacheKey({ appName: app.app_name, executablePath: app.executable_path })]
             )}
             <div class="min-w-[5.5rem] flex-1">
-              <div class="mb-2 text-center text-[11px] font-medium whitespace-nowrap tabular-nums text-slate-500 dark:text-[#7d8590]">
+              <div class="mb-2 text-center text-[11px] font-medium whitespace-nowrap tabular-nums text-slate-500 dark:text-[color:var(--md-theme-on-surface-medium)]">
                 {formatDuration(app.duration)}
               </div>
-              <div class="mx-auto flex h-32 w-12 items-end rounded-lg bg-slate-100 p-1 dark:bg-[#30363d]/50">
+              <div class="mx-auto flex h-32 w-12 items-end rounded-lg bg-slate-100 p-1 dark:bg-[color:color-mix(in_srgb,#3a3a3a_50%,transparent)]">
                 <div
                   class="app-usage-chart__bar w-full rounded-md transition-all duration-500"
                   style="height: {Math.max((app.duration / maxDuration) * 100, 6)}%; background-color: {colors[i % colors.length]}; opacity: 0.88"
@@ -103,9 +103,9 @@
                 {#if iconSrc}
                   <img src={iconSrc} alt="" class="h-5 w-5 rounded-md object-cover" />
                 {:else}
-                  <span class="inline-flex h-5 w-5 items-center justify-center rounded-md bg-slate-100 text-[10px] text-slate-500 dark:bg-[#30363d]">{i + 1}</span>
+                  <span class="inline-flex h-5 w-5 items-center justify-center rounded-md bg-slate-100 text-[10px] text-slate-500 dark:bg-[#3a3a3a]">{i + 1}</span>
                 {/if}
-                <span class="min-w-0 truncate text-[11px] font-medium text-slate-700 dark:text-[#adbac7]">{app.app_name}</span>
+                <span class="min-w-0 truncate text-[11px] font-medium text-slate-700 dark:text-[color:var(--md-theme-on-surface-medium)]">{app.app_name}</span>
               </div>
             </div>
           {/each}
@@ -149,7 +149,7 @@
     <span>{t('overview.appsFooter', { count: data.length })}</span>
     {#if hasMore}
       <span aria-hidden="true">·</span>
-      <button type="button" on:click={() => expanded = !expanded}>
+      <button type="button" onclick={() => (expanded = !expanded)}>
         {expanded ? t('overview.appUsageCollapse') : t('overview.viewAll')}
       </button>
     {/if}

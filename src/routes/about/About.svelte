@@ -5,11 +5,8 @@
   import { locale, t } from '$lib/i18n/index.ts';
   import { runUpdateFlow } from '$lib/utils/updater.ts';
   import Button from '@smui/button';
-  import '@smui/button/bare.css';
   import Switch from '@smui/switch';
-  import '@smui/switch/bare.css';
   import CircularProgress from '@smui/circular-progress';
-  import '@smui/circular-progress/bare.css';
   import MdIcon from '../../lib/components/MdIcon.svelte';
 
   interface UpdateSettings {
@@ -22,6 +19,7 @@
   let isCheckingUpdate = false;
   let autoCheckUpdate = true;
   // Switch 的受控影子：外部加载同步进开关，切换时经 setAutoCheck 走保存管线
+  // v8 事件名注意：SMUI Switch 的 change 事件实为 SMUISwitchChange（onchange 不触发，Playwright 实测）
   let autoCheckUpdateSwitch = false;
   $: autoCheckUpdateSwitch = autoCheckUpdate;
   let updateStatus = '';
@@ -123,7 +121,7 @@
 
         <div class="about-update-unit">
           <span class="about-update-label">{t('about.autoCheckUpdate')}</span>
-          <Switch bind:checked={autoCheckUpdateSwitch} onchange={() => setAutoCheck(autoCheckUpdateSwitch)} />
+          <Switch bind:checked={autoCheckUpdateSwitch} onSMUISwitchChange={() => setAutoCheck(autoCheckUpdateSwitch)} />
         </div>
 
         <div class="about-update-unit">
