@@ -4,12 +4,13 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { locale, t } from '$lib/i18n/index.ts';
   import { runUpdateFlow } from '$lib/utils/updater.ts';
-  import Button from 'carbon-components-svelte/src/Button/Button.svelte';
-  import Toggle from 'carbon-components-svelte/src/Toggle/Toggle.svelte';
-  import Tag from 'carbon-components-svelte/src/Tag/Tag.svelte';
-  import InlineLoading from 'carbon-components-svelte/src/InlineLoading/InlineLoading.svelte';
-  import FolderIcon from 'carbon-icons-svelte/lib/Folder.svelte';
-  import RenewIcon from 'carbon-icons-svelte/lib/Renew.svelte';
+  import Button from '@smui/button';
+  import '@smui/button/bare.css';
+  import Switch from '@smui/switch';
+  import '@smui/switch/bare.css';
+  import CircularProgress from '@smui/circular-progress';
+  import '@smui/circular-progress/bare.css';
+  import MdIcon from '../../lib/components/MdIcon.svelte';
 
   interface UpdateSettings {
     autoCheck: boolean;
@@ -20,6 +21,9 @@
   let appVersion = '';
   let isCheckingUpdate = false;
   let autoCheckUpdate = true;
+  // Switch 的受控影子：外部加载同步进开关，切换时经 setAutoCheck 走保存管线
+  let autoCheckUpdateSwitch = false;
+  $: autoCheckUpdateSwitch = autoCheckUpdate;
   let updateStatus = '';
   let updateStatusTimer: ReturnType<typeof setTimeout> | null = null;
   $: currentLocale = $locale;
@@ -100,13 +104,16 @@
         <div class="about-brand-copy">
           <div class="about-brand-title-row">
             <h1 class="cds--type-heading-03">{t('common.appName')}</h1>
-            <Tag type="blue" size="sm">v{appVersion}</Tag>
+            <span class="md-chip md-chip-tonal">v{appVersion}</span>
           </div>
           <p class="about-brand-description">{t('about.description')}</p>
         </div>
       </div>
 
-      <Button kind="tertiary" icon={FolderIcon} on:click={openDataDir}>{t('about.openDataDir')}</Button>
+      <Button variant="outlined" onclick={openDataDir}>
+        <span class="mdc-button__icon"><MdIcon name="folder" size={18} /></span>
+        {t('about.openDataDir')}
+      </Button>
 
       <div class="about-update-grid">
         <div class="about-update-unit">
@@ -116,26 +123,17 @@
 
         <div class="about-update-unit">
           <span class="about-update-label">{t('about.autoCheckUpdate')}</span>
-          <Toggle
-            size="sm"
-            toggled={autoCheckUpdate}
-            labelText={t('about.autoCheckUpdate')}
-            hideLabel={true}
-            labelA=""
-            labelB=""
-            on:toggle={(e) => setAutoCheck(e.detail.toggled)}
-          />
+          <Switch bind:checked={autoCheckUpdateSwitch} onchange={() => setAutoCheck(autoCheckUpdateSwitch)} />
         </div>
 
         <div class="about-update-unit">
           <span class="about-update-label">{t('about.updateStatus')}</span>
           <Button
-            kind="ghost"
-            size="small"
-            icon={RenewIcon}
+            variant="text"
             disabled={isCheckingUpdate}
-            on:click={checkForUpdates}
+            onclick={checkForUpdates}
           >
+            <span class="mdc-button__icon"><MdIcon name="refresh" size={18} /></span>
             {#if isCheckingUpdate}{t('about.checkingUpdates')}{:else}{t('about.checkUpdates')}{/if}
           </Button>
         </div>
@@ -143,7 +141,7 @@
 
       {#if updateStatus}
         <div class="about-update-feedback" role="status" aria-live="polite">
-          <InlineLoading description={updateStatus} />
+          <span class="about-inline-loading"><CircularProgress indeterminate class="about-loading-spinner" />{updateStatus}</span>
         </div>
       {/if}
     </section>
@@ -170,11 +168,11 @@
     </section>
 
     <section class="about-tech-stack">
-      <Tag type="outline" size="sm">Tauri 2</Tag>
-      <Tag type="outline" size="sm">Svelte 5</Tag>
-      <Tag type="outline" size="sm">Carbon Design</Tag>
-      <Tag type="outline" size="sm">Rust</Tag>
-      <Tag type="outline" size="sm">SQLite</Tag>
+      <span class="md-chip md-chip-outlined">Tauri 2</span>
+      <span class="md-chip md-chip-outlined">Svelte 5</span>
+      <span class="md-chip md-chip-outlined">Material Design</span>
+      <span class="md-chip md-chip-outlined">Rust</span>
+      <span class="md-chip md-chip-outlined">SQLite</span>
     </section>
   </div>
 </div>
@@ -307,5 +305,14 @@
     flex-wrap: wrap;
     justify-content: center;
     gap: 0.5rem;
+  }
+
+  .about-loading-spinner {
+    width: 18px;
+    height: 18px;
+    --md-circular-progress-size: 18px;
+    --md-circular-progress-active-indicator-color: var(--md-theme-primary);
+    vertical-align: -3px;
+    margin-inline-end: 0.375rem;
   }
 </style>

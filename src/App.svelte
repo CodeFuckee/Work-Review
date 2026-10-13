@@ -4,34 +4,7 @@
   import { wrap } from 'svelte-spa-router/wrap';
   import Toast from './lib/components/Toast.svelte';
   import ConfirmDialog from './lib/components/ConfirmDialog.svelte';
-  import CarbonTheme from 'carbon-components-svelte/src/Theme/Theme.svelte';
-  import Header from 'carbon-components-svelte/src/UIShell/Header.svelte';
-  import SideNav from 'carbon-components-svelte/src/UIShell/SideNav.svelte';
-  import SideNavItems from 'carbon-components-svelte/src/UIShell/SideNavItems.svelte';
-  import SideNavLink from 'carbon-components-svelte/src/UIShell/SideNavLink.svelte';
-  import HeaderGlobalAction from 'carbon-components-svelte/src/UIShell/HeaderGlobalAction.svelte';
-  import Content from 'carbon-components-svelte/src/UIShell/Content.svelte';
-  import InlineNotification from 'carbon-components-svelte/src/Notification/InlineNotification.svelte';
-  import NotificationActionButton from 'carbon-components-svelte/src/Notification/NotificationActionButton.svelte';
-  import OverflowMenu from 'carbon-components-svelte/src/OverflowMenu/OverflowMenu.svelte';
-  import OverflowMenuItem from 'carbon-components-svelte/src/OverflowMenu/OverflowMenuItem.svelte';
-  import HomeIcon from 'carbon-icons-svelte/lib/Home.svelte';
-  import TimeIcon from 'carbon-icons-svelte/lib/Time.svelte';
-  import ReportIcon from 'carbon-icons-svelte/lib/Report.svelte';
-  import ChatIcon from 'carbon-icons-svelte/lib/Chat.svelte';
-  import SettingsIcon from 'carbon-icons-svelte/lib/Settings.svelte';
-  import InformationIcon from 'carbon-icons-svelte/lib/Information.svelte';
-  import RecordingFilledIcon from 'carbon-icons-svelte/lib/RecordingFilled.svelte';
-  import RecordingIcon from 'carbon-icons-svelte/lib/Recording.svelte';
-  import SubtractIcon from 'carbon-icons-svelte/lib/Subtract.svelte';
-  import CloseIcon from 'carbon-icons-svelte/lib/Close.svelte';
-  import PauseIcon from 'carbon-icons-svelte/lib/Pause.svelte';
-  import PlayIcon from 'carbon-icons-svelte/lib/Play.svelte';
-  import TranslateIcon from 'carbon-icons-svelte/lib/Translate.svelte';
-  import LightIcon from 'carbon-icons-svelte/lib/Light.svelte';
-  import AsleepIcon from 'carbon-icons-svelte/lib/Asleep.svelte';
-  import LaptopIcon from 'carbon-icons-svelte/lib/Laptop.svelte';
-  import CheckmarkIcon from 'carbon-icons-svelte/lib/Checkmark.svelte';
+  import MdIcon from './lib/components/MdIcon.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -361,8 +334,6 @@
 
   let theme: ThemePreference = 'system';
   let isDark = false;
-  // Carbon 当前主题（g10=浅 / g90=深），由 applyTheme 桥接
-  let carbonTheme: 'g10' | 'g90' = 'g10';
   let isRecording = true;
   let isPaused = false;
   let platform = '';
@@ -377,20 +348,21 @@
   type AuthGateState = 'allow' | 'grace' | 'login';
   let authGate: AuthGateState = 'allow';
 
-  // ── Carbon UIShell 壳层：导航 / 录制 / 语言 / 主题 ──
+  // ── MD 壳层：导航 / 录制 / 语言 / 主题 ──
   let isSideNavOpen = true;
+  let isLocaleMenuOpen = false;
   interface ShellNavItem {
     path: string;
     labelKey: string;
-    icon: typeof HomeIcon;
+    icon: string;
   }
   const shellNavItems: ShellNavItem[] = [
-    { path: '/', labelKey: 'sidebar.nav.overview', icon: HomeIcon },
-    { path: '/timeline', labelKey: 'sidebar.nav.timeline', icon: TimeIcon },
-    { path: '/report', labelKey: 'sidebar.nav.report', icon: ReportIcon },
-    { path: '/ask', labelKey: 'sidebar.nav.ask', icon: ChatIcon },
-    { path: '/settings', labelKey: 'sidebar.nav.settings', icon: SettingsIcon },
-    { path: '/about', labelKey: 'sidebar.nav.about', icon: InformationIcon },
+    { path: '/', labelKey: 'sidebar.nav.overview', icon: 'home' },
+    { path: '/timeline', labelKey: 'sidebar.nav.timeline', icon: 'schedule' },
+    { path: '/report', labelKey: 'sidebar.nav.report', icon: 'description' },
+    { path: '/ask', labelKey: 'sidebar.nav.ask', icon: 'chat' },
+    { path: '/settings', labelKey: 'sidebar.nav.settings', icon: 'settings' },
+    { path: '/about', labelKey: 'sidebar.nav.about', icon: 'info' },
   ];
   $: shellActiveStates = shellNavItems.reduce<Record<string, boolean>>((acc, item) => {
     const loc = $location || '/';
@@ -444,9 +416,7 @@
     theme = newTheme;
     isDark = theme === 'system' ? detectSystemTheme() : theme === 'dark';
 
-    // Carbon 主题桥：浅色 g10 / 深色 g90（Theme 组件在 <html> 上写 theme 属性 + color-scheme）。
-    // html.dark 保留至全站迁移收尾（过渡期旧语义类仍依赖 .dark 变量层），收尾时移除。
-    carbonTheme = isDark ? 'g90' : 'g10';
+    // MD 主题桥：md-theme.css 以 html.dark 切换 --md-theme-*/--mdc-theme-* 两套令牌
     if (isDark) {
       document.documentElement.classList.add('dark');
     } else {
@@ -821,8 +791,6 @@
   });
 </script>
 
-<CarbonTheme theme={carbonTheme} />
-
 {#if isAuthRoute}
   <!-- 登录页：无壳层，仅保留顶部拖拽条与窗口控制（Windows/Linux） -->
   <div class="relative flex h-screen flex-col overflow-hidden">
@@ -831,20 +799,20 @@
       class="flex h-7 shrink-0 items-start justify-end"
       data-tauri-drag-region
       style="-webkit-app-region: drag;"
-      on:mousedown={startDrag}
+      onmousedown={startDrag}
     >
       {#if platform && platform !== 'macos'}
         <div class="flex h-7 items-stretch" style="-webkit-app-region: no-drag;">
-          <button class="shell-window-btn" on:click={minimizeWindow} title={t('window.minimize')} aria-label={t('window.minimize')}>
-            <SubtractIcon size={14} />
+          <button class="shell-window-btn" onclick={minimizeWindow} title={t('window.minimize')} aria-label={t('window.minimize')}>
+            <MdIcon name="remove" size={16} />
           </button>
-          <button class="shell-window-btn" on:click={maximizeWindow} title={windowMaximized ? t('window.restore') : t('window.maximize')} aria-label={windowMaximized ? t('window.restore') : t('window.maximize')}>
+          <button class="shell-window-btn" onclick={maximizeWindow} title={windowMaximized ? t('window.restore') : t('window.maximize')} aria-label={windowMaximized ? t('window.restore') : t('window.maximize')}>
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
               <rect x="3" y="3" width="10" height="10" />
             </svg>
           </button>
-          <button class="shell-window-btn shell-window-btn-close" on:click={closeWindow} title={t('window.close')} aria-label={t('window.close')}>
-            <CloseIcon size={14} />
+          <button class="shell-window-btn shell-window-btn-close" onclick={closeWindow} title={t('window.close')} aria-label={t('window.close')}>
+            <MdIcon name="close" size={16} />
           </button>
         </div>
       {/if}
@@ -858,133 +826,346 @@
     <ConfirmDialog />
   </div>
 {:else}
-  <Header
-    platformName={tLocale('common.appName')}
-    href="#/"
-    uiShellAriaLabel={tLocale('common.appName')}
-    bind:isSideNavOpen
-    data-tauri-drag-region
-  >
-    <!-- 录制状态（点击暂停/恢复） -->
-    <HeaderGlobalAction
-      icon={isRecording && !isPaused ? RecordingFilledIcon : isPaused ? PlayIcon : RecordingIcon}
-      aria-label={isPaused ? tLocale('sidebar.resume') : tLocale('sidebar.pause')}
-      title={(isRecording && !isPaused ? tLocale('sidebar.recordingStatus') + ' · ' : isPaused ? tLocale('sidebar.recordingStatus') + ' · ' : '') + (isPaused ? tLocale('sidebar.resume') : tLocale('sidebar.pause'))}
-      on:click={toggleRecording}
-    />
-    <!-- 语言切换 -->
-    <OverflowMenu
-      direction="top"
-      flipped={true}
-      icon={TranslateIcon}
-      iconDescription={tLocale('sidebar.localeButtonTitle')}
-    >
-      {#each localeChoices as option (option.value)}
-        <OverflowMenuItem
-          icon={currentLocale === option.value ? CheckmarkIcon : undefined}
-          text="{option.label} · {tLocale(option.labelKey)}"
-          primaryFocus={currentLocale === option.value}
-          on:click={() => selectLocale(option.value)}
-        />
-      {/each}
-    </OverflowMenu>
-    <!-- 主题循环（跟随系统 / 浅色 / 深色） -->
-    <HeaderGlobalAction
-      icon={theme === 'system' ? LaptopIcon : theme === 'light' ? LightIcon : AsleepIcon}
-      aria-label={tLocale('sidebar.themeTitle.' + theme)}
-      title={tLocale('sidebar.themeTitle.' + theme)}
-      on:click={cycleTheme}
-    />
-    <!-- 窗口控制（仅 Windows/Linux，macOS 用原生控件） -->
-    {#if platform && platform !== 'macos'}
-      <div class="shell-window-controls" role="group" aria-label="Window">
-        <button class="shell-window-btn" on:click={minimizeWindow} title={t('window.minimize')} aria-label={t('window.minimize')}>
-          <SubtractIcon size={14} />
-        </button>
-        <button class="shell-window-btn" on:click={maximizeWindow} title={windowMaximized ? t('window.restore') : t('window.maximize')} aria-label={windowMaximized ? t('window.restore') : t('window.maximize')}>
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
-            {#if windowMaximized}
-              <rect x="5" y="3" width="8" height="8" />
-              <path d="M3 6V13h8" />
-            {:else}
-              <rect x="3" y="3" width="10" height="10" />
-            {/if}
-          </svg>
-        </button>
-        <button class="shell-window-btn shell-window-btn-close" on:click={closeWindow} title={t('window.close')} aria-label={t('window.close')}>
-          <CloseIcon size={14} />
-        </button>
-      </div>
-    {/if}
-  </Header>
-
-  <SideNav ariaLabel={tLocale('common.appName')} isOpen={isSideNavOpen} border={true}>
-    <SideNavItems>
-      {#each shellNavItems as item (item.path)}
-        <SideNavLink
-          href={'#' + item.path}
-          icon={item.icon}
-          isSelected={shellActiveStates[item.path]}
-          text={tLocale(item.labelKey)}
+  <!-- MD 应用壳：顶栏（拖拽区 + 动作区 + 窗口控制）+ 常驻导航抽屉 + 内容滚动区 -->
+  <div class="md-shell">
+    <header class="md-app-bar" data-tauri-drag-region style="-webkit-app-region: drag;">
+      <button
+        class="md-icon-btn"
+        onclick={() => (isSideNavOpen = !isSideNavOpen)}
+        title={tLocale('common.appName')}
+        aria-label={tLocale('common.appName')}
+      >
+        <MdIcon name="menu" size={22} />
+      </button>
+      <span class="md-app-bar-title">{tLocale('common.appName')}</span>
+      <div class="md-app-bar-actions">
+        <!-- 录制状态（点击暂停/恢复） -->
+        <button
+          class="md-icon-btn"
+          onclick={toggleRecording}
+          aria-label={isPaused ? tLocale('sidebar.resume') : tLocale('sidebar.pause')}
+          title={(isRecording && !isPaused ? tLocale('sidebar.recordingStatus') + ' · ' : isPaused ? tLocale('sidebar.recordingStatus') + ' · ' : '') + (isPaused ? tLocale('sidebar.resume') : tLocale('sidebar.pause'))}
         >
-          {tLocale(item.labelKey)}
-        </SideNavLink>
-      {/each}
-    </SideNavItems>
-  </SideNav>
-
-  <Content>
-    <!-- 背景图层（设置-外观配置；图片全强度 + 半透明遮罩控制显隐） -->
-    {#if backgroundImage}
-      <div class="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div
-          class="absolute inset-[-20px] bg-cover bg-center bg-no-repeat"
-          style="background-image: url({backgroundImage}); filter: blur({backgroundBlur === 0 ? 0 : backgroundBlur === 1 ? 8 : 16}px);"
-        ></div>
-        <div
-          class="absolute inset-0 transition-opacity duration-300"
-          style="opacity: {Math.max(0, 1 - backgroundOpacity)}; background: var(--cds-background);"
-        ></div>
-      </div>
-    {/if}
-
-    <div class="app-content-scroll relative z-10 flex flex-col">
-      {#if authGate === 'grace'}
-        <div class="px-4 pt-3">
-          <InlineNotification kind="warning" title={tLocale('auth.graceNotice')} hideCloseButton={true} timeout={0}>
-            <NotificationActionButton slot="actions" on:click={() => push('/auth')}>
-              {tLocale('auth.reloginAction')}
-            </NotificationActionButton>
-          </InlineNotification>
+          <MdIcon name={isRecording && !isPaused ? 'radio_button_checked' : isPaused ? 'play_arrow' : 'fiber_manual_record'} size={22} />
+        </button>
+        <!-- 语言切换 -->
+        <div class="md-menu-host">
+          <button
+            class="md-icon-btn"
+            onclick={() => (isLocaleMenuOpen = !isLocaleMenuOpen)}
+            aria-label={tLocale('sidebar.localeButtonTitle')}
+            title={tLocale('sidebar.localeButtonTitle')}
+          >
+            <MdIcon name="translate" size={22} />
+          </button>
+          {#if isLocaleMenuOpen}
+            <!-- svelte-ignore a11y-no-static-element-interactions -->
+            <div class="md-menu-scrim" onclick={() => (isLocaleMenuOpen = false)}></div>
+            <div class="md-menu-surface" role="menu">
+              {#each localeChoices as option (option.value)}
+                <button
+                  class="md-menu-item"
+                  class:md-menu-item-selected={currentLocale === option.value}
+                  role="menuitem"
+                  onclick={() => { isLocaleMenuOpen = false; selectLocale(option.value); }}
+                >
+                  <MdIcon name={currentLocale === option.value ? 'check' : ''} size={18} />
+                  <span>{option.label} · {tLocale(option.labelKey)}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
-      {/if}
-      <div>
-        {#key currentLocale}
-          <Router {routes} />
-        {/key}
+        <!-- 主题循环（跟随系统 / 浅色 / 深色） -->
+        <button
+          class="md-icon-btn"
+          onclick={cycleTheme}
+          aria-label={tLocale('sidebar.themeTitle.' + theme)}
+          title={tLocale('sidebar.themeTitle.' + theme)}
+        >
+          <MdIcon name={theme === 'system' ? 'desktop_windows' : theme === 'light' ? 'light_mode' : 'dark_mode'} size={22} />
+        </button>
+        <!-- 窗口控制（仅 Windows/Linux，macOS 用原生控件） -->
+        {#if platform && platform !== 'macos'}
+          <div class="shell-window-controls" role="group" aria-label="Window">
+            <button class="shell-window-btn" onclick={minimizeWindow} title={t('window.minimize')} aria-label={t('window.minimize')}>
+              <MdIcon name="remove" size={16} />
+            </button>
+            <button class="shell-window-btn" onclick={maximizeWindow} title={windowMaximized ? t('window.restore') : t('window.maximize')} aria-label={windowMaximized ? t('window.restore') : t('window.maximize')}>
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+                {#if windowMaximized}
+                  <rect x="5" y="3" width="8" height="8" />
+                  <path d="M3 6V13h8" />
+                {:else}
+                  <rect x="3" y="3" width="10" height="10" />
+                {/if}
+              </svg>
+            </button>
+            <button class="shell-window-btn shell-window-btn-close" onclick={closeWindow} title={t('window.close')} aria-label={t('window.close')}>
+              <MdIcon name="close" size={16} />
+            </button>
+          </div>
+        {/if}
       </div>
+    </header>
+
+    <div class="md-shell-body">
+      <nav class="md-drawer" class:md-drawer-collapsed={!isSideNavOpen} aria-label={tLocale('common.appName')}>
+        {#each shellNavItems as item (item.path)}
+          <a
+            href={'#' + item.path}
+            class="md-drawer-item"
+            class:md-drawer-item-active={shellActiveStates[item.path]}
+            title={tLocale(item.labelKey)}
+          >
+            <MdIcon name={item.icon} size={20} />
+            {#if isSideNavOpen}
+              <span>{tLocale(item.labelKey)}</span>
+            {/if}
+          </a>
+        {/each}
+      </nav>
+
+      <main class="md-content">
+        <!-- 背景图层（设置-外观配置；图片全强度 + 半透明遮罩控制显隐） -->
+        {#if backgroundImage}
+          <div class="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+            <div
+              class="absolute inset-[-20px] bg-cover bg-center bg-no-repeat"
+              style="background-image: url({backgroundImage}); filter: blur({backgroundBlur === 0 ? 0 : backgroundBlur === 1 ? 8 : 16}px);"
+            ></div>
+            <div
+              class="absolute inset-0 transition-opacity duration-300"
+              style="opacity: {Math.max(0, 1 - backgroundOpacity)}; background: var(--md-theme-background);"
+            ></div>
+          </div>
+        {/if}
+
+        <div class="app-content-scroll relative z-10 flex flex-col">
+          {#if authGate === 'grace'}
+            <div class="px-4 pt-3">
+              <div class="md-banner" role="alert">
+                <MdIcon name="warning" size={20} />
+                <span>{tLocale('auth.graceNotice')}</span>
+                <button class="md-text-btn" onclick={() => push('/auth')}>{tLocale('auth.reloginAction')}</button>
+              </div>
+            </div>
+          {/if}
+          <div>
+            {#key currentLocale}
+              <Router {routes} />
+            {/key}
+          </div>
+        </div>
+      </main>
     </div>
-  </Content>
+  </div>
   <Toast />
   <ConfirmDialog />
 {/if}
 
 <style>
-  /* Content 内滚动容器：Carbon Header 固定 3rem，内容区独立滚动
-     （迁移时丢失了旧 .app-shell-main-scroll 的滚动职责，导致高页面被裁切） */
+  /* ═══ MD 应用壳 ═══ */
+  .md-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--md-theme-background);
+    color: var(--md-theme-on-surface);
+  }
+
+  /* 顶栏：MD top app bar（48px），整条为 Tauri 拖拽区 */
+  .md-app-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    height: 3rem;
+    padding: 0 0.5rem;
+    flex-shrink: 0;
+    background: var(--md-theme-surface);
+    border-bottom: 1px solid var(--md-theme-border-subtle);
+    -webkit-app-region: drag;
+  }
+
+  .md-app-bar-title {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-inline-start: 0.25rem;
+  }
+
+  .md-app-bar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+    margin-inline-start: auto;
+    -webkit-app-region: no-drag;
+  }
+
+  /* 图标按钮：MD icon button（圆形 hover 态） */
+  .md-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--md-theme-on-surface);
+    cursor: pointer;
+  }
+
+  .md-icon-btn:hover {
+    background: var(--md-theme-border-subtle);
+  }
+
+  /* 语言菜单：锚定按钮下方的 MD menu surface */
+  .md-menu-host {
+    position: relative;
+  }
+
+  .md-menu-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+  }
+
+  .md-menu-surface {
+    position: absolute;
+    top: calc(100% + 4px);
+    inset-inline-end: 0;
+    z-index: 91;
+    min-width: 11rem;
+    padding: 0.5rem 0;
+    border-radius: var(--radius-md);
+    background: var(--md-theme-surface);
+    box-shadow:
+      0 5px 5px -3px rgba(0, 0, 0, 0.2),
+      0 8px 10px 1px rgba(0, 0, 0, 0.14),
+      0 3px 14px 2px rgba(0, 0, 0, 0.12);
+  }
+
+  .md-menu-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.875rem;
+    border: none;
+    background: transparent;
+    color: var(--md-theme-on-surface);
+    font-size: 0.875rem;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .md-menu-item:hover {
+    background: var(--md-theme-border-subtle);
+  }
+
+  .md-menu-item-selected {
+    color: var(--md-theme-primary);
+    font-weight: 500;
+  }
+
+  /* 导航抽屉：MD persistent navigation drawer（可折叠成窄条） */
+  .md-shell-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .md-drawer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    width: 15rem;
+    padding: 0.75rem 0.625rem;
+    flex-shrink: 0;
+    overflow: hidden auto;
+    background: var(--md-theme-background);
+    border-inline-end: 1px solid var(--md-theme-border-subtle);
+    transition: width 160ms ease;
+  }
+
+  .md-drawer-collapsed {
+    width: 3.5rem;
+  }
+
+  .md-drawer-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    height: 2.75rem;
+    padding: 0 1rem;
+    border-radius: var(--radius-full);
+    color: var(--md-theme-on-surface-medium);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .md-drawer-item:hover {
+    background: var(--md-theme-border-subtle);
+  }
+
+  .md-drawer-item-active {
+    background: var(--md-theme-primary-container);
+    color: var(--md-theme-on-primary-container);
+  }
+
+  .md-content {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Content 内滚动容器：顶栏固定 3rem，内容区独立滚动 */
   .app-content-scroll {
     height: calc(100vh - 3rem);
     overflow-y: auto;
     overflow-x: hidden;
   }
 
-  /* 壳层窗口控制按钮：置于 Carbon Header 内右侧，主区可点、不可触发拖拽 */
+  /* 宽幅提示条（MD banner 形态）：替代 Carbon InlineNotification */
+  .md-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--md-theme-border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--md-theme-surface-variant);
+    color: var(--md-theme-on-surface);
+    font-size: 0.875rem;
+  }
+
+  .md-text-btn {
+    margin-inline-start: auto;
+    padding: 0.375rem 0.75rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--md-theme-primary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .md-text-btn:hover {
+    background: var(--md-theme-border-subtle);
+  }
+
+  /* 壳层窗口控制按钮：置于 MD 顶栏右侧，主区可点、不可触发拖拽 */
   .shell-window-controls {
     display: flex;
     align-items: stretch;
     align-self: stretch;
     height: 3rem;
-    margin-left: auto;
+    margin-inline-start: 0.25rem;
     -webkit-app-region: no-drag;
   }
 
@@ -995,16 +1176,16 @@
     width: 2.75rem;
     border: none;
     background: transparent;
-    color: var(--cds-text-primary, #161616);
+    color: var(--md-theme-on-surface);
     cursor: pointer;
   }
 
   .shell-window-btn:hover {
-    background: var(--cds-layer-hover, rgba(0, 0, 0, 0.06));
+    background: var(--md-theme-border-subtle);
   }
 
   .shell-window-btn-close:hover {
-    background: #da1e28;
+    background: #b00020;
     color: #fff;
   }
 

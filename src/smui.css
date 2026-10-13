@@ -1,0 +1,8 @@
+/* SMUI v8 预编译样式集中引入：bare.css 不在各包 exports 内（Vite 严格校验会拒
+   '@smui/x/bare.css' 子路径），改用相对 node_modules 的文件路径绕开包导出解析。
+   集中一处与 main.ts 的「组件库全局 CSS」位置约定对齐；新增 SMUI 组件时在此补一行。
+   注意：@smui/common 无 bare.css（其样式并入各组件包）。 */
+@import '../node_modules/@smui/button/bare.css';
+@import '../node_modules/@smui/switch/bare.css';
+@import '../node_modules/@smui/dialog/bare.css';
+@import '../node_modules/@smui/list/bare.css';

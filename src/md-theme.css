@@ -1,0 +1,103 @@
+/* ══════════════════════════════════════════════════════════
+   Material Design 令牌层（SMUI v8 / MDC）
+   ─ app 级令牌 --md-theme-*：明（:root）暗（html.dark）两套，业务样式统一消费这里
+   ─ MDC 级映射：--mdc-theme-* 与常用组件令牌指向 app 级令牌，SMUI 组件自动换肤
+   ─ --cds-* 兼容垫片：迁移期把遗留 var(--cds-*) 指到 MD 值，逐文件迁移后删除
+   ══════════════════════════════════════════════════════════ */
+:root {
+  /* ── app 级令牌（浅色）── Material Blue 主色，视觉延续既有业务蓝 */
+  --md-theme-primary: #1976d2;
+  --md-theme-on-primary: #ffffff;
+  --md-theme-primary-dim: #1565c0;
+  --md-theme-primary-container: #d6e7ff;
+  --md-theme-on-primary-container: #0d3c78;
+  --md-theme-secondary: #018786;
+  --md-theme-background: #fafafa;
+  --md-theme-surface: #ffffff;
+  --md-theme-surface-variant: #f5f5f5;
+  --md-theme-error: #b00020;
+  --md-theme-on-error: #ffffff;
+  --md-theme-on-surface: rgba(0, 0, 0, 0.87);
+  --md-theme-on-surface-medium: rgba(0, 0, 0, 0.6);
+  --md-theme-on-surface-disabled: rgba(0, 0, 0, 0.38);
+  --md-theme-border-subtle: rgba(0, 0, 0, 0.12);
+  --md-theme-border-strong: rgba(0, 0, 0, 0.38);
+  --md-theme-overlay: rgba(0, 0, 0, 0.32);
+
+  /* ── MDC 主题变量 ── */
+  --mdc-theme-primary: var(--md-theme-primary);
+  --mdc-theme-on-primary: var(--md-theme-on-primary);
+  --mdc-theme-secondary: var(--md-theme-secondary);
+  --mdc-theme-on-secondary: var(--md-theme-on-primary);
+  --mdc-theme-background: var(--md-theme-background);
+  --mdc-theme-surface: var(--md-theme-surface);
+  --mdc-theme-error: var(--md-theme-error);
+  --mdc-theme-on-error: var(--md-theme-on-error);
+  --mdc-theme-on-surface: var(--md-theme-on-surface);
+  --mdc-theme-on-background: var(--md-theme-on-surface);
+  --mdc-theme-text-primary-on-background: var(--md-theme-on-surface);
+  --mdc-theme-text-secondary-on-background: var(--md-theme-on-surface-medium);
+  --mdc-theme-text-disabled-on-background: var(--md-theme-on-surface-disabled);
+
+  /* ── MDC 组件令牌（不回退主题变量的高可见部分）── */
+  --mdc-text-button-label-text-color: var(--md-theme-primary);
+  --mdc-outlined-button-label-text-color: var(--md-theme-primary);
+  --mdc-outlined-button-outline-color: var(--md-theme-border-subtle);
+  --mdc-filled-button-container-color: var(--md-theme-primary-container);
+  --mdc-filled-button-label-text-color: var(--md-theme-on-primary-container);
+  --mdc-protected-button-container-color: var(--md-theme-primary);
+  --mdc-protected-button-label-text-color: var(--md-theme-on-primary);
+  --mdc-outlined-text-field-outline-color: var(--md-theme-border-strong);
+  --mdc-outlined-text-field-hover-outline-color: var(--md-theme-on-surface);
+  --mdc-outlined-text-field-focus-outline-color: var(--md-theme-primary);
+  --mdc-outlined-text-field-caret-color: var(--md-theme-primary);
+  --mdc-filled-text-field-active-indicator-color: var(--md-theme-primary);
+  --mdc-switch-selected-track-color: var(--md-theme-primary);
+  --mdc-switch-selected-hover-track-color: var(--md-theme-primary);
+  --mdc-switch-selected-focus-track-color: var(--md-theme-primary);
+  --mdc-switch-selected-pressed-track-color: var(--md-theme-primary);
+  --mdc-dialog-scrim-color: var(--md-theme-overlay);
+  --mdc-dialog-container-color: var(--md-theme-surface);
+  --mdc-snackbar-container-color: #333333;
+  --mdc-snackbar-label-text-color: rgba(255, 255, 255, 0.95);
+  --mdc-tab-indicator-active-indicator-color: var(--md-theme-primary);
+  --mdc-tab-text-label-color: var(--md-theme-on-surface-medium);
+  --mdc-chip-outline-color: var(--md-theme-border-subtle);
+  --mdc-menu-surface-list-max-height: 22rem;
+  --md-linear-progress-active-indicator-color: var(--md-theme-primary);
+  --md-circular-progress-active-indicator-color: var(--md-theme-primary);
+  --mdc-radio-selected-hover-icon-color: var(--md-theme-primary);
+  --mdc-radio-selected-focus-icon-color: var(--md-theme-primary);
+  --mdc-radio-selected-pressed-icon-color: var(--md-theme-primary);
+  --mdc-radio-selected-icon-color: var(--md-theme-primary);
+  --mdc-segmented-button-selected-ink-color: var(--md-theme-primary);
+
+  /* ── Carbon 兼容垫片（迁移期）：遗留 var(--cds-*) 全部指向 MD 值 ── */
+  --cds-background: var(--md-theme-background);
+  --cds-layer: var(--md-theme-surface);
+  --cds-layer-alternate: var(--md-theme-surface-variant);
+  --cds-border-subtle: var(--md-theme-border-subtle);
+  --cds-border-strong: var(--md-theme-border-strong);
+  --cds-text-primary: var(--md-theme-on-surface);
+}
+
+/* ── app 级令牌（深色）── MD2 深色表面层次 + 提亮的主色 */
+.dark {
+  --md-theme-primary: #90caf9;
+  --md-theme-on-primary: rgba(0, 0, 0, 0.87);
+  --md-theme-primary-dim: #64b5f6;
+  --md-theme-primary-container: #0d3c78;
+  --md-theme-on-primary-container: #d6e7ff;
+  --md-theme-secondary: #03dac6;
+  --md-theme-background: #121212;
+  --md-theme-surface: #1e1e1e;
+  --md-theme-surface-variant: #2a2a2a;
+  --md-theme-error: #cf6679;
+  --md-theme-on-error: #000000;
+  --md-theme-on-surface: rgba(255, 255, 255, 0.92);
+  --md-theme-on-surface-medium: rgba(255, 255, 255, 0.66);
+  --md-theme-on-surface-disabled: rgba(255, 255, 255, 0.38);
+  --md-theme-border-subtle: rgba(255, 255, 255, 0.14);
+  --md-theme-border-strong: rgba(255, 255, 255, 0.42);
+  --md-theme-overlay: rgba(0, 0, 0, 0.6);
+}

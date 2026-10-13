@@ -13,21 +13,21 @@
    ══════════════════════════════════════════════════════════ */
 :root {
   color-scheme: light;
-  font-family: "IBM Plex Sans", "IBM Plex Sans Arabic", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI Variable Text", "Microsoft YaHei", sans-serif;
+  font-family: "Roboto", "Noto Sans SC", "Noto Sans Arabic", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI Variable Text", "Microsoft YaHei", sans-serif;
   font-size: 16px;
   line-height: 1.6;
   font-weight: 400;
-  /* Carbon 令牌桥：浅色取 g10，深色取 g90（由 <Theme> 在 <html> 上切换，自动跟随） */
-  --editorial-shell-bg: var(--cds-background);
-  --editorial-surface-featured: var(--cds-layer);
-  --editorial-surface-subtle: var(--cds-layer-alternate);
+  /* MD 令牌桥：明暗由 html.dark 切换，值在 md-theme.css 定义（--md-theme-* → --mdc-theme-*） */
+  --editorial-shell-bg: var(--md-theme-background);
+  --editorial-surface-featured: var(--md-theme-surface);
+  --editorial-surface-subtle: var(--md-theme-surface-variant);
   /* 操作型页面（设置/概览页头等）满宽铺开，与 page-shell 类页面一致；
      宽度由页面内部网格吸收。阅读型内容保留行长上限以保证可读性。 */
   --content-width-operation: none;
   --content-width-reading: 84rem;
-  --surface-border-subtle: var(--cds-border-subtle);
-  --surface-border-default: var(--cds-border-subtle);
-  --surface-border-emphasis: var(--cds-border-strong);
+  --surface-border-subtle: var(--md-theme-border-subtle);
+  --surface-border-default: var(--md-theme-border-subtle);
+  --surface-border-emphasis: var(--md-theme-border-strong);
 
   /* 圆角仅保留五档；胶囊档只用于圆点、开关、进度条和短徽标。 */
   --radius-xs: 4px;
@@ -41,8 +41,8 @@
   --space-section: 1.75rem;  /* 段落间距 */
   --space-block: 1rem;       /* 卡片内边距 */
 
-  color: var(--cds-text-primary);
-  background-color: var(--cds-background);
+  color: var(--md-theme-on-surface);
+  background-color: var(--md-theme-background);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -51,12 +51,12 @@
   -webkit-text-size-adjust: 100%;
 }
 
-/* 暗色主题：值已桥接 Carbon g90（上面的 var(--cds-*) 随 html[theme] 自动切换，
-   此块仅保留 color-scheme 与文字/底色的 Carbon 对齐值，供尚未迁移的 dark: 变体兜底）*/
+/* 暗色主题：令牌值在 md-theme.css 的 html.dark 块（--md-theme-*），此处仅保留
+   color-scheme 与文字/底色对齐，供尚未迁移的 dark: 变体兜底 */
 .dark {
   color-scheme: dark;
-  color: var(--cds-text-primary);
-  background-color: var(--cds-background);
+  color: var(--md-theme-on-surface);
+  background-color: var(--md-theme-background);
 }
 
 /* 滚动条样式 */
@@ -5087,4 +5087,27 @@
     grid-column: 1 / -1;
     justify-self: start;
   }
+}
+
+/* ═══ MD chip（SMUI chips 未用于静态标签场景；轻量等价物）═══ */
+.md-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 1.5rem;
+  padding: 0 0.75rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.md-chip-outlined {
+  border: 1px solid var(--md-theme-border-strong);
+  color: var(--md-theme-on-surface-medium);
+}
+
+.md-chip-tonal {
+  background: var(--md-theme-primary-container);
+  color: var(--md-theme-on-primary-container);
 }
