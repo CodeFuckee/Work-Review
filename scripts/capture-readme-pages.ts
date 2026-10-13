@@ -711,17 +711,17 @@ async function captureSettingsTab(
 ): Promise<void> {
   // 漂移守卫：设置页页签增删（如桌宠移除）曾让数字索引整体错位且无报错，
   // 截图整体拍错页签。索引越界时立刻失败并提示同步本文件的 settingsTabs
-  const tabCount = await page.locator('.bx--tabs--container .bx--tabs__nav-link, .bx--tabs__nav-link').count();
+  // MD 迁移：SMUI Tab（mdc-tab 类），选中态为 mdc-tab--active
+  const tabCount = await page.locator('.settings-tab-strip .mdc-tab').count();
   if (tabIndex >= tabCount) {
     throw new Error(
       `设置页签索引 ${tabIndex} 超出实际页签数 ${tabCount}——Settings.svelte 的 tabs 已变更，请同步本文件的 settingsTabs 列表`
     );
   }
-  const tab = page.locator('.bx--tabs__nav-item').nth(tabIndex);
+  const tab = page.locator('.settings-tab-strip .mdc-tab').nth(tabIndex);
   await tab.click();
-  // 选中类挂在 li（bx--tabs__nav-item--selected），点击锚点 a（role=tab）亦可
   await page.waitForFunction(
-    (index) => document.querySelectorAll('.bx--tabs__nav-item')[index]?.classList.contains('bx--tabs__nav-item--selected') ?? false,
+    (index) => document.querySelectorAll('.settings-tab-strip .mdc-tab')[index]?.classList.contains('mdc-tab--active') ?? false,
     tabIndex,
   );
   await waitForStablePage(page, '.settings-carbon-panel, .settings-carbon-card');
@@ -883,9 +883,9 @@ async function main(): Promise<void> {
 
       if (process.env.CAPTURE_DEBUG) {
         console.log('[debug-tabs]', await page.evaluate(() => {
-          const tabs = document.querySelector('.bx--tabs');
-          if (!tabs) return 'NO .bx--tabs';
-          const items = [...document.querySelectorAll('.bx--tabs__nav-link')].map(a => a.textContent.trim());
+          const tabs = document.querySelector('.settings-tab-strip');
+          if (!tabs) return 'NO .settings-tab-strip';
+          const items = [...document.querySelectorAll('.settings-tab-strip .mdc-tab')].map(a => a.textContent.trim());
           const panels = document.querySelectorAll('[role=tabpanel]').length;
           return JSON.stringify({ itemCount: items.length, items: items.slice(0, 9), panels, tabsH: (tabs as HTMLElement).offsetHeight });
         }));
