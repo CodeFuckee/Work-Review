@@ -32,8 +32,6 @@ use std::time::{Duration, Instant};
 use winapi::shared::windef::RECT;
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 use work_review_core::categorize::infer_browser_page_hint;
-#[cfg(target_os = "macos")]
-use work_review_core::categorize::is_merged_domain;
 use work_review_core::categorize::{
     is_browser_app, normalize_browser_url_candidate, normalize_display_app_name,
 };
@@ -1754,19 +1752,12 @@ mod tests {
         firefox_family_profile_dir_from_ini, is_current_process_owner,
         normalize_macos_frontmost_app_name, parse_gnome_focused_window_dbus_output,
         parse_hyprland_window_bounds, parse_kdotool_geometry_output,
-        parse_macos_window_bounds_fields, parse_xdotool_geometry_shell_output,
-        resolve_browser_url_for_window_linux, should_run_windows_browser_url_fallback,
-        BrowserUrlCacheKey, BrowserUrlProtection, BrowserUrlProtectionConfig,
-        BrowserUrlQueryDecision, BrowserUrlQueryTicket, LatestOnlySlot, WindowBounds,
+        parse_xdotool_geometry_shell_output, resolve_browser_url_for_window_linux,
+        should_run_windows_browser_url_fallback, BrowserUrlCacheKey, BrowserUrlProtection,
+        BrowserUrlProtectionConfig, BrowserUrlQueryDecision, BrowserUrlQueryTicket, LatestOnlySlot,
+        WindowBounds,
     };
     use std::path::Path;
-    #[cfg(target_os = "macos")]
-    use std::{
-        env, fs,
-        process::Command,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
     #[test]
     fn current_process_owner当前进程拥有的浮动窗口应被识别() {
         assert!(is_current_process_owner(Some(24418.0), 24418));
@@ -2030,19 +2021,6 @@ mod tests {
         assert_eq!(slot.replace(2), Some(1));
         assert_eq!(slot.take(), Some(2));
         assert_eq!(slot.take(), None);
-    }
-
-    #[test]
-    fn macos前台窗口坐标字段应解析为窗口边界() {
-        assert_eq!(
-            parse_macos_window_bounds_fields(Some("1512"), Some("64"), Some("1512"), Some("982"),),
-            Some(WindowBounds {
-                x: 1512,
-                y: 64,
-                width: 1512,
-                height: 982,
-            })
-        );
     }
 
     #[test]
@@ -2463,30 +2441,6 @@ pub fn get_active_window_fast() -> Result<ActiveWindow> {
     get_active_window_with_options(false)
 }
 
-#[cfg(any(target_os = "macos", test))]
-fn parse_macos_window_bounds_fields(
-    x: Option<&str>,
-    y: Option<&str>,
-    width: Option<&str>,
-    height: Option<&str>,
-) -> Option<WindowBounds> {
-    let x = x?.trim().parse::<i32>().ok()?;
-    let y = y?.trim().parse::<i32>().ok()?;
-    let width = width?.trim().parse::<u32>().ok()?;
-    let height = height?.trim().parse::<u32>().ok()?;
-
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    Some(WindowBounds {
-        x,
-        y,
-        width,
-        height,
-    })
-}
-
 #[cfg(target_os = "macos")]
 fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWindow> {
     use core_foundation::array::{CFArrayGetCount, CFArrayGetValueAtIndex};
@@ -2737,145 +2691,6 @@ fn macos_executable_path_for_pid(pid: i32) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&buffer[..written as usize]).into_owned())
-}
-#[cfg(target_os = "macos")]
-fn find_frontmost_window_bounds(owner_name: &str, window_title: &str) -> Option<WindowBounds> {
-    use core_foundation::array::{CFArrayGetCount, CFArrayGetValueAtIndex};
-    use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
-    use core_foundation::dictionary::CFDictionaryRef;
-    use core_foundation::number::CFNumberRef;
-    use core_foundation::string::CFString;
-    use core_graphics::display::{
-        kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
-        CGWindowListCopyWindowInfo,
-    };
-
-    let owner_name = owner_name.trim();
-    if owner_name.is_empty() {
-        return None;
-    }
-
-    let target_owner = owner_name.to_lowercase();
-    let target_title = window_title.trim();
-
-    unsafe {
-        let window_list = CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-            kCGNullWindowID,
-        );
-        if window_list.is_null() {
-            return None;
-        }
-
-        let count = CFArrayGetCount(window_list as _);
-        let mut fallback_match: Option<WindowBounds> = None;
-
-        for i in 0..count {
-            let dict = CFArrayGetValueAtIndex(window_list as _, i) as CFDictionaryRef;
-            if dict.is_null() {
-                continue;
-            }
-
-            let owner_key = CFString::new("kCGWindowOwnerName");
-            let mut owner_ref: CFTypeRef = std::ptr::null();
-            if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
-                dict,
-                owner_key.as_CFTypeRef() as *const _,
-                &mut owner_ref,
-            ) == 0
-                || owner_ref.is_null()
-            {
-                continue;
-            }
-
-            let owner_cfstr =
-                core_foundation::string::CFString::wrap_under_get_rule(owner_ref as _);
-            let candidate_owner = owner_cfstr.to_string();
-            if candidate_owner.trim().to_lowercase() != target_owner {
-                continue;
-            }
-
-            let layer_key = CFString::new("kCGWindowLayer");
-            let mut layer_ref: CFTypeRef = std::ptr::null();
-            if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
-                dict,
-                layer_key.as_CFTypeRef() as *const _,
-                &mut layer_ref,
-            ) == 0
-                || layer_ref.is_null()
-            {
-                continue;
-            }
-
-            let mut layer: i32 = 0;
-            if !core_foundation::number::CFNumberGetValue(
-                layer_ref as CFNumberRef,
-                core_foundation::number::kCFNumberSInt32Type,
-                &mut layer as *mut i32 as *mut _,
-            ) || layer != 0
-            {
-                continue;
-            }
-
-            let bounds_key = CFString::new("kCGWindowBounds");
-            let mut bounds_ref: CFTypeRef = std::ptr::null();
-            if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
-                dict,
-                bounds_key.as_CFTypeRef() as *const _,
-                &mut bounds_ref,
-            ) == 0
-                || bounds_ref.is_null()
-            {
-                continue;
-            }
-
-            let bounds_dict = bounds_ref as CFDictionaryRef;
-            let x = get_cf_dict_number(bounds_dict, "X").unwrap_or(0.0) as i32;
-            let y = get_cf_dict_number(bounds_dict, "Y").unwrap_or(0.0) as i32;
-            let width = get_cf_dict_number(bounds_dict, "Width")
-                .unwrap_or(0.0)
-                .max(0.0) as u32;
-            let height = get_cf_dict_number(bounds_dict, "Height")
-                .unwrap_or(0.0)
-                .max(0.0) as u32;
-            if width == 0 || height == 0 {
-                continue;
-            }
-
-            let candidate_bounds = WindowBounds {
-                x,
-                y,
-                width,
-                height,
-            };
-
-            let name_key = CFString::new("kCGWindowName");
-            let mut name_ref: CFTypeRef = std::ptr::null();
-            let candidate_title = if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
-                dict,
-                name_key.as_CFTypeRef() as *const _,
-                &mut name_ref,
-            ) != 0
-                && !name_ref.is_null()
-            {
-                let name_cfstr =
-                    core_foundation::string::CFString::wrap_under_get_rule(name_ref as _);
-                name_cfstr.to_string()
-            } else {
-                String::new()
-            };
-
-            if !target_title.is_empty() && candidate_title.trim() == target_title {
-                CFRelease(window_list as _);
-                return Some(candidate_bounds);
-            }
-
-            fallback_match.get_or_insert(candidate_bounds);
-        }
-
-        CFRelease(window_list as _);
-        fallback_match
-    }
 }
 
 /// 规范化 Electron 应用名称
