@@ -2490,7 +2490,7 @@ fn parse_macos_window_bounds_fields(
 #[cfg(target_os = "macos")]
 fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWindow> {
     use core_foundation::array::{CFArrayGetCount, CFArrayGetValueAtIndex};
-    use core_foundation::base::CFTypeRef;
+    use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::dictionary::CFDictionaryRef;
     use core_foundation::string::CFString;
     use core_graphics::display::{
