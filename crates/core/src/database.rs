@@ -5117,7 +5117,10 @@ impl Database {
             let uid = if row.uid.is_empty() {
                 // 防御：载荷缺 uid 时以 (machine, ts, app, title) 兜底，
                 // 保证同一来源行稳定映射到同一 uid（正常载荷恒带 uid）
-                format!("{machine_id}:{}|{}|{}", row.timestamp, row.app_name, row.window_title)
+                format!(
+                    "{machine_id}:{}|{}|{}",
+                    row.timestamp, row.app_name, row.window_title
+                )
             } else {
                 row.uid.clone()
             };
@@ -5199,7 +5202,11 @@ impl Database {
     /// 推送游标：只取本机行（origin='local'）中新增（id 大于游标）或变脏
     /// （监控合并后需重推最新状态）的记录，按 id 升序分批。云端行永不入选，
     /// 否则拉回的数据再推出去就是死循环。
-    pub fn get_local_activities_for_sync(&self, after_id: i64, limit: usize) -> Result<Vec<Activity>> {
+    pub fn get_local_activities_for_sync(
+        &self,
+        after_id: i64,
+        limit: usize,
+    ) -> Result<Vec<Activity>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
@@ -5981,7 +5988,7 @@ mod tests {
             fallback_reason: None,
             created_at: 1_000,
             updated_at: 0,
-                        origin_machine: None,
+            origin_machine: None,
         })
         .expect("保存 zh-CN 报告失败");
         db.save_report(&DailyReport {
@@ -5993,7 +6000,7 @@ mod tests {
             fallback_reason: None,
             created_at: 2_000,
             updated_at: 0,
-                        origin_machine: None,
+            origin_machine: None,
         })
         .expect("保存 en 报告失败");
 
@@ -6031,9 +6038,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         })
         .expect("插入活动失败");
 
@@ -6084,9 +6091,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
         db.insert_activity(&base).expect("插入缺URL记录失败");
 
@@ -6142,9 +6149,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6161,9 +6168,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/workreview/shot-b.jpg".to_string()),
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6180,9 +6187,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -6247,9 +6254,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
 
         let inserted_id = db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6292,9 +6299,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/old.jpg".to_string()),
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6311,9 +6318,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/new.jpg".to_string()),
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -6364,9 +6371,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6383,9 +6390,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6402,9 +6409,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -6460,9 +6467,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6479,9 +6486,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -6536,9 +6543,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6555,9 +6562,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -6618,9 +6625,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6637,9 +6644,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -6688,9 +6695,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6707,9 +6714,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -6749,9 +6756,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6768,9 +6775,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6787,9 +6794,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6838,9 +6845,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6857,9 +6864,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6876,9 +6883,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6936,9 +6943,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             })
             .expect("插入测试数据失败");
         }
@@ -6975,9 +6982,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         })
         .expect("插入测试数据失败");
 
@@ -7026,9 +7033,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: Some("https://cdn.example.com/code-1110.jpg".to_string()),
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         })
         .expect("插入测试数据失败");
 
@@ -7068,9 +7075,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             })
             .expect("插入测试数据失败");
         }
@@ -7110,9 +7117,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7129,9 +7136,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7148,9 +7155,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7167,9 +7174,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7229,9 +7236,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7248,9 +7255,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7267,9 +7274,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7315,9 +7322,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7334,9 +7341,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7381,9 +7388,9 @@ mod tests {
             semantic_confidence: Some(80),
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7425,9 +7432,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7464,9 +7471,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7503,9 +7510,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7543,9 +7550,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7562,9 +7569,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7581,9 +7588,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/review.jpg".to_string()),
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7674,9 +7681,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7693,9 +7700,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -7736,9 +7743,9 @@ mod tests {
                 semantic_confidence: Some(100),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7755,9 +7762,9 @@ mod tests {
                 semantic_confidence: Some(100),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -7804,9 +7811,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7823,9 +7830,9 @@ mod tests {
                 semantic_confidence: None,
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -7869,9 +7876,9 @@ mod tests {
             executable_path: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7910,9 +7917,9 @@ mod tests {
                 semantic_confidence: Some(75),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7929,9 +7936,9 @@ mod tests {
                 semantic_confidence: Some(70),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -7994,9 +8001,9 @@ mod tests {
                 semantic_confidence: Some(82),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -8013,9 +8020,9 @@ mod tests {
                 semantic_confidence: Some(80),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -8032,9 +8039,9 @@ mod tests {
                 semantic_confidence: Some(76),
                 screenshot_url: None,
                 uid: String::new(),
-                                machine_id: String::new(),
-                                origin: "local".to_string(),
-                                is_shadow: false,
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
             },
         ];
 
@@ -8074,7 +8081,7 @@ mod tests {
             fallback_reason: Some("请求失败，已回退到基础模板".to_string()),
             created_at: now,
             updated_at: 0,
-                        origin_machine: None,
+            origin_machine: None,
         })
         .expect("保存中文日报失败");
 
@@ -8087,7 +8094,7 @@ mod tests {
             fallback_reason: None,
             created_at: now + 1,
             updated_at: 0,
-                        origin_machine: None,
+            origin_machine: None,
         })
         .expect("保存英文日报失败");
 
@@ -8140,9 +8147,9 @@ mod tests {
             semantic_confidence: Some(88),
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         })
         .expect("插入活动失败");
 
@@ -8155,7 +8162,7 @@ mod tests {
             fallback_reason: Some("返回空内容，已回退到基础模板".to_string()),
             created_at: now,
             updated_at: 0,
-                        origin_machine: None,
+            origin_machine: None,
         })
         .expect("保存日报失败");
 
@@ -8200,9 +8207,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         }
     }
 
@@ -9402,10 +9409,7 @@ mod tests {
             .get_local_activities_for_sync(0, 10)
             .expect("推送游标查询失败");
         assert_eq!(rows.len(), 1);
-        assert!(
-            !rows[0].uid.is_empty(),
-            "本机新行应在插入时生成稳定 uid"
-        );
+        assert!(!rows[0].uid.is_empty(), "本机新行应在插入时生成稳定 uid");
         assert_eq!(rows[0].origin, "local");
         assert_eq!(rows[0].machine_id, "", "本机行 machine_id 由推送时回填");
         assert!(!rows[0].is_shadow);
@@ -9442,13 +9446,14 @@ mod tests {
         let timeline = db
             .get_timeline(&today, Some(100), None)
             .expect("时间线查询失败");
-        let imported: Vec<&Activity> = timeline
-            .iter()
-            .filter(|a| a.uid == "machB:u1")
-            .collect();
+        let imported: Vec<&Activity> = timeline.iter().filter(|a| a.uid == "machB:u1").collect();
         assert_eq!(imported.len(), 1, "同 uid 在时间线上只应出现一行");
         assert_eq!(imported[0].duration, 180, "时长应收敛到属主最新状态");
-        assert_eq!(imported[0].timestamp, base + 300, "合并移动后的时间戳应同步");
+        assert_eq!(
+            imported[0].timestamp,
+            base + 300,
+            "合并移动后的时间戳应同步"
+        );
         assert_eq!(
             imported[0].ocr_text.as_deref(),
             Some("补充的 OCR"),
@@ -9472,7 +9477,13 @@ mod tests {
 
         // 云端行永远不进推送游标（否则拉回的数据再推出去 = 死循环）
         db.insert_activities_remote(
-            &[sync_activity("machB:u1", now - 30, "Code", "远端编辑器", 60)],
+            &[sync_activity(
+                "machB:u1",
+                now - 30,
+                "Code",
+                "远端编辑器",
+                60,
+            )],
             "machB",
         )
         .expect("导入远端活动失败");
@@ -9516,9 +9527,7 @@ mod tests {
         db.insert_activity(&sync_activity("", base + 60, "Browser", "b", 60))
             .expect("插入旧行2失败");
 
-        let count = db
-            .backfill_local_machine_id("machA")
-            .expect("机器回填失败");
+        let count = db.backfill_local_machine_id("machA").expect("机器回填失败");
         assert_eq!(count, 2, "回填应覆盖全部本机旧行");
 
         let rows = db
@@ -9545,7 +9554,13 @@ mod tests {
         db.insert_activity(&sync_activity("", base, "SunloginClient", "远程桌面", 3600))
             .expect("插入远控行失败");
         db.insert_activities_remote(
-            &[sync_activity("machB:u1", base + 1800, "Code", "写代码", 1800)],
+            &[sync_activity(
+                "machB:u1",
+                base + 1800,
+                "Code",
+                "写代码",
+                1800,
+            )],
             "machB",
         )
         .expect("插入对方真实活动失败");
@@ -9555,9 +9570,7 @@ mod tests {
             .expect("影子标记失败");
         assert_eq!(shadowed, 1, "重叠时段的远控行应被标记为影子");
 
-        let rows = db
-            .get_local_activities_for_sync(0, 100)
-            .expect("查询失败");
+        let rows = db.get_local_activities_for_sync(0, 100).expect("查询失败");
         assert_eq!(rows[0].is_shadow, true);
         drop(db);
         remove_db_files(&db_path);
@@ -9571,13 +9584,25 @@ mod tests {
         let patterns = vec!["sunlogin".to_string()];
 
         // 场景1：远控行但对方时段无活动（间隔远超 ±5 分钟容差）
-        db.insert_activity(&sync_activity("", base + 100_000, "SunloginClient", "远程桌面", 600))
-            .expect("插入孤立远控行失败");
+        db.insert_activity(&sync_activity(
+            "",
+            base + 100_000,
+            "SunloginClient",
+            "远程桌面",
+            600,
+        ))
+        .expect("插入孤立远控行失败");
         // 场景2：非远控行与对方重叠（正常双机并行工作，不影子化）
         db.insert_activity(&sync_activity("", base, "Code", "写代码", 600))
             .expect("插入本机真实活动失败");
         db.insert_activities_remote(
-            &[sync_activity("machB:u1", base + 60, "IDEA", "远端写代码", 600)],
+            &[sync_activity(
+                "machB:u1",
+                base + 60,
+                "IDEA",
+                "远端写代码",
+                600,
+            )],
             "machB",
         )
         .expect("插入对方活动失败");
@@ -9587,9 +9612,7 @@ mod tests {
             .expect("影子标记失败");
         assert_eq!(shadowed, 0, "无重叠远控行与并行真实工作都不应影子化");
 
-        let rows = db
-            .get_local_activities_for_sync(0, 100)
-            .expect("查询失败");
+        let rows = db.get_local_activities_for_sync(0, 100).expect("查询失败");
         assert!(rows.iter().all(|r| !r.is_shadow));
         drop(db);
         remove_db_files(&db_path);
@@ -9606,7 +9629,13 @@ mod tests {
         db.insert_activity(&sync_activity("", now, "SunloginClient", "远程桌面", 600))
             .expect("插入本机远控行失败");
         db.insert_activities_remote(
-            &[sync_activity("machB:u1", now + 60, "Code", "对方写代码", 600)],
+            &[sync_activity(
+                "machB:u1",
+                now + 60,
+                "Code",
+                "对方写代码",
+                600,
+            )],
             "machB",
         )
         .expect("插入对方正常活动失败");
@@ -9638,7 +9667,13 @@ mod tests {
             .insert_activity(&sync_activity("", now, "Code", "本机编辑器", 60))
             .expect("插入本机活动失败");
         db.insert_activities_remote(
-            &[sync_activity("machB:u1", now - 10, "Code", "远端编辑器", 60)],
+            &[sync_activity(
+                "machB:u1",
+                now - 10,
+                "Code",
+                "远端编辑器",
+                60,
+            )],
             "machB",
         )
         .expect("导入远端同应用活动失败");

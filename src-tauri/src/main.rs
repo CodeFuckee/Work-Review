@@ -1168,9 +1168,9 @@ fn persist_previous_activity_backfill(
         semantic_confidence: Some(i32::from(classification.confidence)),
         screenshot_url: None,
         uid: String::new(),
-                machine_id: String::new(),
-                origin: "local".to_string(),
-                is_shadow: false,
+        machine_id: String::new(),
+        origin: "local".to_string(),
+        is_shadow: false,
     };
 
     match database.insert_activity(&activity) {
@@ -1892,9 +1892,9 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                         semantic_confidence: Some(i32::from(classification.confidence)),
                         screenshot_url: None,
                         uid: String::new(),
-                                                machine_id: String::new(),
-                                                origin: "local".to_string(),
-                                                is_shadow: false,
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
                     };
 
                     // 短暂获取锁写入数据库
@@ -2221,9 +2221,9 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                         semantic_confidence: Some(i32::from(classification.confidence)),
                         screenshot_url: None,
                         uid: String::new(),
-                                                machine_id: String::new(),
-                                                origin: "local".to_string(),
-                                                is_shadow: false,
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
                     })
                 } else {
                     // === 新建路径：正常截屏并保存 ===
@@ -2322,9 +2322,9 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                     semantic_confidence: Some(i32::from(classification.confidence)),
                                     screenshot_url: None,
                                     uid: String::new(),
-                                                                        machine_id: String::new(),
-                                                                        origin: "local".to_string(),
-                                                                        is_shadow: false,
+                                    machine_id: String::new(),
+                                    origin: "local".to_string(),
+                                    is_shadow: false,
                                 };
 
                                 let inserted = {
@@ -2502,9 +2502,9 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                             semantic_confidence: Some(i32::from(classification.confidence)),
                             screenshot_url: None,
                             uid: String::new(),
-                                                        machine_id: String::new(),
-                                                        origin: "local".to_string(),
-                                                        is_shadow: false,
+                            machine_id: String::new(),
+                            origin: "local".to_string(),
+                            is_shadow: false,
                         };
 
                         let inserted = {
@@ -2647,9 +2647,9 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                     semantic_confidence: Some(i32::from(classification.confidence)),
                     screenshot_url: None,
                     uid: String::new(),
-                                        machine_id: String::new(),
-                                        origin: "local".to_string(),
-                                        is_shadow: false,
+                    machine_id: String::new(),
+                    origin: "local".to_string(),
+                    is_shadow: false,
                 };
 
                 let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());

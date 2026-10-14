@@ -1024,7 +1024,10 @@ mod tests {
 
     #[test]
     fn is_remote_control_app_supports_custom_rules() {
-        assert!(is_remote_control_app("MyRemote Host", &["myremote".to_string()]));
+        assert!(is_remote_control_app(
+            "MyRemote Host",
+            &["myremote".to_string()]
+        ));
         assert!(!is_remote_control_app("Chrome", &["myremote".to_string()]));
         // 自定义规则为空串时不匹配一切
         assert!(!is_remote_control_app("Anything", &[String::new()]));

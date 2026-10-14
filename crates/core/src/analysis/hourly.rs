@@ -212,9 +212,9 @@ mod tests {
             semantic_confidence: None,
             screenshot_url: None,
             uid: String::new(),
-                        machine_id: String::new(),
-                        origin: "local".to_string(),
-                        is_shadow: false,
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         }
     }
 

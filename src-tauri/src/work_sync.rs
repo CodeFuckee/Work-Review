@@ -217,10 +217,18 @@ mod tests {
     #[test]
     fn 缺失或损坏的状态文件回退默认值() {
         let dir = temp_dir("corrupt");
-        assert_eq!(load_state(&dir), WorkSyncState::default(), "缺失文件应回默认");
+        assert_eq!(
+            load_state(&dir),
+            WorkSyncState::default(),
+            "缺失文件应回默认"
+        );
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(state_file_path(&dir), "{not json").unwrap();
-        assert_eq!(load_state(&dir), WorkSyncState::default(), "损坏文件应回默认");
+        assert_eq!(
+            load_state(&dir),
+            WorkSyncState::default(),
+            "损坏文件应回默认"
+        );
         cleanup(&dir);
     }
 
@@ -258,7 +266,10 @@ mod tests {
         let payload = build_payload(&activity);
         let json = serde_json::to_string(&payload).unwrap();
         assert!(!json.contains("screenshots"), "不得携带本机截图路径");
-        assert!(!json.contains("/usr/bin/code"), "不得携带本机可执行文件路径");
+        assert!(
+            !json.contains("/usr/bin/code"),
+            "不得携带本机可执行文件路径"
+        );
         assert!(!json.contains("s3.example"), "用户已选不同步截图");
         assert_eq!(payload.uid, "u1");
         assert_eq!(payload.duration, 60);
@@ -291,7 +302,8 @@ mod tests {
             screenshot_url: None,
         };
         for i in 0..3 {
-            db.insert_activity(&mk(1_000 + i, &format!("t{i}"))).unwrap();
+            db.insert_activity(&mk(1_000 + i, &format!("t{i}")))
+                .unwrap();
         }
         // 云端行不得进入导出（走 import_remote_batch 真实入库路径）
         import_remote_batch(
