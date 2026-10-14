@@ -3142,60 +3142,6 @@ fn browser_url_script_macos(app_lower: &str) -> Option<(String, &'static str)> {
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BrowserUrlCandidateSource {
-    Value,
-    Description,
-    Title,
-    Name,
-    Unknown,
-}
-
-#[cfg(target_os = "macos")]
-fn parse_browser_url_candidate_line(raw_line: &str) -> (BrowserUrlCandidateSource, &str) {
-    let trimmed = raw_line.trim();
-
-    if let Some((prefix, value)) = trimmed.split_once('\t') {
-        let source = match prefix.trim() {
-            "value" => BrowserUrlCandidateSource::Value,
-            "description" => BrowserUrlCandidateSource::Description,
-            "title" => BrowserUrlCandidateSource::Title,
-            "name" => BrowserUrlCandidateSource::Name,
-            _ => BrowserUrlCandidateSource::Unknown,
-        };
-
-        if source != BrowserUrlCandidateSource::Unknown {
-            return (source, value.trim());
-        }
-    }
-
-    (BrowserUrlCandidateSource::Unknown, trimmed)
-}
-
-#[cfg(target_os = "macos")]
-fn browser_url_candidate_source_bonus(source: BrowserUrlCandidateSource) -> i32 {
-    match source {
-        BrowserUrlCandidateSource::Value => 80,
-        BrowserUrlCandidateSource::Description => 35,
-        BrowserUrlCandidateSource::Title => 10,
-        BrowserUrlCandidateSource::Name => 5,
-        BrowserUrlCandidateSource::Unknown => 0,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn http_url_rest(url: &str) -> Option<&str> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
-    if let Some(index) = rest.find(|c| ['/', '?', '#'].contains(&c)) {
-        Some(&rest[index..])
-    } else {
-        Some("")
-    }
-}
-
-#[cfg(target_os = "macos")]
 fn get_browser_url(app_name: &str, window_title: &str) -> Option<String> {
     // 与 Linux/Windows 入口同款门禁：非浏览器应用不查 URL。缺此门禁时，
     // 名称含 arc/safari 等子串的应用（如 Archive Utility）会 spawn osascript
