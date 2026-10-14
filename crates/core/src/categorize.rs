@@ -47,6 +47,40 @@ pub fn is_system_process(app_name: &str) -> bool {
     )
 }
 
+/// 内置远控应用识别模式（小写子串匹配进程/应用名）。
+/// 多机同步的影子标记（database::mark_remote_control_shadows）与
+/// [`is_remote_control_app`] 共用这份清单：SQL 侧用它拼 instr 链，
+/// 侧逻辑用它做判定，改清单两处同时生效。
+pub const REMOTE_CONTROL_APP_PATTERNS: &[&str] = &[
+    "sunlogin",
+    "向日葵",
+    "oray",
+    "todesk",
+    "rustdesk",
+    "anydesk",
+    "teamviewer",
+    "mstsc",
+    "remote desktop",
+    "parsec",
+    "moonlight",
+    "splashtop",
+];
+
+/// 判断应用名是否属于远程控制工具（内置模式 + 用户自定义模式，大小写不敏感）
+pub fn is_remote_control_app(app_name: &str, custom_patterns: &[String]) -> bool {
+    let lowered = app_name.trim().to_lowercase();
+    if lowered.is_empty() {
+        return false;
+    }
+    REMOTE_CONTROL_APP_PATTERNS
+        .iter()
+        .copied()
+        .chain(custom_patterns.iter().map(|s| s.as_str()))
+        .map(|p| p.trim().to_lowercase())
+        .filter(|p| !p.is_empty())
+        .any(|p| lowered.contains(&p))
+}
+
 /// 判断进程名是否属于浏览器
 pub fn is_browser_app(app_name: &str) -> bool {
     let app_lower = app_name.to_lowercase();
@@ -970,6 +1004,31 @@ pub fn get_category_name(category: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_remote_control_app_covers_builtin_patterns() {
+        // 内置模式覆盖主流远控工具的常见进程名/显示名（大小写不敏感）
+        assert!(is_remote_control_app("SunloginClient", &[]));
+        assert!(is_remote_control_app("向日葵远程控制", &[]));
+        assert!(is_remote_control_app("ToDesk.exe", &[]));
+        assert!(is_remote_control_app("RustDesk", &[]));
+        assert!(is_remote_control_app("AnyDesk", &[]));
+        assert!(is_remote_control_app("TeamViewer", &[]));
+        assert!(is_remote_control_app("mstsc", &[]));
+        assert!(is_remote_control_app("Remote Desktop Connection", &[]));
+        // 子串误报防线：普通应用不应被误判
+        assert!(!is_remote_control_app("Google Chrome", &[]));
+        assert!(!is_remote_control_app("Code", &[]));
+        assert!(!is_remote_control_app("", &[]));
+    }
+
+    #[test]
+    fn is_remote_control_app_supports_custom_rules() {
+        assert!(is_remote_control_app("MyRemote Host", &["myremote".to_string()]));
+        assert!(!is_remote_control_app("Chrome", &["myremote".to_string()]));
+        // 自定义规则为空串时不匹配一切
+        assert!(!is_remote_control_app("Anything", &[String::new()]));
+    }
 
     #[test]
     fn is_browser_app_recognises_common_browsers() {

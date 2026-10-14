@@ -26,6 +26,7 @@ mod screenshot;
 mod storage;
 mod wecom_aibot;
 mod wecom_bot;
+mod work_sync;
 
 use once_cell::sync::OnceCell;
 use screenshot::ScreenshotService;
@@ -1166,6 +1167,10 @@ fn persist_previous_activity_backfill(
         semantic_category: Some(classification.semantic_category),
         semantic_confidence: Some(i32::from(classification.confidence)),
         screenshot_url: None,
+        uid: String::new(),
+                machine_id: String::new(),
+                origin: "local".to_string(),
+                is_shadow: false,
     };
 
     match database.insert_activity(&activity) {
@@ -1886,6 +1891,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                         semantic_category: Some(classification.semantic_category),
                         semantic_confidence: Some(i32::from(classification.confidence)),
                         screenshot_url: None,
+                        uid: String::new(),
+                                                machine_id: String::new(),
+                                                origin: "local".to_string(),
+                                                is_shadow: false,
                     };
 
                     // 短暂获取锁写入数据库
@@ -2211,6 +2220,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                         semantic_category: Some(classification.semantic_category.clone()),
                         semantic_confidence: Some(i32::from(classification.confidence)),
                         screenshot_url: None,
+                        uid: String::new(),
+                                                machine_id: String::new(),
+                                                origin: "local".to_string(),
+                                                is_shadow: false,
                     })
                 } else {
                     // === 新建路径：正常截屏并保存 ===
@@ -2308,6 +2321,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                                     ),
                                     semantic_confidence: Some(i32::from(classification.confidence)),
                                     screenshot_url: None,
+                                    uid: String::new(),
+                                                                        machine_id: String::new(),
+                                                                        origin: "local".to_string(),
+                                                                        is_shadow: false,
                                 };
 
                                 let inserted = {
@@ -2484,6 +2501,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                             semantic_category: Some(classification.semantic_category.clone()),
                             semantic_confidence: Some(i32::from(classification.confidence)),
                             screenshot_url: None,
+                            uid: String::new(),
+                                                        machine_id: String::new(),
+                                                        origin: "local".to_string(),
+                                                        is_shadow: false,
                         };
 
                         let inserted = {
@@ -2625,6 +2646,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
                     semantic_category: Some(classification.semantic_category),
                     semantic_confidence: Some(i32::from(classification.confidence)),
                     screenshot_url: None,
+                    uid: String::new(),
+                                        machine_id: String::new(),
+                                        origin: "local".to_string(),
+                                        is_shadow: false,
                 };
 
                 let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -3774,6 +3799,13 @@ async fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::client_http_get_json,
+            commands::work_sync_get_state,
+            commands::work_sync_export_batch,
+            commands::work_sync_mark_synced,
+            commands::work_sync_import_batch,
+            commands::work_sync_advance_cursors,
+            commands::get_reports_in_range_for_sync,
+            commands::apply_remote_report,
             commands::client_http_post_json,
             autostart::enable_autostart,
             autostart::disable_autostart,

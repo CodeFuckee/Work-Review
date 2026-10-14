@@ -278,8 +278,8 @@ test('全部第一方 Svelte 组件脚本应启用 TypeScript', async () => {
     }
   }
 
-  // 41 = 40 + MdIcon（Material Symbols 图标组件，Phase A/B 引入）
-  assert.equal(svelteFiles.length, 41);
+  // 42 = 40 + MdIcon（Phase A/B）+ SettingsWorkSync（多机同步卡）
+  assert.equal(svelteFiles.length, 42);
   assert.deepEqual(untypedComponents, []);
 });
 

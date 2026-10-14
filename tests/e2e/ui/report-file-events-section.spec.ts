@@ -156,7 +156,7 @@ test.describe('日报文件修改小节', () => {
     await expect(page.getByRole('heading', { name: '文件修改' })).toHaveCount(0);
 
     // 隐藏块后「生成设置」按钮出现，展开抽屉查看恢复列表
-    await page.getByTitle('生成设置').click();
+    await page.getByRole('button', { name: /生成设置/ }).click();
     await expect(page.getByText('已隐藏的段落')).toBeVisible();
     const restore = page.getByRole('button', { name: /文件修改/ });
     await expect(restore).toBeVisible();

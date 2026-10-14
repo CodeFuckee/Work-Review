@@ -2765,6 +2765,17 @@
 }
 
 /* 文章元信息 pill：生成模式 / 实时口径标注 */
+.report-origin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.report-origin-pill .material-symbols-outlined {
+  font-size: 14px;
+  line-height: 1;
+}
+
 .report-meta-pill {
   display: inline-flex;
   align-items: center;

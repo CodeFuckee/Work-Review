@@ -14,6 +14,7 @@
   import { applyLocaleToDocument, initializeLocale, locale, setLocale, t, type Locale } from '$lib/i18n/index.ts';
   import { preloadAppIcons, type AppIconInvoke } from './lib/stores/iconCache.ts';
   import { runUpdateFlow } from './lib/utils/updater.ts';
+  import { pullBeforeGenerate, syncWithStoredCredentials, WORK_SYNC_INTERVAL_MS } from './lib/utils/workSync.ts';
   import { isTimelineActivity } from './routes/timeline/timelineData.ts';
   import { timelineGateway } from './routes/timeline/timelineGateway.ts';
 
@@ -37,6 +38,8 @@
     work_time_segments?: WorkTimeSegment[];
     memory_enabled?: boolean;
     memory_last_synthesis_date?: string | null;
+    work_sync_enabled?: boolean;
+    machine_name?: string;
   }
 
   interface DailyStatsPreview {
@@ -99,6 +102,7 @@
       'background_image',
       'daily_report_auto_generate_time',
       'memory_last_synthesis_date',
+      'machine_name',
     ];
     const optionalNumberFields = [
       'background_opacity',
@@ -106,7 +110,7 @@
       'work_end_hour',
       'work_end_minute',
     ];
-    const optionalBooleanFields = ['lightweight_mode', 'memory_enabled'];
+    const optionalBooleanFields = ['lightweight_mode', 'memory_enabled', 'work_sync_enabled'];
 
     if (optionalStringFields.some((field) => (
       value[field] !== undefined
@@ -716,6 +720,8 @@
               devLog('工作结束时间到达，自动生成日报...');
               autoGenRunning = true;
               try {
+                // 生成前强制拉取另一台机器的活动（grilling 结论）：拉取失败不阻塞生成
+                await pullBeforeGenerate();
                 await invoke('generate_report', { date: today, force: false, locale: currentLocale });
                 cache.invalidate('report', `${today}:${currentLocale}`);
                 lastAutoGenDate = today;
@@ -753,6 +759,28 @@
         }
       }, 60000);  // 每分钟检查一次
       pendingCleanup.push(() => clearInterval(autoReportTimer));
+
+      // 多机工作记录同步：启动 60s 首轮，此后每 5 分钟一轮（推块/拉块/日报 LWW）。
+      // 开关未开/未登录时 syncWithStoredCredentials 直接返回 null；失败只记日志
+      let workSyncRunning = false;
+      const runWorkSync = async (): Promise<void> => {
+        if (workSyncRunning) return;
+        workSyncRunning = true;
+        try {
+          await syncWithStoredCredentials(
+            runtimeConfig?.work_sync_enabled === true,
+            runtimeConfig?.machine_name ?? '',
+          );
+        } catch (e) {
+          devLog('工作记录同步失败（下一轮重试）:', e);
+        } finally {
+          workSyncRunning = false;
+        }
+      };
+      const workSyncStartupTimer = setTimeout(() => { void runWorkSync(); }, 60_000);
+      const workSyncTimer = setInterval(() => { void runWorkSync(); }, WORK_SYNC_INTERVAL_MS);
+      pendingCleanup.push(() => clearTimeout(workSyncStartupTimer));
+      pendingCleanup.push(() => clearInterval(workSyncTimer));
 
       const unlisten = await safeListen(
         'screenshot-taken',

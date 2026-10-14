@@ -59,6 +59,7 @@ The focus is not "monitoring". It is helping you **recall, organize, and review*
 - **Automated versioning and release pipeline** — On every green push to `main`, CI bumps the patch version (carrying over at 100, e.g. 1.2.99 → 1.3.0) across all five version sources, creates a `vX.Y.Z` tag, and runs the full three-platform packaging and release flow; every push also builds three-platform release binaries as artifacts
 - **Downloadable installers from every push** — Each green push to `main` also builds the full installers (dmg / deb / rpm / AppImage / nsis exe + portable zip) and uploads them as CI artifacts (kept 30 days). Latest-build links: `https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-windows` (also `package-daily-macos-arm64`, `package-daily-macos-x64`, `package-daily-linux-x64`, `package-daily-linux-arm64`). Tagged releases keep permanent installers via the normal Release flow.
 - **Privacy-first and locally controllable** — Data is stored in local SQLite by default; AI is optional, and model calls use your own API key without third-party relay. When no model is configured, the built-in fallback model is used and your question/report content is sent to the third-party AI service behind it.
+- **Multi-machine work record sync** — Work across an office PC and a home PC? Enable sync in Settings → General and both machines converge: text metadata of activities (app / window title / duration / URL / OCR text) is encrypted on-device (AES-GCM, account-derived key) and relayed through your self-hosted server — the server only ever stores ciphertext. Before generating a daily report the app pulls records from your other machines, so a report generated on either machine covers the whole day. Remote-desktop sessions (Sunlogin/ToDesk/RustDesk/…) are auto-shadowed when the other machine shows real activity in the same window, so the remote shell doesn't pollute stats or reports. Cloud daily reports merge per date with last-write-wins and a "from machine X" badge on the report page. Screenshots and local file paths are never synced.
 - **Multilingual UI** — Available in Simplified Chinese, English, Traditional Chinese, and Arabic (with RTL layout)
 
 ---
@@ -185,6 +186,7 @@ You can control the recording scope as needed:
 - AI-enhanced prompt attachments and custom model settings
 - Website semantic categorization: changing a domain category automatically backfills history
 - Multi-segment work time: e.g. morning + afternoon, break time excluded
+- Multi-machine sync: pull-before-generate so any machine's report covers the whole day; remote-desktop sessions auto-shadowed; cloud reports merged per date (LWW) with origin badge
 - GitLab commits enrichment: fetch commits from a self-hosted GitLab for the report date (per-project 20 / total 200 cap, local-timezone filtered); AI merges them into the report, non-AI mode appends a section; failures degrade silently with a one-line note
 
 ---

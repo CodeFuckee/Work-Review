@@ -1451,6 +1451,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
         };
 
         let filtered = filter_activities_by_privacy(

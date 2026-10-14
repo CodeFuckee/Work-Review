@@ -17,6 +17,7 @@
   import SettingsPlane from './components/SettingsPlane.svelte';
   import SettingsFileMonitor from './components/SettingsFileMonitor.svelte';
   import SettingsSync from './components/SettingsSync.svelte';
+  import SettingsWorkSync from './components/SettingsWorkSync.svelte';
   // SMUI v8：Tab/Button/Textfield/CircularProgress；bare.css 集中在 src/smui.css 引入
   import Tab from '@smui/tab';
   import Button from '@smui/button';
@@ -581,6 +582,7 @@
           <div class="settings-carbon-panel">
           {#if activeTab === 'general'}
             <SettingsSync bind:config on:change={() => dirty = true} />
+            <SettingsWorkSync bind:config on:change={() => dirty = true} />
             <SettingsGeneral bind:config on:change={() => dirty = true} />
           {:else if activeTab === 'appearance'}
             <SettingsAppearance bind:config on:change={handleSettingsChange} />

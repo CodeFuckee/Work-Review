@@ -371,6 +371,8 @@ pub(crate) async fn generate_report_inner(
             model_name: saved_model_name,
             fallback_reason: generated_report.fallback_reason.clone(),
             created_at: chrono::Utc::now().timestamp(),
+            updated_at: 0,
+                        origin_machine: None,
         };
         state.database.save_report(&daily_report)?;
     }

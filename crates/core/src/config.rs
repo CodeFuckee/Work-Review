@@ -1082,6 +1082,15 @@ pub struct AppConfig {
     /// 应用分类覆盖规则
     #[serde(default)]
     pub app_category_rules: Vec<AppCategoryRule>,
+    /// 多机工作记录同步开关（settings 页「工作记录同步」卡）
+    #[serde(default)]
+    pub work_sync_enabled: bool,
+    /// 本机显示名（如"公司电脑"），随同步上报供对端标注日报来源
+    #[serde(default)]
+    pub machine_name: String,
+    /// 远控应用自定义识别模式（与内置清单合并生效，小写子串匹配）
+    #[serde(default)]
+    pub remote_control_apps: Vec<String>,
     /// 用户自定义分类
     #[serde(default)]
     pub custom_categories: Vec<CustomCategory>,
@@ -1403,6 +1412,9 @@ impl Default for AppConfig {
             vision_model: ModelConfig::default_vision(),
             privacy: PrivacyConfig::default(),
             app_category_rules: Vec::new(),
+            work_sync_enabled: false,
+            machine_name: String::new(),
+            remote_control_apps: Vec::new(),
             custom_categories: Vec::new(),
             website_semantic_rules: Vec::new(),
             custom_semantic_categories: Vec::new(),

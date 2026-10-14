@@ -100,7 +100,7 @@ fn matches_excluded_domain_for_stats(target: &str, excluded_domains: &[String]) 
 const UNRESOLVED_BROWSER_DOMAIN_LABEL: &str = "未识别页面";
 const UNRESOLVED_BROWSER_URL_LABEL: &str = "未识别 URL";
 
-const ACTIVITY_SELECT_COLUMNS: &str = "id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url";
+const ACTIVITY_SELECT_COLUMNS: &str = "id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url, uid, machine_id, origin, is_shadow";
 
 fn activity_from_row(row: &Row<'_>) -> rusqlite::Result<Activity> {
     Ok(Activity {
@@ -117,6 +117,10 @@ fn activity_from_row(row: &Row<'_>) -> rusqlite::Result<Activity> {
         semantic_category: row.get(10)?,
         semantic_confidence: row.get(11)?,
         screenshot_url: row.get(12)?,
+        uid: row.get(13)?,
+        machine_id: row.get(14)?,
+        origin: row.get(15)?,
+        is_shadow: row.get::<_, i64>(16)? != 0,
     })
 }
 
@@ -146,6 +150,34 @@ pub struct Activity {
     /// 远程截图 URL（上传成功后填充）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot_url: Option<String>,
+    /// 跨设备同步的稳定行标识：插入时生成，云端副本保留。
+    /// 监控合并会移动 timestamp（活动仍在进行时行尾随前移），因此不能用
+    /// (machine, timestamp, app, title) 做同步身份——那样合并会把云端副本
+    /// 撕成碎片快照；uid 与行同生共死，重推按 uid UPSERT 收敛到最新状态。
+    #[serde(default)]
+    pub uid: String,
+    /// 采集来源机器 id（'' = 尚未回填的旧行；推送前由 work_sync 统一回填）
+    #[serde(default)]
+    pub machine_id: String,
+    /// 行来源：'local' 本机采集 | 'cloud' 他机同步副本（云端行永不回推、
+    /// 也绝不作为本机监控的合并目标）
+    #[serde(default = "default_activity_origin")]
+    pub origin: String,
+    /// 远控影子记录：同时段对方机器有真实活动时，本机远控窗口（向日葵等）
+    /// 只是"壳"，标记后不进统计/时间线/日报
+    #[serde(default)]
+    pub is_shadow: bool,
+}
+
+fn default_activity_origin() -> String {
+    "local".to_string()
+}
+
+/// 云端活动批量入库结果
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteImportOutcome {
+    pub inserted: usize,
+    pub updated: usize,
 }
 
 /// 每日报告
@@ -160,6 +192,12 @@ pub struct DailyReport {
     #[serde(default)]
     pub fallback_reason: Option<String>,
     pub created_at: i64,
+    /// 最后写入时间（UTC 毫秒）：跨机日报按日期 LWW 的胜负依据；0 = 迁移前旧数据
+    #[serde(default)]
+    pub updated_at: i64,
+    /// 生成该日报的机器名：云端同步覆盖本地时保留来源标注，本机生成时清空
+    #[serde(default)]
+    pub origin_machine: Option<String>,
 }
 
 /// 一条 GitLab 提交的时间线记录（gitlab_commits 表）。
@@ -844,7 +882,12 @@ impl Database {
                 browser_url TEXT,
                 executable_path TEXT,
                 semantic_category TEXT,
-                semantic_confidence INTEGER
+                semantic_confidence INTEGER,
+                uid TEXT NOT NULL DEFAULT '',
+                machine_id TEXT NOT NULL DEFAULT '',
+                origin TEXT NOT NULL DEFAULT 'local',
+                is_shadow INTEGER NOT NULL DEFAULT 0,
+                sync_dirty INTEGER NOT NULL DEFAULT 1
             )",
             [],
         )?;
@@ -884,6 +927,8 @@ impl Database {
                 model_name TEXT,
                 fallback_reason TEXT,
                 created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                origin_machine TEXT,
                 UNIQUE(date, locale)
             )",
             [],
@@ -896,6 +941,14 @@ impl Database {
         Self::add_column_if_missing(
             &conn,
             "ALTER TABLE daily_reports_localized ADD COLUMN fallback_reason TEXT",
+        )?;
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE daily_reports_localized ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE daily_reports_localized ADD COLUMN origin_machine TEXT",
         )?;
 
         conn.execute(
@@ -948,6 +1001,36 @@ impl Database {
         Self::add_column_if_missing(
             &conn,
             "ALTER TABLE activities ADD COLUMN screenshot_url TEXT",
+        )?;
+        // 迁移：多机工作记录同步四列（v1.3.0）
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN uid TEXT NOT NULL DEFAULT ''",
+        )?;
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN machine_id TEXT NOT NULL DEFAULT ''",
+        )?;
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN origin TEXT NOT NULL DEFAULT 'local'",
+        )?;
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN is_shadow INTEGER NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            &conn,
+            "ALTER TABLE activities ADD COLUMN sync_dirty INTEGER NOT NULL DEFAULT 1",
+        )?;
+        // 跨机同步：uid 唯一（云端副本按 uid UPSERT 幂等）；部分索引放过
+        // 迁移前 uid 为空的旧行，等 backfill 回填后再受约束。
+        // ⚠️ 必须留在 add_column 之后：老库此时尚无 uid 列，建索引即崩
+        // （dev 实测：索引写在 CREATE TABLE 段时老库启动即 panic）
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_uid
+             ON activities (uid) WHERE uid <> ''",
+            [],
         )?;
 
         // AI 实体分类缓存：后台任务对未知应用/域名做一次性归类,此后采集直接查表,
@@ -1270,11 +1353,17 @@ impl Database {
             .as_deref()
             .map(normalize_url)
             .filter(|url| !url.is_empty());
+        // 本机新行：uid 为空时生成（跨机同步的稳定身份）；置脏等待推送
+        let uid = if activity.uid.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            activity.uid.clone()
+        };
         let tx = conn.unchecked_transaction()?;
 
         tx.execute(
-            "INSERT INTO activities (timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO activities (timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url, uid, machine_id, origin, is_shadow, sync_dirty)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'local', 0, 1)",
             params![
                 activity.timestamp,
                 activity.app_name,
@@ -1288,6 +1377,8 @@ impl Database {
                 activity.semantic_category,
                 activity.semantic_confidence,
                 activity.screenshot_url,
+                uid,
+                activity.machine_id,
             ],
         )?;
         let activity_id = tx.last_insert_rowid();
@@ -1329,7 +1420,7 @@ impl Database {
         let sql = format!(
             "SELECT {ACTIVITY_SELECT_COLUMNS}
              FROM activities
-             WHERE {where_clause} AND timestamp >= ?{start_idx}
+             WHERE origin = 'local' AND {where_clause} AND timestamp >= ?{start_idx}
              ORDER BY id DESC
              LIMIT 1",
             start_idx = filter_params.len() + 1,
@@ -1452,7 +1543,8 @@ impl Database {
                  SET duration = duration + ?1,
                      ocr_text = ?2,
                      timestamp = ?3,
-                     browser_url = ?5
+                     browser_url = ?5,
+                     sync_dirty = 1
                  WHERE id = ?4",
                 params![duration_delta, merged_ocr, new_timestamp, id, url],
             )?;
@@ -1461,7 +1553,8 @@ impl Database {
                 "UPDATE activities
                  SET duration = duration + ?1,
                      ocr_text = ?2,
-                     timestamp = ?3
+                     timestamp = ?3,
+                     sync_dirty = 1
                  WHERE id = ?4",
                 params![duration_delta, merged_ocr, new_timestamp, id],
             )?;
@@ -1514,6 +1607,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, screenshot_path FROM activities
              WHERE timestamp >= ?1
+               AND is_shadow = 0
                AND screenshot_path != ''
                AND (screenshot_url IS NULL OR screenshot_url = '')
              ORDER BY timestamp DESC
@@ -1599,7 +1693,7 @@ impl Database {
         })?;
         let mut stmt = conn.prepare(
             "SELECT browser_url, SUM(duration) FROM activities
-             WHERE timestamp >= ?1 AND category = 'browser'
+             WHERE timestamp >= ?1 AND category = 'browser' AND is_shadow = 0
                AND browser_url IS NOT NULL AND browser_url != ''
              GROUP BY browser_url",
         )?;
@@ -1617,7 +1711,7 @@ impl Database {
         })?;
         let mut stmt = conn.prepare(
             "SELECT id, browser_url FROM activities
-             WHERE timestamp >= ?1 AND category = 'browser'
+             WHERE timestamp >= ?1 AND category = 'browser' AND is_shadow = 0
                AND browser_url IS NOT NULL AND browser_url != ''",
         )?;
         let rows = stmt
@@ -1983,7 +2077,7 @@ impl Database {
                     screenshot_path,
                     screenshot_url
              FROM activities
-             WHERE timestamp > ?1 AND (timestamp - duration) < ?2
+             WHERE timestamp > ?1 AND (timestamp - duration) < ?2 AND is_shadow = 0
              ORDER BY timestamp ASC",
         )?;
 
@@ -2446,6 +2540,10 @@ impl Database {
                     semantic_category,
                     semantic_confidence,
                     screenshot_url,
+                    uid,
+                    machine_id,
+                    origin,
+                    is_shadow,
                     ROW_NUMBER() OVER (
                         PARTITION BY
                             app_name,
@@ -2464,7 +2562,7 @@ impl Database {
                             END
                     ) as total_duration
                 FROM activities
-                WHERE timestamp > ?1 AND (timestamp - duration) < ?2
+                WHERE timestamp > ?1 AND (timestamp - duration) < ?2 AND is_shadow = 0
              )
              SELECT
                 id,
@@ -2479,7 +2577,11 @@ impl Database {
                 executable_path,
                 semantic_category,
                 semantic_confidence,
-                screenshot_url
+                screenshot_url,
+                uid,
+                machine_id,
+                origin,
+                is_shadow
              FROM ranked
              WHERE rn = 1
              ORDER BY timestamp DESC, id DESC
@@ -2507,6 +2609,10 @@ impl Database {
                     semantic_category: row.get(10)?,
                     semantic_confidence: row.get(11)?,
                     screenshot_url: row.get(12)?,
+                    uid: row.get(13)?,
+                    machine_id: row.get(14)?,
+                    origin: row.get(15)?,
+                    is_shadow: row.get::<_, i64>(16)? != 0,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -2564,7 +2670,7 @@ impl Database {
                 screenshot_url,
                 browser_url
              FROM activities
-             WHERE timestamp > ?1 AND (timestamp - duration) < ?2 AND duration > 0
+             WHERE timestamp > ?1 AND (timestamp - duration) < ?2 AND duration > 0 AND is_shadow = 0
              ORDER BY timestamp ASC",
         )?;
 
@@ -2844,13 +2950,15 @@ impl Database {
             args.push(end);
         }
         args.push(limit);
+        // 归因/统计/localhost 导出语义：影子记录（远控壳）不参与
+        conditions.push("is_shadow = 0");
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
             format!("WHERE {}", conditions.join(" AND "))
         };
         let sql = format!(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url
+            "SELECT {ACTIVITY_SELECT_COLUMNS}
              FROM activities
              {where_clause}
              ORDER BY timestamp ASC, id ASC
@@ -2859,23 +2967,7 @@ impl Database {
         let mut stmt = conn.prepare(&sql)?;
 
         let activities = stmt
-            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
-                Ok(Activity {
-                    id: Some(row.get(0)?),
-                    timestamp: row.get(1)?,
-                    app_name: row.get(2)?,
-                    window_title: row.get(3)?,
-                    screenshot_path: row.get(4)?,
-                    ocr_text: row.get(5)?,
-                    category: row.get(6)?,
-                    duration: row.get(7)?,
-                    browser_url: row.get(8)?,
-                    executable_path: row.get(9)?,
-                    semantic_category: row.get(10)?,
-                    semantic_confidence: row.get(11)?,
-                    screenshot_url: row.get(12)?,
-                })
-            })?
+            .query_map(rusqlite::params_from_iter(args.iter()), activity_from_row)?
             .filter_map(|row| row.ok())
             .collect();
 
@@ -3188,18 +3280,35 @@ impl Database {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
 
+        // LWW 依据 updated_at：now 与「现值+1」取大者。双机时钟漂移时
+        // 本机重新生成也不能被云端旧版本按 LWW 压回（否则用户刚重新生成的
+        // 内容会被同步覆盖丢失）
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let existing_updated: i64 = match conn.query_row(
+            "SELECT COALESCE(updated_at, 0) FROM daily_reports_localized WHERE date = ?1 AND locale = ?2",
+            params![report.date, report.locale],
+            |row| row.get(0),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => 0,
+            Err(e) => return Err(AppError::Database(e)),
+        };
+        let updated_at = std::cmp::max(now_ms, existing_updated + 1);
+
         // 用 upsert 而非 INSERT OR REPLACE：REPLACE 触发的隐式删除在默认配置
         // （recursive_triggers 关闭）下不会触发 AFTER DELETE 触发器，FTS 会残留
         // 旧词条；DO UPDATE 会正常走 AFTER UPDATE 触发器的 delete+insert 维护
         conn.execute(
-            "INSERT INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at, updated_at, origin_machine)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
              ON CONFLICT(date, locale) DO UPDATE SET
                 content = excluded.content,
                 ai_mode = excluded.ai_mode,
                 model_name = excluded.model_name,
                 fallback_reason = excluded.fallback_reason,
-                created_at = excluded.created_at",
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                origin_machine = NULL",
             params![
                 report.date,
                 report.locale,
@@ -3208,9 +3317,48 @@ impl Database {
                 report.model_name,
                 report.fallback_reason,
                 report.created_at,
+                updated_at,
             ],
         )?;
 
+        Ok(())
+    }
+
+    /// 落地云端日报（另一台机器生成的更新版本）：整体覆盖并保留来源机器
+    /// 标注。LWW 胜负判定在服务端（save-daily-report 拒旧）与 TS 引擎
+    /// （比较 updated_at）完成，这里只负责落地。
+    pub fn apply_remote_report(
+        &self,
+        report: &DailyReport,
+        updated_at: i64,
+        origin_machine: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        conn.execute(
+            "INSERT INTO daily_reports_localized (date, locale, content, ai_mode, model_name, fallback_reason, created_at, updated_at, origin_machine)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(date, locale) DO UPDATE SET
+                content = excluded.content,
+                ai_mode = excluded.ai_mode,
+                model_name = excluded.model_name,
+                fallback_reason = excluded.fallback_reason,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                origin_machine = excluded.origin_machine",
+            params![
+                report.date,
+                report.locale,
+                report.content,
+                report.ai_mode,
+                report.model_name,
+                report.fallback_reason,
+                report.created_at,
+                updated_at,
+                origin_machine,
+            ],
+        )?;
         Ok(())
     }
 
@@ -3222,7 +3370,7 @@ impl Database {
         let locale = locale.unwrap_or("zh-CN");
 
         let result = conn.query_row(
-            "SELECT date, locale, content, ai_mode, model_name, fallback_reason, created_at
+            "SELECT date, locale, content, ai_mode, model_name, fallback_reason, created_at, COALESCE(updated_at, 0), origin_machine
              FROM daily_reports_localized
              WHERE date = ?1 AND locale = ?2",
             params![date, locale],
@@ -3235,6 +3383,8 @@ impl Database {
                     model_name: row.get(4)?,
                     fallback_reason: row.get(5)?,
                     created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    origin_machine: row.get(8)?,
                 })
             },
         );
@@ -3277,7 +3427,7 @@ impl Database {
         let locale = locale.unwrap_or("zh-CN");
 
         let mut stmt = conn.prepare(
-            "SELECT date, locale, content, ai_mode, model_name, fallback_reason, created_at
+            "SELECT date, locale, content, ai_mode, model_name, fallback_reason, created_at, COALESCE(updated_at, 0), origin_machine
              FROM daily_reports_localized
              WHERE date >= ?1 AND date <= ?2 AND locale = ?3
              ORDER BY date ASC",
@@ -3293,6 +3443,8 @@ impl Database {
                     model_name: row.get(4)?,
                     fallback_reason: row.get(5)?,
                     created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    origin_machine: row.get(8)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -3387,7 +3539,7 @@ impl Database {
         let sql = format!(
             "SELECT {ACTIVITY_SELECT_COLUMNS}
              FROM activities
-             WHERE timestamp > ?1 AND timestamp - duration < ?2
+             WHERE timestamp > ?1 AND timestamp - duration < ?2 AND is_shadow = 0
              ORDER BY timestamp ASC"
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -3480,6 +3632,7 @@ impl Database {
                         AND TRIM(s.screenshot_url) <> ''
                       ORDER BY s.timestamp DESC, s.id DESC LIMIT 1)
              FROM activities a
+             WHERE a.is_shadow = 0
              GROUP BY a.app_name",
         )?;
 
@@ -3570,6 +3723,7 @@ impl Database {
                         AND TRIM(s.screenshot_url) <> ''
                       ORDER BY s.timestamp DESC, s.id DESC LIMIT 1)
              FROM activities a
+             WHERE a.is_shadow = 0
              GROUP BY a.app_name",
         )?;
 
@@ -4914,29 +5068,11 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
-        let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text,
-                    category, duration, browser_url, executable_path,
-                    semantic_category, semantic_confidence, screenshot_url
-             FROM activities WHERE id > ?1 ORDER BY id ASC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![after_id, limit as i64], |row| {
-            Ok(Activity {
-                id: Some(row.get(0)?),
-                timestamp: row.get(1)?,
-                app_name: row.get(2)?,
-                window_title: row.get(3)?,
-                screenshot_path: row.get(4)?,
-                ocr_text: row.get(5)?,
-                category: row.get(6)?,
-                duration: row.get(7)?,
-                browser_url: row.get(8)?,
-                executable_path: row.get(9)?,
-                semantic_category: row.get(10)?,
-                semantic_confidence: row.get(11)?,
-                screenshot_url: row.get(12)?,
-            })
-        })?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {ACTIVITY_SELECT_COLUMNS}
+             FROM activities WHERE id > ?1 ORDER BY id ASC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![after_id, limit as i64], activity_from_row)?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(AppError::Database)
     }
@@ -4952,6 +5088,213 @@ impl Database {
             |row| row.get::<_, i64>(0),
         )?;
         Ok(exists != 0)
+    }
+
+    // ── 多机工作记录同步（work-sync）───────────────────────────────────────
+
+    /// 云端活动副本批量入库：按 uid 幂等。首见插入（origin='cloud'）；
+    /// 重复推送（属主合并后重推同一 uid）收敛到属主最新状态——时间戳/时长/
+    /// 标题/分类以推送方为准，OCR/URL/语义分类只补缺不覆盖。来源字段在此
+    /// 强制覆盖，载荷无法伪造 origin/machine_id。
+    pub fn insert_activities_remote(
+        &self,
+        rows: &[Activity],
+        machine_id: &str,
+    ) -> Result<RemoteImportOutcome> {
+        if rows.is_empty() {
+            return Ok(RemoteImportOutcome {
+                inserted: 0,
+                updated: 0,
+            });
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted = 0usize;
+        let mut updated = 0usize;
+        for row in rows {
+            let uid = if row.uid.is_empty() {
+                // 防御：载荷缺 uid 时以 (machine, ts, app, title) 兜底，
+                // 保证同一来源行稳定映射到同一 uid（正常载荷恒带 uid）
+                format!("{machine_id}:{}|{}|{}", row.timestamp, row.app_name, row.window_title)
+            } else {
+                row.uid.clone()
+            };
+            let normalized_browser_url = row
+                .browser_url
+                .as_deref()
+                .map(normalize_url)
+                .filter(|url| !url.is_empty());
+            let exists: i64 = {
+                let mut stmt =
+                    tx.prepare("SELECT EXISTS(SELECT 1 FROM activities WHERE uid = ?1)")?;
+                stmt.query_row(params![uid], |r| r.get(0))?
+            };
+            if exists != 0 {
+                tx.execute(
+                    "UPDATE activities SET
+                        timestamp = ?2,
+                        app_name = ?3,
+                        window_title = ?4,
+                        category = ?5,
+                        duration = ?6,
+                        ocr_text = COALESCE(?7, ocr_text),
+                        browser_url = COALESCE(?8, browser_url),
+                        semantic_category = COALESCE(?9, semantic_category),
+                        semantic_confidence = COALESCE(?10, semantic_confidence)
+                     WHERE uid = ?1",
+                    params![
+                        uid,
+                        row.timestamp,
+                        row.app_name,
+                        row.window_title,
+                        row.category,
+                        row.duration,
+                        row.ocr_text,
+                        normalized_browser_url,
+                        row.semantic_category,
+                        row.semantic_confidence,
+                    ],
+                )?;
+                updated += 1;
+            } else {
+                tx.execute(
+                    "INSERT INTO activities (timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence, screenshot_url, uid, machine_id, origin, is_shadow, sync_dirty)
+                     VALUES (?1, ?2, ?3, '', ?4, ?5, ?6, ?7, NULL, ?8, ?9, NULL, ?10, ?11, 'cloud', 0, 0)",
+                    params![
+                        row.timestamp,
+                        row.app_name,
+                        row.window_title,
+                        row.ocr_text,
+                        row.category,
+                        row.duration,
+                        normalized_browser_url,
+                        row.semantic_category,
+                        row.semantic_confidence,
+                        uid,
+                        machine_id,
+                    ],
+                )?;
+                inserted += 1;
+            }
+        }
+        if inserted > 0 {
+            // 与 insert_activity 同款语义：新数据进库后标记语义索引待重建
+            tx.execute(
+                "UPDATE semantic_memory_state
+                 SET rebuild_required = CASE WHEN status = 'ready' THEN 1 ELSE rebuild_required END,
+                     status = CASE WHEN status = 'ready' THEN 'idle' ELSE status END,
+                     build_id = CASE WHEN status = 'ready' THEN '' ELSE build_id END,
+                     total_activities = total_activities + ?1,
+                     updated_at = ?2
+                 WHERE singleton_id = 1",
+                params![inserted as i64, chrono::Utc::now().timestamp()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(RemoteImportOutcome { inserted, updated })
+    }
+
+    /// 推送游标：只取本机行（origin='local'）中新增（id 大于游标）或变脏
+    /// （监控合并后需重推最新状态）的记录，按 id 升序分批。云端行永不入选，
+    /// 否则拉回的数据再推出去就是死循环。
+    pub fn get_local_activities_for_sync(&self, after_id: i64, limit: usize) -> Result<Vec<Activity>> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {ACTIVITY_SELECT_COLUMNS}
+             FROM activities
+             WHERE origin = 'local' AND (sync_dirty = 1 OR id > ?1)
+             ORDER BY id ASC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![after_id, limit as i64], activity_from_row)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AppError::Database)
+    }
+
+    /// 推送成功后清除脏标记（游标推进由调用方维护在 work-sync 状态文件）
+    pub fn mark_activities_synced(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let placeholders = ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        conn.execute(
+            &format!("UPDATE activities SET sync_dirty = 0 WHERE id IN ({placeholders})"),
+            rusqlite::params_from_iter(ids.iter()),
+        )?;
+        Ok(())
+    }
+
+    /// 启用同步/每轮推送前，把尚未归属的旧行划给本机；uid 为空的旧行以
+    /// "machine:rowid" 兜底生成（此后部分唯一索引才对这些行生效）。
+    /// 幂等：已回填的行不再触碰。返回本次回填的行数。
+    pub fn backfill_local_machine_id(&self, machine_id: &str) -> Result<usize> {
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let n = conn.execute(
+            "UPDATE activities
+             SET machine_id = ?1,
+                 uid = CASE WHEN uid = '' THEN ?1 || ':' || CAST(id AS TEXT) ELSE uid END
+             WHERE origin = 'local' AND machine_id = ''",
+            params![machine_id],
+        )?;
+        Ok(n)
+    }
+
+    /// 远控会话影子标记：任一机器的远控应用记录，若同时段（±5 分钟容差）
+    /// 另一机器存在非远控的真实活动，判定该记录是"远程壳"（如向日葵全屏
+    /// 窗口遮住的其实是对方机器上的真实工作），置 is_shadow=1 退出统计/
+    /// 时间线/日报。双侧对称：无论本机是控制端还是被控端都适用；双方都
+    /// 是远控应用时无法判定谁是壳，保守不标记。返回本次标记的行数。
+    pub fn mark_remote_control_shadows(&self, patterns: &[String]) -> Result<usize> {
+        let patterns: Vec<String> = patterns
+            .iter()
+            .map(|p| p.trim().to_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if patterns.is_empty() {
+            return Ok(0);
+        }
+        let instr_chain = |column: &str| -> String {
+            patterns
+                .iter()
+                .map(|p| format!("instr(lower({column}), '{}') > 0", p.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(" OR ")
+        };
+        let self_chain = instr_chain("activities.app_name");
+        let other_chain = instr_chain("other.app_name");
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        let n = conn.execute(
+            &format!(
+                "UPDATE activities SET is_shadow = 1
+                 WHERE is_shadow = 0
+                   AND ({self_chain})
+                   AND EXISTS (
+                       SELECT 1 FROM activities other
+                       WHERE other.machine_id <> activities.machine_id
+                         AND other.is_shadow = 0
+                         AND NOT ({other_chain})
+                         AND (other.timestamp - 300) <= (activities.timestamp + activities.duration)
+                         AND (other.timestamp + other.duration + 300) >= activities.timestamp
+                   )"
+            ),
+            [],
+        )?;
+        Ok(n)
     }
 
     /// 写入/更新记忆块。仅当新内容更长时更新内容并清空 embedding（待重嵌入）；
@@ -5637,6 +5980,8 @@ mod tests {
             model_name: Some("m1".to_string()),
             fallback_reason: None,
             created_at: 1_000,
+            updated_at: 0,
+                        origin_machine: None,
         })
         .expect("保存 zh-CN 报告失败");
         db.save_report(&DailyReport {
@@ -5647,6 +5992,8 @@ mod tests {
             model_name: Some("m1".to_string()),
             fallback_reason: None,
             created_at: 2_000,
+            updated_at: 0,
+                        origin_machine: None,
         })
         .expect("保存 en 报告失败");
 
@@ -5683,6 +6030,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         })
         .expect("插入活动失败");
 
@@ -5732,6 +6083,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         };
         db.insert_activity(&base).expect("插入缺URL记录失败");
 
@@ -5786,6 +6141,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -5801,6 +6160,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/workreview/shot-b.jpg".to_string()),
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -5816,6 +6179,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -5879,6 +6246,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         };
 
         let inserted_id = db.insert_activity(&activity).expect("插入测试数据失败");
@@ -5920,6 +6291,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/old.jpg".to_string()),
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -5935,6 +6310,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/new.jpg".to_string()),
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -5984,6 +6363,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -5999,6 +6382,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6014,6 +6401,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -6068,6 +6459,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6083,6 +6478,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -6136,6 +6535,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6151,6 +6554,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -6210,6 +6617,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6225,6 +6636,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -6272,6 +6687,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6287,6 +6706,10 @@ mod tests {
                 semantic_category: Some("即时聊天".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -6325,6 +6748,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6340,6 +6767,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6355,6 +6786,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6402,6 +6837,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6417,6 +6856,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6432,6 +6875,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6488,6 +6935,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             })
             .expect("插入测试数据失败");
         }
@@ -6523,6 +6974,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         })
         .expect("插入测试数据失败");
 
@@ -6570,6 +7025,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: Some("https://cdn.example.com/code-1110.jpg".to_string()),
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         })
         .expect("插入测试数据失败");
 
@@ -6608,6 +7067,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             })
             .expect("插入测试数据失败");
         }
@@ -6646,6 +7109,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6661,6 +7128,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6676,6 +7147,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6691,6 +7166,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6749,6 +7228,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6764,6 +7247,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6779,6 +7266,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6823,6 +7314,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -6838,6 +7333,10 @@ mod tests {
                 semantic_category: Some("即时聊天".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6881,6 +7380,10 @@ mod tests {
             semantic_category: Some("资料阅读".to_string()),
             semantic_confidence: Some(80),
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6921,6 +7424,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6956,6 +7463,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -6991,6 +7502,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7027,6 +7542,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7042,6 +7561,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7057,6 +7580,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: Some("https://cdn.example.com/review.jpg".to_string()),
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ] {
             db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7146,6 +7673,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7161,6 +7692,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -7200,6 +7735,10 @@ mod tests {
                 semantic_category: Some("休息娱乐".to_string()),
                 semantic_confidence: Some(100),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7215,6 +7754,10 @@ mod tests {
                 semantic_category: Some("编码开发".to_string()),
                 semantic_confidence: Some(100),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -7260,6 +7803,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7275,6 +7822,10 @@ mod tests {
                 semantic_category: None,
                 semantic_confidence: None,
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -7317,6 +7868,10 @@ mod tests {
             semantic_confidence: Some(86),
             executable_path: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         };
 
         db.insert_activity(&activity).expect("插入测试数据失败");
@@ -7354,6 +7909,10 @@ mod tests {
                 semantic_category: Some("设计创作".to_string()),
                 semantic_confidence: Some(75),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7369,6 +7928,10 @@ mod tests {
                 semantic_category: Some("设计创作".to_string()),
                 semantic_confidence: Some(70),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -7430,6 +7993,10 @@ mod tests {
                 semantic_category: Some("编码开发".to_string()),
                 semantic_confidence: Some(82),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7445,6 +8012,10 @@ mod tests {
                 semantic_category: Some("编码开发".to_string()),
                 semantic_confidence: Some(80),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
             Activity {
                 id: None,
@@ -7460,6 +8031,10 @@ mod tests {
                 semantic_category: Some("资料阅读".to_string()),
                 semantic_confidence: Some(76),
                 screenshot_url: None,
+                uid: String::new(),
+                                machine_id: String::new(),
+                                origin: "local".to_string(),
+                                is_shadow: false,
             },
         ];
 
@@ -7498,6 +8073,8 @@ mod tests {
             model_name: Some("gemma3:270m".to_string()),
             fallback_reason: Some("请求失败，已回退到基础模板".to_string()),
             created_at: now,
+            updated_at: 0,
+                        origin_machine: None,
         })
         .expect("保存中文日报失败");
 
@@ -7509,6 +8086,8 @@ mod tests {
             model_name: Some("gemma3:270m".to_string()),
             fallback_reason: None,
             created_at: now + 1,
+            updated_at: 0,
+                        origin_machine: None,
         })
         .expect("保存英文日报失败");
 
@@ -7560,6 +8139,10 @@ mod tests {
             semantic_category: Some("编码开发".to_string()),
             semantic_confidence: Some(88),
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         })
         .expect("插入活动失败");
 
@@ -7571,6 +8154,8 @@ mod tests {
             model_name: Some("gpt-4.1".to_string()),
             fallback_reason: Some("返回空内容，已回退到基础模板".to_string()),
             created_at: now,
+            updated_at: 0,
+                        origin_machine: None,
         })
         .expect("保存日报失败");
 
@@ -7614,6 +8199,10 @@ mod tests {
             semantic_category: None,
             semantic_confidence: None,
             screenshot_url: None,
+            uid: String::new(),
+                        machine_id: String::new(),
+                        origin: "local".to_string(),
+                        is_shadow: false,
         }
     }
 
@@ -8721,6 +9310,409 @@ mod tests {
             .get_recent_file_events("2026-01-01", "2026-01-02", 10)
             .expect("查询失败");
         assert!(none.is_empty());
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    // ── 多机工作记录同步（work-sync）───────────────────────────────────────
+
+    /// 测试用活动行构造器：仅显式给差异字段，同步相关新列给默认值
+    fn sync_activity(
+        uid: &str,
+        timestamp: i64,
+        app_name: &str,
+        window_title: &str,
+        duration: i64,
+    ) -> Activity {
+        Activity {
+            id: None,
+            uid: uid.to_string(),
+            machine_id: String::new(),
+            origin: "local".to_string(),
+            is_shadow: false,
+            timestamp,
+            app_name: app_name.to_string(),
+            window_title: window_title.to_string(),
+            screenshot_path: String::new(),
+            ocr_text: None,
+            category: "development".to_string(),
+            duration,
+            browser_url: None,
+            executable_path: None,
+            semantic_category: None,
+            semantic_confidence: None,
+            screenshot_url: None,
+        }
+    }
+
+    #[test]
+    fn 老库升级到同步列后启动与推送游标查询正常() {
+        // 回归：部分唯一索引曾写在 CREATE TABLE 段（迁移之前），存量老库
+        // （无 uid 列）启动即 panic「no such column: uid」——dev 数据目录实测炸出。
+        // 用旧 schema（v1.2.28- 的 activities 形状）先建库再走新迁移路径
+        let db_path = temp_db_path("ws-upgrade");
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("建旧库失败");
+            conn.execute(
+                "CREATE TABLE activities (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp INTEGER NOT NULL,
+                    app_name TEXT NOT NULL,
+                    window_title TEXT NOT NULL,
+                    screenshot_path TEXT NOT NULL,
+                    ocr_text TEXT,
+                    category TEXT NOT NULL,
+                    duration INTEGER NOT NULL
+                )",
+                [],
+            )
+            .expect("建旧表失败");
+            conn.execute(
+                "INSERT INTO activities (timestamp, app_name, window_title, screenshot_path, category, duration)
+                 VALUES (1000, 'Code', '升级前的旧数据', '', 'development', 60)",
+                [],
+            )
+            .expect("写旧行失败");
+        }
+        let db = Database::new(&db_path).expect("老库升级不应失败");
+
+        let rows = db
+            .get_local_activities_for_sync(0, 10)
+            .expect("升级后推送游标查询失败");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].window_title, "升级前的旧数据");
+        // 裸 SQL 插入的旧行没有 uid：由推送前的 backfill_local_machine_id
+        // 以 machine:rowid 兜底生成（勿断言非空——这正是它要覆盖的场景）
+        assert_eq!(rows[0].uid, "");
+        assert_eq!(rows[0].origin, "local");
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 同步迁移后本机新行默认值正确() {
+        let db_path = temp_db_path("ws-migrate");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let now = chrono::Local::now().timestamp();
+
+        db.insert_activity(&sync_activity("", now, "Code", "编辑器", 60))
+            .expect("插入活动失败");
+
+        let rows = db
+            .get_local_activities_for_sync(0, 10)
+            .expect("推送游标查询失败");
+        assert_eq!(rows.len(), 1);
+        assert!(
+            !rows[0].uid.is_empty(),
+            "本机新行应在插入时生成稳定 uid"
+        );
+        assert_eq!(rows[0].origin, "local");
+        assert_eq!(rows[0].machine_id, "", "本机行 machine_id 由推送时回填");
+        assert!(!rows[0].is_shadow);
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 远端活动入库携带来源机器且按uid幂等收敛() {
+        let db_path = temp_db_path("ws-import");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        // 时间线按「今天」的本地日界过滤，用当前时间保证行落在查询窗口内
+        let base = chrono::Local::now().timestamp();
+
+        let mut row = sync_activity("machB:u1", base, "Code", "编辑器", 60);
+        row.ocr_text = None;
+        let outcome1 = db
+            .insert_activities_remote(&[row.clone()], "machB")
+            .expect("首次导入失败");
+        assert_eq!(outcome1.inserted, 1, "首次导入应新增");
+        assert_eq!(outcome1.updated, 0);
+
+        // 同一 uid 再次推送（合并后时长增长、OCR 补充）：不得产生第二行，
+        // 且以推送方（属主机器）的最新状态为准
+        let mut row2 = sync_activity("machB:u1", base + 300, "Code", "编辑器", 180);
+        row2.ocr_text = Some("补充的 OCR".to_string());
+        let outcome2 = db
+            .insert_activities_remote(&[row2], "machB")
+            .expect("重复导入失败");
+        assert_eq!(outcome2.inserted, 0, "同 uid 重复导入不得新增行");
+        assert_eq!(outcome2.updated, 1, "同 uid 重复导入应更新既有行");
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let timeline = db
+            .get_timeline(&today, Some(100), None)
+            .expect("时间线查询失败");
+        let imported: Vec<&Activity> = timeline
+            .iter()
+            .filter(|a| a.uid == "machB:u1")
+            .collect();
+        assert_eq!(imported.len(), 1, "同 uid 在时间线上只应出现一行");
+        assert_eq!(imported[0].duration, 180, "时长应收敛到属主最新状态");
+        assert_eq!(imported[0].timestamp, base + 300, "合并移动后的时间戳应同步");
+        assert_eq!(
+            imported[0].ocr_text.as_deref(),
+            Some("补充的 OCR"),
+            "OCR 应随属主更新"
+        );
+        assert_eq!(imported[0].origin, "cloud");
+        assert_eq!(imported[0].machine_id, "machB");
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 推送游标只含本机行且合并后重新变脏() {
+        let db_path = temp_db_path("ws-cursor");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let now = chrono::Local::now().timestamp();
+
+        let local_id = db
+            .insert_activity(&sync_activity("", now, "Code", "编辑器", 60))
+            .expect("插入本机活动失败");
+
+        // 云端行永远不进推送游标（否则拉回的数据再推出去 = 死循环）
+        db.insert_activities_remote(
+            &[sync_activity("machB:u1", now - 30, "Code", "远端编辑器", 60)],
+            "machB",
+        )
+        .expect("导入远端活动失败");
+
+        let batch = db
+            .get_local_activities_for_sync(0, 100)
+            .expect("推送游标查询失败");
+        assert_eq!(batch.len(), 1, "推送游标只应含本机行");
+        assert_eq!(batch[0].id, Some(local_id));
+
+        db.mark_activities_synced(&[local_id])
+            .expect("标记已同步失败");
+        // 游标推进到该行之后再查：after_id=0 是首推语义（全量都算新行）
+        let after = db
+            .get_local_activities_for_sync(local_id, 100)
+            .expect("二次游标查询失败");
+        assert!(after.is_empty(), "已同步且未变化的行不应再推送");
+
+        // 属主侧合并（时长增长、时间戳前移）后同一 uid 必须重推，
+        // 否则远端永远停留在旧快照
+        db.merge_activity(local_id, 120, None, "", now + 120, None)
+            .expect("合并活动失败");
+        let dirty = db
+            .get_local_activities_for_sync(0, 100)
+            .expect("合并后游标查询失败");
+        assert_eq!(dirty.len(), 1, "合并后的行应重新变脏并重推");
+        assert_eq!(dirty[0].id, Some(local_id));
+        assert_eq!(dirty[0].duration, 180);
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 机器回填覆盖全部本机旧行且uid稳定() {
+        let db_path = temp_db_path("ws-backfill");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let base = 1_760_000_000;
+
+        db.insert_activity(&sync_activity("", base, "Code", "a", 60))
+            .expect("插入旧行1失败");
+        db.insert_activity(&sync_activity("", base + 60, "Browser", "b", 60))
+            .expect("插入旧行2失败");
+
+        let count = db
+            .backfill_local_machine_id("machA")
+            .expect("机器回填失败");
+        assert_eq!(count, 2, "回填应覆盖全部本机旧行");
+
+        let rows = db
+            .get_local_activities_for_sync(0, 100)
+            .expect("回填后查询失败");
+        assert!(rows.iter().all(|r| r.machine_id == "machA"));
+        assert!(
+            rows.iter().all(|r| !r.uid.is_empty()),
+            "回填后每行都必须有稳定 uid（新行插入时已生成 uuid，SQL 里的
+             machine:rowid 分支只为真实旧库升级兜底）"
+        );
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 影子标记命中远控与对方重叠会话() {
+        let db_path = temp_db_path("ws-shadow-hit");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let base = 1_760_000_000;
+        let patterns = vec!["sunlogin".to_string(), "todesk".to_string()];
+
+        // 本机（家里）21:00-22:00 记到向日葵壳，公司机同时段有真实活动
+        db.insert_activity(&sync_activity("", base, "SunloginClient", "远程桌面", 3600))
+            .expect("插入远控行失败");
+        db.insert_activities_remote(
+            &[sync_activity("machB:u1", base + 1800, "Code", "写代码", 1800)],
+            "machB",
+        )
+        .expect("插入对方真实活动失败");
+
+        let shadowed = db
+            .mark_remote_control_shadows(&patterns)
+            .expect("影子标记失败");
+        assert_eq!(shadowed, 1, "重叠时段的远控行应被标记为影子");
+
+        let rows = db
+            .get_local_activities_for_sync(0, 100)
+            .expect("查询失败");
+        assert_eq!(rows[0].is_shadow, true);
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 影子标记忽略无重叠与非远控行() {
+        let db_path = temp_db_path("ws-shadow-miss");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let base = 1_760_000_000;
+        let patterns = vec!["sunlogin".to_string()];
+
+        // 场景1：远控行但对方时段无活动（间隔远超 ±5 分钟容差）
+        db.insert_activity(&sync_activity("", base + 100_000, "SunloginClient", "远程桌面", 600))
+            .expect("插入孤立远控行失败");
+        // 场景2：非远控行与对方重叠（正常双机并行工作，不影子化）
+        db.insert_activity(&sync_activity("", base, "Code", "写代码", 600))
+            .expect("插入本机真实活动失败");
+        db.insert_activities_remote(
+            &[sync_activity("machB:u1", base + 60, "IDEA", "远端写代码", 600)],
+            "machB",
+        )
+        .expect("插入对方活动失败");
+
+        let shadowed = db
+            .mark_remote_control_shadows(&patterns)
+            .expect("影子标记失败");
+        assert_eq!(shadowed, 0, "无重叠远控行与并行真实工作都不应影子化");
+
+        let rows = db
+            .get_local_activities_for_sync(0, 100)
+            .expect("查询失败");
+        assert!(rows.iter().all(|r| !r.is_shadow));
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 时间线过滤影子记录但保留云端正常记录() {
+        let db_path = temp_db_path("ws-timeline");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let now = chrono::Local::now().timestamp();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let patterns = vec!["sunlogin".to_string()];
+
+        db.insert_activity(&sync_activity("", now, "SunloginClient", "远程桌面", 600))
+            .expect("插入本机远控行失败");
+        db.insert_activities_remote(
+            &[sync_activity("machB:u1", now + 60, "Code", "对方写代码", 600)],
+            "machB",
+        )
+        .expect("插入对方正常活动失败");
+        db.mark_remote_control_shadows(&patterns)
+            .expect("影子标记失败");
+
+        let timeline = db
+            .get_timeline(&today, Some(100), None)
+            .expect("时间线查询失败");
+        assert!(
+            timeline.iter().any(|a| a.uid == "machB:u1"),
+            "云端正常记录必须出现在时间线（统一查看是本功能的根本目的）"
+        );
+        assert!(
+            !timeline.iter().any(|a| a.app_name == "SunloginClient"),
+            "影子记录不应出现在时间线与日报数据源"
+        );
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 监控合并游标不串到云端记录() {
+        let db_path = temp_db_path("ws-merge-scope");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let now = chrono::Local::now().timestamp();
+
+        let local_id = db
+            .insert_activity(&sync_activity("", now, "Code", "本机编辑器", 60))
+            .expect("插入本机活动失败");
+        db.insert_activities_remote(
+            &[sync_activity("machB:u1", now - 10, "Code", "远端编辑器", 60)],
+            "machB",
+        )
+        .expect("导入远端同应用活动失败");
+
+        let latest = db
+            .get_latest_activity_by_app("Code")
+            .expect("合并目标查询失败")
+            .expect("应命中本机活动");
+        assert_eq!(
+            latest.id,
+            Some(local_id),
+            "监控合并必须只落在本机行上，绝不能把本地时长累加进云端副本"
+        );
+        assert_eq!(latest.origin, "local");
+        drop(db);
+        remove_db_files(&db_path);
+    }
+
+    #[test]
+    fn 日报保存维护updated_at单调且云端版本可落地() {
+        let db_path = temp_db_path("ws-report-lww");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+
+        let report = |content: &str| DailyReport {
+            date: "2026-10-14".to_string(),
+            locale: "zh-CN".to_string(),
+            content: content.to_string(),
+            ai_mode: "cloud".to_string(),
+            model_name: None,
+            fallback_reason: None,
+            created_at: 1_000,
+            updated_at: 0,
+            origin_machine: None,
+        };
+
+        db.save_report(&report("第一版")).expect("首次保存失败");
+        let first = db
+            .get_report("2026-10-14", None)
+            .expect("读取失败")
+            .expect("应有报告");
+        assert!(first.updated_at > 0, "保存后应写入 updated_at");
+
+        db.save_report(&report("第二版")).expect("二次保存失败");
+        let second = db
+            .get_report("2026-10-14", None)
+            .expect("读取失败")
+            .expect("应有报告");
+        assert!(
+            second.updated_at > first.updated_at,
+            "同机重复生成必须单调推进 updated_at（LWW 依据）"
+        );
+
+        // 落地云端更新的版本（另一台机器生成得更晚）
+        db.apply_remote_report(&report("对方机器的版本"), 9_999, "machB")
+            .expect("落地云端日报失败");
+        let remote = db
+            .get_report("2026-10-14", None)
+            .expect("读取失败")
+            .expect("应有报告");
+        assert_eq!(remote.content, "对方机器的版本");
+        assert_eq!(remote.updated_at, 9_999);
+        assert_eq!(remote.origin_machine.as_deref(), Some("machB"));
+
+        // 本机再生成：updated_at 以「现值+1」兜底，避免时钟落后被云端旧版本压回
+        db.save_report(&report("本机再生成")).expect("再次保存失败");
+        let third = db
+            .get_report("2026-10-14", None)
+            .expect("读取失败")
+            .expect("应有报告");
+        assert!(
+            third.updated_at >= 10_000,
+            "时钟落后时 updated_at 也必须超过云端版本"
+        );
+        assert_eq!(third.origin_machine, None, "本机生成应清空来源机器标注");
         drop(db);
         remove_db_files(&db_path);
     }

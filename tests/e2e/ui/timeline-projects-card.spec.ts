@@ -133,9 +133,14 @@ test.describe('时间线今日项目卡', () => {
     await openTimelineWithCard(page, { withAttributions: true, planeProjects: PLANE_PROJECTS });
 
     await card(page).getByRole('button', { name: /添加项目/ }).click();
+    // MD 迁移后为 SMUI Select：先点 anchor 展开菜单面，再点选项（selectOption
+    // 只作用于原生 <select>，迁移后一直是坏的）
     const select = card(page).locator('.timeline-projects-select');
     await expect(select).toBeVisible();
-    await select.selectOption('新项目候选');
+    await select.locator('.mdc-select__anchor').click();
+    // SMUI 菜单面开合与默认选中态存在竞态：选项已是 aria-selected 时菜单可能
+    // 已收起，覆盖层会拦截常规点击——force 点击（选项本身肉眼可见，非藏匿元素）
+    await page.getByRole('option', { name: '新项目候选' }).click({ force: true });
     await card(page).locator('.timeline-projects-editor-confirm').click();
 
     const manualChip = card(page).locator('.timeline-projects-chip[data-source="manual"]');

@@ -23,6 +23,7 @@
     type VisibleReportSection,
   } from './reportSections.ts';
   import { createReportGenerationOwnership, createReportRequestSnapshot, shiftIsoDate } from './reportDateNavigation.ts';
+  import { pullBeforeGenerate } from '../../lib/utils/workSync.ts';
   import LocalizedDatePicker from '../../lib/components/CarbonDatePicker.svelte';
   import Button from '@smui/button';
   import MdIcon from '../../lib/components/MdIcon.svelte';
@@ -35,6 +36,10 @@
     model_name?: string | null;
     fallback_reason?: string | null;
     created_at: number;
+    /** 云端同步落地时保留的生成机器名（本机生成时为 null） */
+    origin_machine?: string | null;
+    /** 最后写入时间（毫秒）：跨机 LWW 依据 */
+    updated_at?: number;
   }
 
   interface PromptPreset {
@@ -300,6 +305,8 @@
     cache.setReportGenerating(true);
     error = null;
     try {
+      // 生成前强制拉取另一台机器的活动（grilling 结论）：失败不阻塞生成
+      await pullBeforeGenerate();
       if (config?.ai_mode === 'summary') {
         await persistReportPrompt();
         if (requestId !== reportRequestId) return;
@@ -1361,6 +1368,12 @@
               <span class="report-article-metadot">·</span>
               <span class="report-hero-mode-chip">{getAiModeName(reportMeta.reportMode)}</span>
               <span class="report-meta-pill" title={t('report.liveBasisTitle')}>{t('report.liveBasisChip')}</span>
+              {#if report.origin_machine}
+                <span class="report-meta-pill report-origin-pill" title={t('workSync.originPillTitle', { machine: report.origin_machine })}>
+                  <MdIcon name="devices" size={14} />
+                  {t('workSync.originPill', { machine: report.origin_machine })}
+                </span>
+              {/if}
             </div>
             {#if reportMeta.showUsageMismatchNotice}
               <p class="report-hero-mode-note">{t('report.aiNotAppliedPrefix')}{getFallbackReasonText(reportMeta)}</p>

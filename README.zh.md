@@ -59,6 +59,7 @@ Yue-Review 面向个人工作复盘，适合用来回答这些问题：
 - **自动版本与发布流水线** — 每次 main 流水线全绿后自动把版本末位 +1（逢 100 进位，如 1.2.99 → 1.3.0）并同步五处版本源，打 `vX.Y.Z` tag 触发三平台打包与发布；每次推送还会编译三平台 release 二进制作为 CI 产物
 - **每次推送直接下载安装包** — 每次 main 流水线全绿后同时产出三平台完整安装包（dmg / deb / rpm / AppImage / nsis exe + 便携 zip）并上传为 CI artifact（保留 30 天）。最新构建链接：`https://home.chenkaidi.top:509/chenkaidi/work-review/-/jobs/artifacts/main/download?job=package-daily-windows`（另有 `package-daily-macos-arm64`、`package-daily-macos-x64`、`package-daily-linux-x64`、`package-daily-linux-arm64`）。tag 发布版经原 Release 流程永久保留安装包。
 - **隐私优先，本地可控** — 数据默认保存在本地 SQLite；AI 可不启用，模型调用使用你自己的 API Key，不经第三方中转。未配置任何模型时将使用内置模型，此时问答/日报内容会发送至内置模型对应的第三方 AI 服务
+- **多机工作记录同步** — 公司机/家里机两台电脑的工作记录互相补全：设置 → 常规启用后，活动文字元数据（App/窗口标题/时长/URL/OCR）在本机 AES-GCM 加密（账号派生密钥），经自托管服务端密文中转——服务端只存密文不可读。生成日报前自动拉取其他机器的记录，任一台机器生成的日报都覆盖全天；向日葵/ToDesk/RustDesk 等远控会话在对方机器同时段有真实活动时自动判定为「远程壳」排除统计；云端日报按日期 LWW 合并，报告页显示「来自 XX 电脑」标注；截图与本地路径永不同步。
 - **多语言界面** — 支持简体中文、English、繁體中文、العربية（阿拉伯语，RTL 布局）
 
 ---
