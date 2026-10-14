@@ -1744,13 +1744,10 @@ fn get_url_via_uiautomation(hwnd: isize) -> Option<String> {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::browser_url_script_macos;
     #[cfg(target_os = "linux")]
     use super::firefox_family_session_store_base_dir;
-    #[cfg(target_os = "macos")]
-    use super::{
-        best_browser_url_candidate_from_output, browser_url_script_macos,
-        browser_url_system_events_process_name_macos, browser_url_ui_script_macos,
-    };
     use super::{
         build_linux_x11_active_window, clean_browser_window_title, decode_mozlz4_bytes,
         extract_active_tab_url_from_session_store_value, find_focused_sway_node,
@@ -2114,48 +2111,6 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn zen_浏览器应走_system_events_兜底() {
-        assert_eq!(
-            browser_url_system_events_process_name_macos("zen browser"),
-            Some("Zen")
-        );
-        let script = browser_url_ui_script_macos("Zen");
-        assert!(script.contains(r#"tell process "Zen""#));
-        assert!(script.contains("AXTextField"));
-        assert!(script.contains("toolbar 1 of frontWin"));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn zen_ui_采集脚本应能通过编译() {
-        let script = browser_url_ui_script_macos("Zen");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("系统时间应晚于 UNIX_EPOCH")
-            .as_nanos();
-        let compiled_path = env::temp_dir().join(format!("zen-url-ui-{unique}.scpt"));
-
-        let output = Command::new("osacompile")
-            .arg("-e")
-            .arg(&script)
-            .arg("-o")
-            .arg(&compiled_path)
-            .output()
-            .expect("应能调用 osacompile");
-
-        if compiled_path.exists() {
-            let _ = fs::remove_file(&compiled_path);
-        }
-
-        assert!(
-            output.status.success(),
-            "脚本编译失败: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
     fn 直接_applescript_浏览器脚本应先检查应用是否仍在运行() {
         let cases = [
             ("google chrome", "Google Chrome"),
@@ -2177,47 +2132,6 @@ mod tests {
                 "{app_name} 脚本缺少运行态守卫"
             );
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn 浏览器_url候选应优先完整路径() {
-        let output = r#"
-https://www.google.com.hk
-www.google.com.hk
-https://www.google.com.hk/search?q=张凌赫
-"#;
-
-        assert_eq!(
-            best_browser_url_candidate_from_output(output),
-            Some("https://www.google.com.hk/search?q=张凌赫".to_string())
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn 浏览器_url候选应优先地址栏值字段() {
-        let output = r#"
-title	https://linux.dofttopic
-name	https://linux.dofttopic
-value	https://linux.do/latest
-"#;
-
-        assert_eq!(
-            best_browser_url_candidate_from_output(output),
-            Some("https://linux.do/latest".to_string())
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn 可疑的_host_only_浏览器候选应被忽略() {
-        let output = r#"
-title	https://linux.dofttopic
-name	https://linux.dofttopic
-"#;
-
-        assert_eq!(best_browser_url_candidate_from_output(output), None);
     }
 
     #[test]
@@ -2575,94 +2489,255 @@ fn parse_macos_window_bounds_fields(
 
 #[cfg(target_os = "macos")]
 fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWindow> {
-    // 使用 AppleScript 获取活动应用信息
-    let script = r#"
-        tell application "System Events"
-            set frontApp to first application process whose frontmost is true
-            set appName to name of frontApp
-            set bundleId to ""
-            set appPath to ""
-            set windowTitle to ""
-            set windowX to ""
-            set windowY to ""
-            set windowWidth to ""
-            set windowHeight to ""
-            set sep to character id 31
-            try
-                set bundleId to bundle identifier of frontApp
-            end try
-            try
-                set appPath to POSIX path of (file of frontApp as alias)
-            end try
-            try
-                set windowTitle to name of front window of frontApp
-            end try
-            try
-                set {windowX, windowY} to position of front window of frontApp
-                set {windowWidth, windowHeight} to size of front window of frontApp
-            end try
-            return appName & sep & bundleId & sep & appPath & sep & windowTitle & sep & windowX & sep & windowY & sep & windowWidth & sep & windowHeight
-        end tell
-    "#;
+    use core_foundation::array::{CFArrayGetCount, CFArrayGetValueAtIndex};
+    use core_foundation::base::CFTypeRef;
+    use core_foundation::dictionary::CFDictionaryRef;
+    use core_foundation::string::CFString;
+    use core_graphics::display::{
+        kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
+        CGWindowListCopyWindowInfo,
+    };
 
-    let output = run_monitor_command_with_timeout(
-        Command::new("osascript").arg("-e").arg(script),
-        "macOS 活动窗口采集",
-    )
-    .map_err(|e| AppError::Screenshot(e.to_string()))?;
-
-    if output.status.success() {
-        let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let parts: Vec<&str> = result.split('\u{1f}').collect();
-
-        let raw_app_name = parts.first().copied().unwrap_or("Unknown").to_string();
-        let bundle_identifier = parts
-            .get(1)
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty());
-        let app_path = parts
-            .get(2)
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty());
-        let raw_window_title = parts.get(3).copied().unwrap_or("").to_string();
-        let window_bounds = parse_macos_window_bounds_fields(
-            parts.get(4).copied(),
-            parts.get(5).copied(),
-            parts.get(6).copied(),
-            parts.get(7).copied(),
-        )
-        .or_else(|| find_frontmost_window_bounds(&raw_app_name, &raw_window_title));
-
-        // 对 Electron / Helper 类通用进程做名称还原，优先使用 app path / bundle id。
-        let app_name = normalize_macos_frontmost_app_name(
-            &raw_app_name,
-            &raw_window_title,
-            bundle_identifier,
-            app_path,
-        );
-
-        let window_title = clean_browser_window_title(&raw_window_title, &app_name);
-
-        // 如果是浏览器，尝试获取 URL（使用原始标题，清理后的标题可能丢失 URL 信息）
-        let browser_url = if include_browser_url {
-            get_browser_url(&app_name, &raw_window_title)
-        } else {
-            None
-        };
-
-        Ok(ActiveWindow {
-            app_name,
-            window_title,
-            browser_url,
-            executable_path: app_path.map(str::to_string),
-            window_bounds,
-            is_minimized: false,
-        })
-    } else {
-        Err(AppError::Screenshot("获取活动窗口失败".to_string()))
+    // 原生 CGWindowList 采集（零 Apple Events）：此前用 osascript tell
+    // "System Events" 每秒发一次 Apple Events，是 macOS「想控制此 Mac」
+    // automation 弹窗的需求源；kCGWindowName 依赖屏幕录制权限（应用已因截图
+    // 功能请求过），不再产生任何新的权限弹窗。
+    struct FrontWindow {
+        owner_name: String,
+        bundle_id: String,
+        title: String,
+        pid: i32,
+        bounds: Option<WindowBounds>,
     }
+
+    // SAFETY: 全部为 CoreGraphics/CoreFoundation 只读查询；CGWindowListCopyWindowInfo
+    // 返回的 CFArray 用 Get 规则持有并在块尾 CFRelease，字典内元素按 Get 规则
+    // 包装（wrap_under_get_rule），无所有权转移歧义
+    let front = unsafe {
+        let window_list = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+            kCGNullWindowID,
+        );
+        if window_list.is_null() {
+            return Err(AppError::Screenshot("获取活动窗口失败".to_string()));
+        }
+
+        let mut found: Option<FrontWindow> = None;
+        let count = CFArrayGetCount(window_list as _);
+        for i in 0..count {
+            let dict = CFArrayGetValueAtIndex(window_list as _, i) as CFDictionaryRef;
+            if dict.is_null() {
+                continue;
+            }
+
+            // 只要普通层窗口（layer 0）：列表本身按 z 序排列，首个命中即最前
+            let layer_key = CFString::new("kCGWindowLayer");
+            let mut layer_ref: CFTypeRef = std::ptr::null();
+            if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
+                dict,
+                layer_key.as_CFTypeRef() as *const _,
+                &mut layer_ref,
+            ) == 0
+                || layer_ref.is_null()
+            {
+                continue;
+            }
+            let mut layer: i32 = 0;
+            if !core_foundation::number::CFNumberGetValue(
+                layer_ref as core_foundation::number::CFNumberRef,
+                core_foundation::number::kCFNumberSInt32Type,
+                &mut layer as *mut i32 as *mut _,
+            ) || layer != 0
+            {
+                continue;
+            }
+
+            let owner_key = CFString::new("kCGWindowOwnerName");
+            let mut owner_ref: CFTypeRef = std::ptr::null();
+            if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
+                dict,
+                owner_key.as_CFTypeRef() as *const _,
+                &mut owner_ref,
+            ) == 0
+                || owner_ref.is_null()
+            {
+                continue;
+            }
+            let owner_name =
+                core_foundation::string::CFString::wrap_under_get_rule(owner_ref as _).to_string();
+            if owner_name.trim().is_empty() {
+                continue;
+            }
+
+            let pid_key = CFString::new("kCGWindowOwnerPID");
+            let mut pid_ref: CFTypeRef = std::ptr::null();
+            let pid = if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
+                dict,
+                pid_key.as_CFTypeRef() as *const _,
+                &mut pid_ref,
+            ) != 0
+                && !pid_ref.is_null()
+            {
+                let mut value: i32 = 0;
+                if core_foundation::number::CFNumberGetValue(
+                    pid_ref as core_foundation::number::CFNumberRef,
+                    core_foundation::number::kCFNumberSInt32Type,
+                    &mut value as *mut i32 as *mut _,
+                ) {
+                    value
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let bundle_id_key = CFString::new("kCGWindowBundleID");
+            let mut bundle_ref: CFTypeRef = std::ptr::null();
+            let bundle_id = if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
+                dict,
+                bundle_id_key.as_CFTypeRef() as *const _,
+                &mut bundle_ref,
+            ) != 0
+                && !bundle_ref.is_null()
+            {
+                core_foundation::string::CFString::wrap_under_get_rule(bundle_ref as _).to_string()
+            } else {
+                String::new()
+            };
+
+            // kCGWindowName 需要屏幕录制权限；未授权时键缺失，按空标题降级
+            let name_key = CFString::new("kCGWindowName");
+            let mut name_ref: CFTypeRef = std::ptr::null();
+            let title = if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
+                dict,
+                name_key.as_CFTypeRef() as *const _,
+                &mut name_ref,
+            ) != 0
+                && !name_ref.is_null()
+            {
+                core_foundation::string::CFString::wrap_under_get_rule(name_ref as _).to_string()
+            } else {
+                String::new()
+            };
+
+            let bounds = {
+                let bounds_key = CFString::new("kCGWindowBounds");
+                let mut bounds_ref: CFTypeRef = std::ptr::null();
+                if core_foundation::dictionary::CFDictionaryGetValueIfPresent(
+                    dict,
+                    bounds_key.as_CFTypeRef() as *const _,
+                    &mut bounds_ref,
+                ) == 0
+                    || bounds_ref.is_null()
+                {
+                    None
+                } else {
+                    let bounds_dict = bounds_ref as CFDictionaryRef;
+                    let x = get_cf_dict_number(bounds_dict, "X").unwrap_or(0.0) as i32;
+                    let y = get_cf_dict_number(bounds_dict, "Y").unwrap_or(0.0) as i32;
+                    let width = get_cf_dict_number(bounds_dict, "Width")
+                        .unwrap_or(0.0)
+                        .max(0.0) as u32;
+                    let height = get_cf_dict_number(bounds_dict, "Height")
+                        .unwrap_or(0.0)
+                        .max(0.0) as u32;
+                    if width == 0 || height == 0 {
+                        None
+                    } else {
+                        Some(WindowBounds {
+                            x,
+                            y,
+                            width,
+                            height,
+                        })
+                    }
+                }
+            };
+
+            found = Some(FrontWindow {
+                owner_name,
+                bundle_id,
+                title,
+                pid,
+                bounds,
+            });
+            break;
+        }
+
+        core_foundation::base::CFRelease(window_list as _);
+        found
+    };
+
+    // 最前面的普通层窗口都不在（桌面全屏遮盖/锁屏等）时保持与原 osascript
+    // 失败路径一致的错误语义，由调用方按采样失败跳过
+    let front = front.ok_or_else(|| AppError::Screenshot("获取活动窗口失败".to_string()))?;
+
+    let raw_app_name = front.owner_name;
+    let raw_window_title = front.title;
+
+    // pid → 可执行文件路径（libproc 稳定 API，只读）。Electron/Helper 类通用
+    // 进程的名称还原靠它走 .app 祖先匹配，与原 AppleScript 的 app_path 等价
+    let app_path = if front.pid > 0 {
+        macos_executable_path_for_pid(front.pid)
+    } else {
+        None
+    };
+
+    let bundle_identifier = if front.bundle_id.trim().is_empty() {
+        None
+    } else {
+        Some(front.bundle_id.trim())
+    };
+
+    let app_name = normalize_macos_frontmost_app_name(
+        &raw_app_name,
+        &raw_window_title,
+        bundle_identifier,
+        app_path.as_deref(),
+    );
+
+    let window_title = clean_browser_window_title(&raw_window_title, &app_name);
+
+    // 如果是浏览器，尝试获取 URL（使用原始标题，清理后的标题可能丢失 URL 信息）
+    let browser_url = if include_browser_url {
+        get_browser_url(&app_name, &raw_window_title)
+    } else {
+        None
+    };
+
+    Ok(ActiveWindow {
+        app_name,
+        window_title,
+        browser_url,
+        executable_path: app_path,
+        window_bounds: front.bounds,
+        is_minimized: false,
+    })
 }
 
+/// 读取进程可执行文件完整路径（libproc `proc_pidpath`，只读、无需额外权限）。
+/// 返回形如 /Applications/Foo.app/Contents/MacOS/Foo 的二进制路径——
+/// `.app` 名还原逻辑（display_name_from_macos_app_path）按祖先匹配，兼容此形态。
+#[cfg(target_os = "macos")]
+fn macos_executable_path_for_pid(pid: i32) -> Option<String> {
+    // 与 libproc 头文件 PROC_PIDPATHINFO_MAXSIZE 一致
+    const BUFFER_SIZE: usize = 4096;
+
+    #[link(name = "proc", kind = "dylib")]
+    extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, size: u32) -> i32;
+    }
+
+    // SAFETY: buffer 为调用方分配的固定 4096 字节缓冲区，proc_pidpath 在返回
+    // 长度内写入并返回实际长度；失败返回 0/-1 时不读缓冲
+    let mut buffer = [0u8; BUFFER_SIZE];
+    let written = unsafe { proc_pidpath(pid, buffer.as_mut_ptr() as *mut _, BUFFER_SIZE as u32) };
+    if written <= 0 || written as usize > BUFFER_SIZE {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buffer[..written as usize]).into_owned())
+}
 #[cfg(target_os = "macos")]
 fn find_frontmost_window_bounds(owner_name: &str, window_title: &str) -> Option<WindowBounds> {
     use core_foundation::array::{CFArrayGetCount, CFArrayGetValueAtIndex};
@@ -3252,17 +3327,6 @@ fn browser_url_script_macos(app_lower: &str) -> Option<(String, &'static str)> {
 }
 
 #[cfg(target_os = "macos")]
-fn browser_url_system_events_process_name_macos(app_lower: &str) -> Option<&'static str> {
-    if app_lower.contains("firefox") {
-        Some("Firefox")
-    } else if app_lower.contains("zen") {
-        Some("Zen")
-    } else {
-        None
-    }
-}
-
-#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BrowserUrlCandidateSource {
     Value,
@@ -3317,137 +3381,6 @@ fn http_url_rest(url: &str) -> Option<&str> {
 }
 
 #[cfg(target_os = "macos")]
-fn browser_url_ui_script_macos(process_name: &str) -> String {
-    format!(
-        r#"set output to ""
-tell application "System Events"
-    tell process "{process_name}"
-        if (count of windows) is 0 then return ""
-        set frontWin to front window
-        try
-            set output to my collect_url_candidates(toolbar 1 of frontWin)
-        end try
-        if output is not "" then return output
-        return my collect_url_candidates(frontWin)
-    end tell
-end tell
-
-on collect_url_candidates(rootElem)
-    using terms from application "System Events"
-        tell application "System Events"
-            set output to ""
-            set allElems to {{}}
-            try
-                set allElems to entire contents of rootElem
-            on error
-                return ""
-            end try
-
-            repeat with elem in allElems
-                try
-                    set roleName to (role of elem) as text
-                    if roleName is "AXTextField" or roleName is "AXTextArea" or roleName is "AXComboBox" then
-                        try
-                            set candidateValue to (value of elem) as text
-                            if candidateValue is not "" then set output to output & "value" & tab & candidateValue & linefeed
-                        end try
-                        try
-                            set candidateValue to (description of elem) as text
-                            if candidateValue is not "" then set output to output & "description" & tab & candidateValue & linefeed
-                        end try
-                        try
-                            set candidateValue to (title of elem) as text
-                            if candidateValue is not "" then set output to output & "title" & tab & candidateValue & linefeed
-                        end try
-                        try
-                            set candidateValue to (name of elem) as text
-                            if candidateValue is not "" then set output to output & "name" & tab & candidateValue & linefeed
-                        end try
-                    end if
-                end try
-            end repeat
-
-            return output
-        end tell
-    end using terms from
-end collect_url_candidates"#
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn best_browser_url_candidate_from_output(output: &str) -> Option<String> {
-    let mut best_match: Option<(i32, String)> = None;
-
-    for raw_line in output.lines() {
-        let (source, raw) = parse_browser_url_candidate_line(raw_line);
-        if raw.is_empty() {
-            continue;
-        }
-
-        let Some(url) = normalize_browser_url_candidate(raw) else {
-            continue;
-        };
-
-        if source != BrowserUrlCandidateSource::Value && is_merged_domain(&url) {
-            continue;
-        }
-
-        let mut score = 40 + browser_url_candidate_source_bonus(source);
-        if raw.starts_with("http://") || raw.starts_with("https://") || raw.starts_with("file://") {
-            score += 40;
-        }
-        if raw.contains("://") {
-            score += 20;
-        }
-        if let Some(rest) = http_url_rest(&url) {
-            if !rest.is_empty() {
-                score += 18;
-            }
-            if rest.contains('?') || rest.contains('#') {
-                score += 8;
-            }
-        } else if raw.contains('/') || raw.contains('?') || raw.contains('#') {
-            score += 10;
-        }
-        if url.len() > 24 {
-            score += 5;
-        }
-
-        let replace = best_match
-            .as_ref()
-            .map(|(best_score, best_url)| {
-                score > *best_score || (score == *best_score && url.len() > best_url.len())
-            })
-            .unwrap_or(true);
-
-        if replace {
-            best_match = Some((score, url));
-        }
-    }
-
-    best_match.map(|(_, url)| url)
-}
-
-#[cfg(target_os = "macos")]
-fn get_browser_url_via_system_events(process_name: &str) -> Option<String> {
-    let script = browser_url_ui_script_macos(process_name);
-    let output = run_monitor_command_with_timeout(
-        Command::new("osascript").arg("-e").arg(script),
-        &format!("{process_name} URL UI 采集"),
-    )
-    .ok()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::warn!("获取 {process_name} UI URL 失败: {}", stderr.trim());
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    best_browser_url_candidate_from_output(&stdout)
-}
-
-#[cfg(target_os = "macos")]
 fn get_browser_url(app_name: &str, window_title: &str) -> Option<String> {
     // 与 Linux/Windows 入口同款门禁：非浏览器应用不查 URL。缺此门禁时，
     // 名称含 arc/safari 等子串的应用（如 Archive Utility）会 spawn osascript
@@ -3464,13 +3397,9 @@ fn get_browser_url(app_name: &str, window_title: &str) -> Option<String> {
         }
     }
 
-    if let Some(process_name) = browser_url_system_events_process_name_macos(&app_lower) {
-        if let Some(url) = get_browser_url_via_system_events(process_name) {
-            return Some(url);
-        }
-        log::debug!("{process_name} 未从辅助功能树中提取到 URL");
-        return None;
-    }
+    // Firefox/Zen 的 System Events 辅助功能树爬取已移除：它是「想控制此 Mac」
+    // automation 弹窗的第二需求源（entire contents 全树遍历又慢又重），Firefox
+    // 本就 AppleScript 支持有限——保留 sessionstore 文件兜底 + 运行态守卫直连。
 
     let Some((script, browser_name)) = browser_url_script_macos(&app_lower) else {
         log::debug!("未识别的浏览器: {app_name}");

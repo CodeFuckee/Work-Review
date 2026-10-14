@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 修复
+- **macOS 每次启动都弹「想控制此 Mac」自动化授权弹窗（已授权仍复发）**：双重根因——① 采集链路每秒用 `osascript tell "System Events"` 取前台窗口（Firefox/Zen 前台时还有第二处辅助功能树爬取），是 automation 权限的需求源；② 应用签名身份无效（`signingIdentity` 指定 CI 上不存在的自建证书 + entitlements 把 helper 专用的 `com.apple.security.inherit` 烧进主应用），TCC 按稳定 code identity 记录授权，身份无效则授权记录失配 → 每次启动重新弹。修复：entitlements 最小化（去 inherit/无效沙箱 key）+ `signingIdentity` 改显式 ad-hoc `-`；前台窗口采集重写为原生 `CGWindowListCopyWindowInfo`（零 Apple Events，窗口标题依赖的屏幕录制权限应用已因截图授权，`kCGWindowName` 未授权时降级空标题）；可执行路径改 `proc_pidpath`；Firefox/Zen 的 System Events UI 爬取移除（sessionstore 文件兜底 + 运行态守卫直连保留）。效果：对 System Events 的 Apple Events 依赖归零，启动/采集不再触发该弹窗；浏览器 URL 仍走 Chrome/Safari/Edge 直连 AppleScript（首次弹「想控制 Chrome」授权一次）。真机验证项：更新后首启授权一次，此后同版本不再弹。
+
 ### 新增
 - **多机工作记录同步（v1）**：公司机/家里机两台电脑的工作记录互相补全——设置-常规新增「工作记录同步（多机）」卡（开关 + 机器命名 + 立即同步），启用后每 5 分钟把本机新增/合并变化的活动记录（App/窗口标题/时长/浏览器 URL/OCR 文字元数据）**端侧 AES-GCM 加密**后增量推送到服务端，同时拉取其他机器的增量按稳定 uid 幂等合并入库；**生成日报前强制拉取**其他机器记录，保证任一台机器生成的日报覆盖全天两台机器的工作。**远控会话去重**：同时段另一台机器有真实活动时，本机的向日葵/ToDesk/RustDesk 等远控窗口记录判定为「远程壳」（影子记录），不进统计/时间线/日报（内置识别清单 + `remote_control_apps` 自定义模式）。云端日报按日期 LWW 同步（毫秒时间戳判胜负，服务端拒旧 + 本机时钟漂移以「现值+1」兜底单调），报告页对云端版本显示「来自 XX 电脑」标注。隐私边界：只同步文字元数据，截图/本地路径不同步（`SyncActivityPayload` 剥离 screenshot_path/executable_path/screenshot_url）；服务端（admin-core）零知识，只存密文——`client_sync_activity_block`（per 用户+机器 append-only 块流，seq 幂等）/`client_sync_daily_report`（按用户+日期+语言 LWW）/`client_sync_machine`（机器注册）三表 + 五端点。本机身份存数据目录 `work-sync-state.json`（UUID 终身不变，游标丢失可从服务端 latestSeq 恢复）。已知边界：本机删除记录不跨机传播；重装后自愈恢复（同机 uid 块回灌）暂未启用。测试：Rust 单测 20 例（迁移/uid 幂等收敛/影子标记/推送游标脏重推/日报 LWW/远控识别）、TS 单测 8 例（块切分/seq 恢复/LWW 判定/游标单调）、admin-core xUnit 7 例（幂等/隔离/游标/LWW/401）、双机闭环联调脚本 14 断言（`tests/integration/work-sync-roundtrip.mjs`，真实 HTTP+WebCrypto 对本地 admin-core 全链路）、E2E 5 例（`tests/e2e/ui/settings-work-sync.spec.ts`：卡渲染/启用交互/密钥未就绪提示/手动同步 mock 链路/报告来源 pill）。
 

@@ -2,16 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- 屏幕录制权限（截屏功能需要） -->
-    <key>com.apple.security.device.screen-capture</key>
-    <true/>
-    
-    <!-- 应用沙箱（关闭以允许访问系统功能） -->
-    <key>com.apple.security.app-sandbox</key>
-    <false/>
-    
-    <!-- 允许继承父进程权限 -->
-    <key>com.apple.security.inherit</key>
-    <true/>
+    <!-- 非沙箱应用的最小 entitlements（刻意保持为空）：
+         - 屏幕录制是 TCC 运行时权限，由 Info.plist 的 NSScreenCaptureUsageDescription
+           描述 + 用户在系统设置中授权，不靠 entitlement 表达；
+         - com.apple.security.inherit 是 XPC/helper 子进程专用 key，绝不能出现在
+           主应用上——异常 entitlements 会干扰 TCC 对 code identity 的校验，
+           导致自动化授权记录无法持久（每次启动重弹「想控制此 Mac」，2026-10-14 实测）；
+         - 未来启用 Developer ID 签名 + 公证时在此追加 hardened runtime 相关 key。
+    -->
 </dict>
 </plist>

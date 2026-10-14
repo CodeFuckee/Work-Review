@@ -42,7 +42,7 @@
       "frameworks": [],
       "minimumSystemVersion": "10.13",
       "exceptionDomain": "",
-      "signingIdentity": "WorkReview Self-Signed",
+      "signingIdentity": "-",
       "infoPlist": "Info.plist",
       "entitlements": "entitlements.plist"
     },
