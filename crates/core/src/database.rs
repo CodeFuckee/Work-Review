@@ -9571,7 +9571,7 @@ mod tests {
         assert_eq!(shadowed, 1, "重叠时段的远控行应被标记为影子");
 
         let rows = db.get_local_activities_for_sync(0, 100).expect("查询失败");
-        assert_eq!(rows[0].is_shadow, true);
+        assert!(rows[0].is_shadow);
         drop(db);
         remove_db_files(&db_path);
     }
