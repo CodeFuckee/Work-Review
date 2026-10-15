@@ -858,7 +858,7 @@ fn get_running_apps_impl() -> Result<Vec<String>, AppError> {
 
     let mut apps: Vec<String> = names?
         .into_iter()
-        .map(work_review_core::categorize::normalize_display_app_name)
+        .map(|s| work_review_core::categorize::normalize_display_app_name(&s))
         .filter(|s| !s.is_empty())
         .collect();
     apps.sort();
