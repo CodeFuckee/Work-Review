@@ -822,7 +822,8 @@ fn get_running_apps_impl() -> Result<Vec<String>, AppError> {
     // 的需求源（设置页 onMount 每次进入都触发）。NSRunningApplication 线程安全；
     // activationPolicy == regular（0）等价于 System Events 的
     // "background only is false"（菜单栏/后台代理为 accessory/prohibited）。
-    let names = autoreleasepool(|_| unsafe {
+    // objc 0.2 的 autoreleasepool 接受零参闭包（非带 pool token 的变体）
+    let names = autoreleasepool(|| unsafe {
         let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
         if workspace.is_null() {
             return Err(AppError::Unknown("获取 NSWorkspace 失败".to_string()));
