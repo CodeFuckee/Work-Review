@@ -201,6 +201,16 @@ export function createUpdateFlow(dependencies: UpdateFlowDependencies): RunUpdat
       });
 
       if (!releaseInfo.available) {
+        // 「未配置更新源」（编译期 token 缺失的降级态）绝不能显示「已是最新」
+        // ——那是假成功（v1.2.28-1.2.30 Mac 包实测：桥接不透传 token，用户永远
+        // 收不到更新还以为没新版本）。未配置时显式提示手动下载。
+        if (releaseInfo.source === 'gitlab-unconfigured') {
+          onStatusChange(silentWhenUpToDate ? '' : translate('updater.sourceUnconfigured'));
+          if (!silentWhenUpToDate) {
+            showToast(translate('updater.sourceUnconfigured'), 'warning', 6000);
+          }
+          return { updated: false, available: false };
+        }
         onStatusChange(silentWhenUpToDate ? '' : translate('updater.upToDate'));
         return { updated: false, available: false };
       }

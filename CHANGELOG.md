@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 修复
+- **macOS 安装包「检查更新」永远显示「已是最新版本」（v1.2.28-1.2.30 全部中招）**：macOS 打包走 GitHub 桥接执行器，GitLab protected 变量 `WORK_REVIEW_UPDATER_GITLAB_TOKEN` 不进桥接 payload 且不在环境透传白名单——桥接 runner 编译时 env 无此变量，`updater.rs` 的 `option_env!` 为空，更新器编译成「未配置更新源」降级态并**静默显示「已是最新」**（同版 Windows 包经本机 runner 变量直传正常；三版 Mac 包二进制 `strings` 实测 0 处 token 嵌入、Windows 1 处）。修复：① 桥接仓库 secrets 新增 `GL131_WORK_REVIEW_UPDATER_GITLAB_TOKEN` 并映射进编译环境（与更新签名同款机制，密钥不进 payload）；② `ci/macos/release-build.sh`/`package.sh` 编译前 fail-fast 校验 + 产物 `strings` 自检 token 真实嵌入（防 env 在而 cargo 缓存吞掉的假成功）；③ 更新器 UI 对「未配置更新源」态显式提示「请到发布页手动下载」，不再冒充「已是最新」。**Mac 用户需手动下载安装 v1.2.31+ 一次**（旧版更新器已废），此后应用内更新恢复。
 - **macOS 每次启动都弹「想控制此 Mac」自动化授权弹窗（已授权仍复发）**：双重根因——① 采集链路每秒用 `osascript tell "System Events"` 取前台窗口（Firefox/Zen 前台时还有第二处辅助功能树爬取），是 automation 权限的需求源；② 应用签名身份无效（`signingIdentity` 指定 CI 上不存在的自建证书 + entitlements 把 helper 专用的 `com.apple.security.inherit` 烧进主应用），TCC 按稳定 code identity 记录授权，身份无效则授权记录失配 → 每次启动重新弹。修复：entitlements 最小化（去 inherit/无效沙箱 key）+ `signingIdentity` 改显式 ad-hoc `-`；前台窗口采集重写为原生 `CGWindowListCopyWindowInfo`（零 Apple Events，窗口标题依赖的屏幕录制权限应用已因截图授权，`kCGWindowName` 未授权时降级空标题）；可执行路径改 `proc_pidpath`；Firefox/Zen 的 System Events UI 爬取移除（sessionstore 文件兜底 + 运行态守卫直连保留）。效果：对 System Events 的 Apple Events 依赖归零，启动/采集不再触发该弹窗；浏览器 URL 仍走 Chrome/Safari/Edge 直连 AppleScript（首次弹「想控制 Chrome」授权一次）。真机验证项：更新后首启授权一次，此后同版本不再弹。
 
 ### 新增

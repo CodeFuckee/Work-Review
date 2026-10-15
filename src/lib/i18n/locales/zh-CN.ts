@@ -421,6 +421,7 @@ export default {
     updater: {
       checking: '正在检查更新...',
       upToDate: '当前已是最新版本',
+          sourceUnconfigured: '更新源未配置，无法在线检查更新——请到发布页手动下载安装包',
       availableManual: '发现新版本，但当前发布暂未准备好在线更新',
       newVersionTitle: '发现新版本',
       openReleaseMessage: '检测到新版本 {version}，但当前发布暂未准备好在线更新。是否打开发布页查看最新版？',

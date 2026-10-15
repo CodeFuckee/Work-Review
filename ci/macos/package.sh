@@ -30,11 +30,25 @@ export SDKROOT="$(xcrun --show-sdk-path)"
 [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] \
   || { echo "TAURI_SIGNING_PRIVATE_KEY 未注入（检查桥接仓库 secrets GL131_TAURI_SIGNING_*）" >&2; exit 1; }
 
+# 应用内更新器 token：缺失时产物更新器静默「未配置更新源」（v1.2.28-1.2.30
+# Mac 包实测事故——Windows 本机 runner 有、macOS 桥接没有，差异只在透传）
+[ -n "${WORK_REVIEW_UPDATER_GITLAB_TOKEN:-}" ] \
+  || { echo "WORK_REVIEW_UPDATER_GITLAB_TOKEN 未注入（检查桥接仓库 secrets GL131_WORK_REVIEW_UPDATER_GITLAB_TOKEN 与 workflow env 映射）" >&2; exit 1; }
+
 npm ci --prefer-offline
 # 打包前清理 bundle：publish 的全量 glob 防历史版本包混入（2026-09-16 更新失效根因；
 # 一次性 VM 本无残留，保留防线对齐 .tauri-package）
 rm -rf target/release/bundle target/*/release/bundle
 npm run tauri build -- --target "$TARGET_TRIPLE"
+
+# 产物自检：打包出的 .app 二进制必须真实嵌入更新器 token（防编译缓存/环境
+# 差异吞掉注入的假成功——更新器会静默降级为「已是最新」）
+APP_BIN="target/${TARGET_TRIPLE}/release/bundle/macos/Yue-Review.app/Contents/MacOS/Yue_Review"
+[ -f "$APP_BIN" ] || APP_BIN=$(find target/*/release/bundle/macos -path "*Contents/MacOS/Yue_Review" 2>/dev/null | head -1)
+if [ -z "$APP_BIN" ] || ! strings -a "$APP_BIN" | grep -q "glpat-"; then
+  echo "产物自检失败：.app 二进制未嵌入更新器 token（glpat-）：$APP_BIN" >&2
+  exit 1
+fi
 
 mkdir -p "dist/target/${TARGET_TRIPLE}/release"
 cp -R "target/${TARGET_TRIPLE}/release/bundle" "dist/target/${TARGET_TRIPLE}/release/bundle"

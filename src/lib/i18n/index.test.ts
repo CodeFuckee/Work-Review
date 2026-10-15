@@ -374,7 +374,7 @@ test('四语言词典的叶路径、类型与占位符应完全一致', async ()
   // recomputeFailed）；
   // 配置同步卡认证失败提示每语言新增 1 键（settingsSync.authExpired——
   // token 失效引导重新登录，修复上传假成功事故）
-  assert.equal(expected.length, 1_337);
+  assert.equal(expected.length, 1_338);
   for (let index = 1; index < dictionaries.length; index += 1) {
     const dictionary = dictionaries[index];
     assert.ok(dictionary);

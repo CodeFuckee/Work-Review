@@ -431,6 +431,7 @@ export default {
     updater: {
       checking: 'Checking for updates...',
       upToDate: 'You are already on the latest version',
+          sourceUnconfigured: 'Update source not configured; online check unavailable — download the installer from the releases page manually',
       availableManual: 'A new version is available, but online update is not ready for this release yet',
       newVersionTitle: 'New version available',
       openReleaseMessage: 'Version {version} is available, but online update is not ready for this release yet. Open the release page?',
