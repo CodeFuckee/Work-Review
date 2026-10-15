@@ -29,7 +29,8 @@ cargo build --release -p work-review
 
 # 产物自检：token 必须真实嵌入二进制（GitLab PAT 字面量 glpat- 前缀），
 # 防 env 存在但 cargo 缓存/配置吞掉注入的假成功
-if ! strings -a target/release/work-review | grep -q "glpat-"; then
+# grep -c 读满输入，避免 grep -q 提前关管道令 macOS strings 报 SIGPIPE
+if [ "$(strings -a target/release/work-review | grep -c "glpat-" || true)" -eq 0 ]; then
   echo "产物自检失败：二进制未嵌入更新器 token（glpat-）" >&2
   exit 1
 fi

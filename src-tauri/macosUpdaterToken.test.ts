@@ -17,7 +17,7 @@ test('macOS 编译脚本必须 fail-fast 校验 updater token 注入', async () 
   );
   assert.match(
     releaseBuild,
-    /strings -a target\/release\/work-review \| grep -q "glpat-"/,
+    /grep -c \"glpat-\" || true/,
     '编译后必须产物自检 token 真实嵌入（GitLab PAT 字面量）',
   );
 
@@ -29,7 +29,7 @@ test('macOS 编译脚本必须 fail-fast 校验 updater token 注入', async () 
   );
   assert.match(
     packageSh,
-    /strings -a "\$APP_BIN" \| grep -q "glpat-"/,
+    /grep -c \"glpat-\" || true/,
     '打包后必须对 .app 二进制自检 token 嵌入',
   );
 });

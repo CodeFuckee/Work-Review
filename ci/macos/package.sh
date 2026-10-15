@@ -45,7 +45,8 @@ npm run tauri build -- --target "$TARGET_TRIPLE"
 # 差异吞掉注入的假成功——更新器会静默降级为「已是最新」）
 APP_BIN="target/${TARGET_TRIPLE}/release/bundle/macos/Yue-Review.app/Contents/MacOS/Yue_Review"
 [ -f "$APP_BIN" ] || APP_BIN=$(find target/*/release/bundle/macos -path "*Contents/MacOS/Yue_Review" 2>/dev/null | head -1)
-if [ -z "$APP_BIN" ] || ! strings -a "$APP_BIN" | grep -q "glpat-"; then
+# grep -c 读满输入，避免 grep -q 提前关管道令 macOS strings 报 SIGPIPE
+if [ -z "$APP_BIN" ] || [ "$(strings -a "$APP_BIN" | grep -c "glpat-" || true)" -eq 0 ]; then
   echo "产物自检失败：.app 二进制未嵌入更新器 token（glpat-）：$APP_BIN" >&2
   exit 1
 fi
