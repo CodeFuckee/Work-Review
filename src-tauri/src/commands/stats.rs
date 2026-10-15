@@ -813,30 +813,56 @@ pub async fn get_running_apps() -> Result<Vec<String>, AppError> {
 /// macOS 实现
 #[cfg(target_os = "macos")]
 fn get_running_apps_impl() -> Result<Vec<String>, AppError> {
-    use std::process::Command;
+    use objc::rc::autoreleasepool;
+    use objc::runtime::Object;
+    use std::ffi::CStr;
 
-    // 使用 AppleScript 获取运行中的应用
-    let output = Command::new("osascript")
-        .args([
-            "-e",
-            r#"tell application "System Events" to get name of every process whose background only is false"#
-        ])
-        .output()
-        .map_err(|e| AppError::Unknown(format!("执行 AppleScript 失败: {e}")))?;
+    // 原生 NSWorkspace 枚举（零 Apple Events）：此前用 osascript tell
+    // "System Events" 列运行应用，是 macOS「想控制此 Mac」automation 弹窗
+    // 的需求源（设置页 onMount 每次进入都触发）。NSRunningApplication 线程安全；
+    // activationPolicy == regular（0）等价于 System Events 的
+    // "background only is false"（菜单栏/后台代理为 accessory/prohibited）。
+    let names = autoreleasepool(|_| unsafe {
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
+            return Err(AppError::Unknown("获取 NSWorkspace 失败".to_string()));
+        }
+        let running: *mut Object = msg_send![workspace, runningApplications];
+        if running.is_null() {
+            return Err(AppError::Unknown("获取应用列表失败".to_string()));
+        }
+        let count: usize = msg_send![running, count];
+        let mut names: Vec<String> = Vec::with_capacity(count);
+        for i in 0..count {
+            let app: *mut Object = msg_send![running, objectAtIndex: i];
+            if app.is_null() {
+                continue;
+            }
+            let policy: i64 = msg_send![app, activationPolicy];
+            if policy != 0 {
+                continue;
+            }
+            let name: *mut Object = msg_send![app, localizedName];
+            if name.is_null() {
+                continue;
+            }
+            let c_name: *const std::os::raw::c_char = msg_send![name, UTF8String];
+            if c_name.is_null() {
+                continue;
+            }
+            names.push(CStr::from_ptr(c_name).to_string_lossy().into_owned());
+        }
+        Ok(names)
+    });
 
-    if output.status.success() {
-        let apps_str = String::from_utf8_lossy(&output.stdout);
-        let mut apps: Vec<String> = apps_str
-            .split(", ")
-            .map(work_review_core::categorize::normalize_display_app_name)
-            .filter(|s| !s.is_empty())
-            .collect();
-        apps.sort();
-        apps.dedup();
-        Ok(apps)
-    } else {
-        Err(AppError::Unknown("获取应用列表失败".to_string()))
-    }
+    let mut apps: Vec<String> = names?
+        .into_iter()
+        .map(work_review_core::categorize::normalize_display_app_name)
+        .filter(|s| !s.is_empty())
+        .collect();
+    apps.sort();
+    apps.dedup();
+    Ok(apps)
 }
 
 /// Windows 实现

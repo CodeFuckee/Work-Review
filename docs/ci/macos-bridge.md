@@ -90,6 +90,25 @@ my-macos-job:
 - 桥接仓库 allowlist 未登记的项目一律拒跑（防伪造 dispatch）。
 - 详细威胁模型见桥接仓库 `README.md`。
 
+## 稳定签名身份（2026-10-15 起，解决 TCC 授权每版失效）
+
+ad-hoc（`-`）签名的 cdhash 每次构建都变，macOS TCC 按签名身份记录授权——
+更新一版授权即失效，权限弹窗（「想控制此 Mac」「想控制 Chrome」…）每版重弹。
+配置**自签代码签名证书**后 TCC 按证书 designated requirement 记录授权，跨版本持久：
+
+1. **生成证书**（Mac 上一次性）：`P12_PASSWORD='…' ./scripts/ci/generate-macos-signing-cert.sh`
+   → 产出 `workreview-signing.p12` + 同名 `.b64`（单行 base64），并自动导入本机钥匙串。
+2. **配桥接仓库 secrets**（`CodeFuckee/gl-macos-bridge`）：
+   - `GL131_MACOS_SIGNING_P12` = `.b64` 文件内容；
+   - `GL131_MACOS_SIGNING_P12_PASSWORD` = 导出密码。
+3. **桥接仓库 workflow** 给打包作业 env 注入（与 `GL131_TAURI_SIGNING_*` 同款映射）：
+   `MACOS_SIGNING_P12` / `MACOS_SIGNING_P12_PASSWORD`。
+4. `ci/macos/package.sh` 检测到 `MACOS_SIGNING_P12` 后自动：导入一次性 VM 临时
+   keychain → `--config` 覆盖 `bundle.macOS.signingIdentity` 为证书 SHA-1 →
+   产物自检 `codesign --verify` + Authority 非空。未配置时显式告警回退 ad-hoc，出包不受影响。
+
+注意：切换签名身份的那一版需要重新授权一次（TCC 身份变更），此后跨版本持久。
+
 ## 已知取舍
 
 - **不回传 GitLab commit status**：该 API 在本实例（GitLab 19.4.1）实测需要
